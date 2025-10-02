@@ -1,0 +1,52 @@
+{
+  "name": "@joseairosa/recall",
+  "version": "1.2.0",
+  "description": "Give Claude perfect recall - Redis-powered persistent memory for LLMs",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "recall": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "memory",
+    "redis",
+    "llm",
+    "context",
+    "ai",
+    "claude",
+    "anthropic",
+    "context-management",
+    "embeddings"
+  ],
+  "author": "José Airosa",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/joseairosa/recall.git"
+  },
+  "bugs": {
+    "url": "https://github.com/joseairosa/recall/issues"
+  },
+  "homepage": "https://github.com/joseairosa/recall#readme",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "ioredis": "^5.4.2",
+    "ulid": "^2.3.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

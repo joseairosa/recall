@@ -1,0 +1,26 @@
+# Source files (we only ship dist/)
+src/
+tsconfig.json
+tsup.config.ts
+
+# Development files
+node_modules/
+.DS_Store
+*.log
+
+# Testing
+test-resource.js
+view-memories.js
+
+# Documentation that's not needed in package
+ai_docs/
+FEATURES_V1.2.md
+CONTEXT_MANAGEMENT.md
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/

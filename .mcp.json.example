@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "memory": {
+      "command": "node",
+      "args": [
+        "/Users/joseairosa/Development/mcp/mem/dist/index.js"
+      ],
+      "env": {
+        "REDIS_URL": "redis://localhost:6379",
+        "ANTHROPIC_API_KEY": "sk-ant-..."
+      }
+    }
+  }
+}

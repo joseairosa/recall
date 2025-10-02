@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.1] - 2025-10-02
+
+### Added
+- **Organizational Shared Memory Documentation** - Comprehensive guide for team collaboration
+  - Setup instructions for shared Redis instances
+  - Security considerations for organizational deployments
+  - Example workflows for cross-team learning
+- **Improved Installation Instructions**
+  - Added Claude CLI installation method (`npx @modelcontextprotocol/create-server`)
+  - Direct `npx` usage examples with no installation required
+  - Multiple installation options (CLI, global, from source)
+
+### Changed
+- Enhanced README.md with organizational memory use cases
+- Updated installation section with recommended approaches
+- Clarified team collaboration scenarios
+
+---
+
 ## [1.2.0] - 2025-10-02
 
 ### Added

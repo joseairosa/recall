@@ -1,188 +1,189 @@
 # Changelog
 
+All notable changes to **Recall** (formerly MCP Memory Server) are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+---
+
+## [1.2.0] - 2025-10-02
+
+### Added
+- **TTL Support** - Auto-expiring memories with `ttl_seconds` parameter (minimum 60s)
+- **Export/Import Tools** - Backup and restore memories
+  - `export_memories` - Export to JSON with optional filtering by type/importance
+  - `import_memories` - Import from JSON with embedding regeneration option
+- **Duplicate Detection** - Find and merge similar memories
+  - `find_duplicates` - Detect duplicates with similarity threshold (default 0.85)
+  - Auto-merge option with configurable keep strategy
+- **Memory Consolidation** - `consolidate_memories` - Manually merge multiple memories
+- **Analytics Dashboard** - `memory://analytics` resource
+  - Memory trends (24h, 7d, 30d)
+  - Top tags and importance distribution
+  - Activity breakdown by day and type
+- **Cloud Redis Documentation** - Setup guides for Upstash, Redis Cloud, Railway
+
+### Changed
+- Resource URI handling - Fixed pathname parsing for `memory://` scheme
+- Package renamed from `@joseairosa/mcp-memory` to `@joseairosa/recall`
+- Binary command: `mcp-memory` → `recall`
+
+### Technical
+- Added `mergeMemories()` method to MemoryStore
+- Added `ConsolidateMemoriesSchema`, `ExportMemoriesSchema`, `ImportMemoriesSchema`, `FindDuplicatesSchema`
+- Created `src/tools/export-import-tools.ts`
+- Created `src/resources/analytics.ts`
+
+**Tools:** 13 total (6 core + 3 smart context + 4 advanced)
+**Resources:** 9 total
+**Prompts:** 1 (`workspace_context`)
+
+---
+
 ## [1.1.0] - 2025-10-02
 
-### 🎉 Major Features: Smart Context Management
+### Added
+- **Smart Context Management**
+  - `recall_relevant_context` - Proactive memory retrieval based on current task
+  - `analyze_and_remember` - AI-powered conversation analysis and extraction
+  - `summarize_session` - Create session snapshots with summaries
+- **Auto-Injection Prompt**
+  - `workspace_context` - Automatically injects critical directives and decisions at conversation start
+- **Workspace Isolation** - Memories automatically segmented by project directory
+- **AI Analysis** - Claude Haiku integration for intelligent memory extraction
 
-#### New Tools
-- **`recall_relevant_context`** - Proactive context retrieval tool that Claude can call automatically when it needs to recall relevant memories
-- **`analyze_and_remember`** - Intelligent conversation analysis that extracts and stores structured memories automatically
-- **`summarize_session`** - Session summarization tool that creates snapshots of work sessions
+### Changed (Breaking)
+- **API Migration**: OpenAI → Anthropic Claude
+  - Environment variable: `OPENAI_API_KEY` → `ANTHROPIC_API_KEY`
+  - Embeddings: OpenAI 1536-dim → Hybrid (Claude keywords + trigrams) 128-dim
+  - Cost reduction: ~$2/day → ~$0.20/day
+- **Redis Key Structure**: Added workspace prefix `ws:{workspace_id}:`
+- **Package Dependencies**: `openai` → `@anthropic-ai/sdk`
 
-#### New Prompts
-- **`workspace_context`** - Auto-injected prompt that displays critical directives, decisions, and patterns at conversation start
+### Technical
+- Added `ConversationAnalyzer` class for AI-powered analysis
+- Created `src/analysis/conversation-analyzer.ts`
+- Created `src/prompts/` directory (index.ts, formatters.ts)
+- Created `src/tools/context-tools.ts`
+- Updated `src/embeddings/generator.ts` - Hybrid embedding approach
+- Added MCP prompts capability to server
 
-#### Enhanced Features
-- Workspace isolation: Memories now segmented by project directory
-- Claude API integration for intelligent analysis
-- Semantic keyword extraction using Claude Haiku
-- Auto-categorization of extracted memories
-- Importance auto-scoring
-- Session summaries with Claude-generated descriptions
-
-#### Breaking Changes
-- Switched from OpenAI to Anthropic API
-  - `OPENAI_API_KEY` → `ANTHROPIC_API_KEY`
-  - Embeddings now use hybrid approach (Claude keywords + trigrams)
-- Redis keys now include workspace prefix: `ws:{workspace_id}:memory:{id}`
-  - Existing memories will need migration if upgrading
-
-#### New Files
-- `src/analysis/conversation-analyzer.ts` - Claude API conversation analysis
-- `src/prompts/index.ts` - MCP prompts handlers
-- `src/prompts/formatters.ts` - Context formatting utilities
-- `src/tools/context-tools.ts` - Smart context management tools
-- `CONTEXT_MANAGEMENT.md` - Comprehensive guide for new features
-
-#### Updated Files
-- `src/types.ts` - Added new schemas and workspace context types
-- `src/redis/memory-store.ts` - Added workspace isolation to all operations
-- `src/embeddings/generator.ts` - Replaced OpenAI with Claude + hybrid approach
-- `src/tools/index.ts` - Integrated new context tools
-- `src/index.ts` - Added prompts capability
-- `README.md` - Updated with v1.1.0 features
-- `package.json` - Version bump, replaced openai with @anthropic-ai/sdk
+**Tools:** 9 total (6 core + 3 smart context)
+**Resources:** 8 total
+**Prompts:** 1 (new capability)
 
 ---
 
 ## [1.0.0] - 2025-10-02
 
-### Initial Release
+### Added
+- **Initial Release** - Persistent memory server for Claude using MCP protocol
+- **6 Core Tools**
+  - `store_memory` - Store single memory with metadata
+  - `store_batch_memories` - Batch store multiple memories
+  - `update_memory` - Modify existing memory
+  - `delete_memory` - Remove memory by ID
+  - `search_memories` - Semantic search using embeddings
+  - `organize_session` - Create session snapshots
+- **8 Resources** - Read-only memory access
+  - `memory://recent` - Recent memories (default 50)
+  - `memory://by-type/{type}` - Filter by context type
+  - `memory://by-tag/{tag}` - Filter by tag
+  - `memory://important` - High importance (≥8)
+  - `memory://session/{session_id}` - Session memories
+  - `memory://sessions` - All sessions list
+  - `memory://search?q=query` - Search interface
+  - `memory://summary` - Statistics overview
+- **10 Context Types**
+  - directive, information, heading, decision, code_pattern
+  - requirement, error, todo, insight, preference
+- **Features**
+  - Redis in-memory storage
+  - OpenAI embeddings for semantic search
+  - ULID identifiers
+  - Importance scoring (1-10)
+  - Tag-based organization
+  - Session management
+  - Zod schema validation
 
-#### Core Features
-- Persistent memory storage in Redis
-- Semantic search using OpenAI embeddings
-- 10 context types (directive, information, heading, decision, code_pattern, requirement, error, todo, insight, preference)
-- Importance scoring (1-10)
-- Tag-based organization
-- Session management
-- Multiple access patterns (recent, by-type, by-tag, important)
+### Technical
+- TypeScript with ESM modules
+- Redis (ioredis) for storage
+- OpenAI text-embedding-3-small (1536-dim)
+- MCP SDK v1.0.4
+- Multiple access patterns (hashes, sets, sorted sets)
 
-#### Tools (6)
-- `store_memory` - Store single memory
-- `store_batch_memories` - Batch store memories
-- `update_memory` - Update existing memory
-- `delete_memory` - Delete memory
-- `search_memories` - Semantic search
-- `organize_session` - Create session snapshot
-
-#### Resources (8)
-- `memory://recent` - Recent memories
-- `memory://by-type/{type}` - Filter by type
-- `memory://by-tag/{tag}` - Filter by tag
-- `memory://important` - High-importance memories
-- `memory://session/{id}` - Session memories
-- `memory://sessions` - All sessions
-- `memory://search` - Search interface
-- `memory://summary` - Statistics
-
-#### Tech Stack
-- TypeScript + ESM modules
-- Redis (ioredis)
-- OpenAI embeddings
-- MCP SDK
-- Zod validation
-- ULID identifiers
+**Tools:** 6
+**Resources:** 8
+**Prompts:** 0
 
 ---
 
-## Migration Guide: 1.0.0 → 1.1.0
+## Migration Guides
 
-### Environment Variables
-Update your `.mcp.json` or config:
+### Migrating from v1.1.0 to v1.2.0
 
-**Before:**
+**No breaking changes.** All existing functionality works identically.
+
+**New features available immediately:**
+- Set `ttl_seconds` when creating memories
+- Use `export_memories` and `import_memories` tools
+- Access `memory://analytics` resource
+
+**Optional: Upgrade Redis connection**
+- Consider cloud Redis for remote access (Upstash, Redis Cloud, Railway)
+- See README for setup instructions
+
+### Migrating from v1.0.0 to v1.1.0
+
+**Breaking changes - Action required:**
+
+1. **Update environment variable**
 ```json
+// Before
 {
   "env": {
-    "REDIS_URL": "redis://localhost:6379",
     "OPENAI_API_KEY": "sk-..."
   }
 }
-```
 
-**After:**
-```json
+// After
 {
   "env": {
-    "REDIS_URL": "redis://localhost:6379",
     "ANTHROPIC_API_KEY": "sk-ant-..."
   }
 }
 ```
 
-### Data Migration
+2. **Embeddings migration (optional but recommended)**
+```javascript
+// Export without embeddings
+{tool: "export_memories", args: {include_embeddings: false}}
 
-⚠️ **Important**: Redis key structure has changed!
-
-**Before:** `memory:{id}`
-**After:** `ws:{workspace_id}:memory:{id}`
-
-If upgrading with existing data, you have two options:
-
-#### Option 1: Start Fresh (Recommended)
-```bash
-# Clear Redis
-redis-cli FLUSHDB
-
-# Or selectively delete old keys
-redis-cli KEYS "memory:*" | xargs redis-cli DEL
-redis-cli KEYS "memories:*" | xargs redis-cli DEL
-redis-cli KEYS "session:*" | xargs redis-cli DEL
+// Import with regenerated embeddings
+{tool: "import_memories", args: {data: "...", regenerate_embeddings: true}}
 ```
 
-#### Option 2: Migrate Data
-```bash
-# Create migration script (coming soon)
-# Will copy old keys to new workspace-prefixed format
-```
+3. **Workspace awareness**
+- Memories are now isolated by directory
+- Old memories without workspace prefix may need manual migration
+- Use Redis CLI to add `ws:{id}:` prefix if needed
 
-### Setup Command
+**Benefits:**
+- 10x cost reduction (~$2/day → ~$0.20/day)
+- No OpenAI dependency
+- Faster embedding generation
+- Better context management with smart tools
 
-**New command:**
-```bash
-claude mcp add-json --scope=user memory '{"command":"node","args":["/Users/joseairosa/Development/mcp/mem/dist/index.js"],"env":{"REDIS_URL":"redis://localhost:6379","ANTHROPIC_API_KEY":"YOUR_KEY"}}'
-```
+### Migrating to v1.0.0
 
-### Testing After Upgrade
-
-```bash
-# 1. Check server starts
-npm run build
-node dist/index.js
-# Should see: "MCP Memory Server started successfully"
-
-# 2. Test with Claude Code
-# Store a test memory
-claude> "Store a test memory with importance 8"
-
-# 3. Test new features
-claude> "Recall relevant context for testing"
-claude> "Summarize our session"
-
-# 4. Check workspace isolation
-# Verify workspace path in logs
-# Should see: "[MemoryStore] Workspace: /your/path"
-```
+Initial release - no migration needed.
 
 ---
 
-## Roadmap
+## Links
 
-### v1.2.0 (Planned)
-- Hook integration for auto-analysis before compaction
-- Memory consolidation (dedupe similar memories)
-- TTL support for temporary context
-- Memory relationships (graph structure)
-
-### v1.3.0 (Planned)
-- Web UI for memory management
-- Export/import functionality
-- Memory analytics dashboard
-- Cross-workspace pattern learning
-
-### v2.0.0 (Planned)
-- Alternative vector databases (Pinecone, Weaviate)
-- Redis Cluster support
-- Multi-user namespacing
-- Advanced context freshness tracking
+- **GitHub**: https://github.com/joseairosa/recall
+- **npm**: https://www.npmjs.com/package/@joseairosa/recall
+- **Issues**: https://github.com/joseairosa/recall/issues

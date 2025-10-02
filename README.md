@@ -6,6 +6,51 @@ Your AI assistant can now remember important context, decisions, and patterns ac
 
 ---
 
+## ⚠️ Security & Privacy Disclaimer
+
+**IMPORTANT: READ BEFORE USE**
+
+Recall stores conversation memories in Redis, which may contain sensitive information including:
+- Code snippets, API keys, credentials, and secrets discussed in conversations
+- Business logic, architecture decisions, and proprietary information
+- Personal data, team member names, and organizational details
+- Any other context shared with Claude during conversations
+
+**You are responsible for:**
+
+1. **Redis Security**: Ensure your Redis instance is properly secured with authentication, TLS encryption, and network access controls
+2. **Data Ownership**: Only use Redis servers that YOU control or have explicit permission to use
+3. **Access Control**: Understand who has access to your Redis instance and stored memories
+4. **Sensitive Data**: Never store memories on shared/public Redis instances if they contain sensitive information
+5. **Compliance**: Ensure your use complies with your organization's data policies and relevant regulations (GDPR, CCPA, etc.)
+
+**Disclaimer of Liability:**
+
+THIS SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND. THE AUTHOR (JOSÉ AIROSA) IS NOT LIABLE FOR:
+- Data breaches, leaks, or unauthorized access to stored memories
+- Loss of data or corrupted memories
+- Compliance violations or regulatory issues
+- Any damages arising from the use or misuse of this software
+
+By using Recall, you acknowledge that you understand these risks and accept full responsibility for:
+- Securing your Redis infrastructure
+- Managing access to stored memories
+- Protecting sensitive information
+- Compliance with applicable laws and regulations
+
+**Best Practices:**
+- Use dedicated Redis instances with strong authentication
+- Enable TLS/SSL encryption (rediss://) for remote connections
+- Regularly audit stored memories for sensitive data
+- Implement Redis access controls and firewall rules
+- Use separate Redis databases for different security contexts
+- Consider data retention policies and periodic cleanup
+- Never share Redis credentials or connection strings publicly
+
+See the [Security Considerations](#security-considerations) section below for detailed guidance.
+
+---
+
 ## What is This?
 
 Recall is a **brain extension** for Claude that stores memories in Redis. It solves the context window problem by:
@@ -57,14 +102,36 @@ Then use the provided connection URL in your config:
 
 ### 2. Install
 
+**Option A: Using Claude CLI (Recommended)**
+
+```bash
+npx @modelcontextprotocol/create-server @joseairosa/recall
+```
+
+Or use the MCP command directly in your Claude configuration (no installation needed):
+
+```json
+{
+  "mcpServers": {
+    "recall": {
+      "command": "npx",
+      "args": ["-y", "@joseairosa/recall"]
+    }
+  }
+}
+```
+
+**Option B: Global installation**
+
 ```bash
 npm install -g @joseairosa/recall
 ```
 
-Or from source:
+**Option C: From source**
+
 ```bash
-git clone <repo-url>
-cd mem
+git clone https://github.com/joseairosa/recall.git
+cd recall
 npm install
 npm run build
 ```
@@ -257,6 +324,65 @@ Want to:
 
 See [Configuration](#configuration) section for cloud Redis setup.
 
+### Organizational Shared Memory
+
+**Recall enables teams to build collective knowledge** that all Claude instances can access. Perfect for:
+
+**🏢 Organization-wide learning:**
+- Share coding standards, architecture decisions, and best practices across the entire team
+- Build a living knowledge base that grows with every conversation
+- New team members instantly access organizational context and conventions
+
+**👥 Team collaboration:**
+- Multiple developers using Claude can contribute to and benefit from shared memories
+- Consistent answers to "how do we do X?" across all team members
+- Preserve institutional knowledge even as team composition changes
+
+**🔄 Cross-project patterns:**
+- Share common patterns and solutions across different projects
+- Build reusable memory templates for similar workflows
+- Reduce repetitive explanations of organizational context
+
+**Setup for shared organizational memory:**
+
+1. **Deploy shared Redis instance:**
+   ```bash
+   # Use any cloud Redis service (Upstash, Redis Cloud, etc.)
+   # Or deploy your own Redis server
+   ```
+
+2. **Share Redis URL with team:**
+   ```json
+   {
+     "env": {
+       "REDIS_URL": "rediss://your-org-redis.com:6379"
+     }
+   }
+   ```
+
+3. **Define shared workspace path:**
+   - Option A: Use a fixed workspace path for org-wide memories
+   - Option B: Wait for v1.3.0 global memories feature for automatic sharing
+   - Option C: Use project-based isolation but share Redis for cross-project search
+
+**Example workflow:**
+```
+Developer A: "Remember: Our API rate limit is 1000 requests/minute"
+           [Stored in shared Redis]
+
+Developer B: "What's our API rate limit?"
+           [Claude retrieves from shared memory]
+           "Your API rate limit is 1000 requests/minute"
+```
+
+**Security considerations:**
+- Use Redis authentication and TLS (rediss://) for sensitive data
+- Consider separate Redis databases for different teams/projects
+- Implement access controls at the Redis level
+- Audit memory contents periodically for sensitive information
+
+See [WORKSPACE_MODES.md](WORKSPACE_MODES.md) for future plans on enhanced organizational memory features.
+
 ### Future: Global Memories
 
 Coming in v1.3.0: Support for **global memories** that work across all workspaces (e.g., personal preferences, team conventions). See [WORKSPACE_MODES.md](WORKSPACE_MODES.md) for details.
@@ -440,6 +566,147 @@ Very affordable! Estimated **~$0.20/day** for active development:
 - Uses Claude Haiku (cheapest model) for analysis
 - Hybrid embeddings reduce API calls
 - Redis in-memory storage is fast and free
+
+---
+
+## Security Considerations
+
+### Data Sensitivity
+
+Recall stores all conversation context that Claude deems important, which may include:
+- **Credentials**: API keys, passwords, tokens mentioned in conversations
+- **Code**: Proprietary algorithms, business logic, security implementations
+- **Personal Information**: Names, emails, organizational structures
+- **Business Secrets**: Strategic decisions, financial data, competitive information
+
+**Critical Security Rules:**
+
+1. **Never use public/shared Redis instances** for sensitive projects
+2. **Never share Redis connection strings** in public repositories or documentation
+3. **Always use authentication** - Configure Redis with `requirepass`
+4. **Always use TLS** for remote connections - Use `rediss://` not `redis://`
+5. **Audit regularly** - Review stored memories for inadvertently captured secrets
+
+### Redis Security Configuration
+
+**Local Redis (Development):**
+```bash
+# Enable authentication
+redis-server --requirepass your-strong-password
+
+# Use in config:
+# REDIS_URL=redis://:your-strong-password@localhost:6379
+```
+
+**Production Redis (Cloud/Remote):**
+```json
+{
+  "env": {
+    "REDIS_URL": "rediss://:password@your-redis-host.com:6379"
+  }
+}
+```
+
+**Additional Redis security:**
+- Bind to specific IPs: `bind 127.0.0.1 ::1` (local only)
+- Disable dangerous commands: `rename-command FLUSHALL ""`
+- Use firewall rules to restrict access
+- Enable Redis ACLs for fine-grained permissions (Redis 6+)
+- Regular backups with encrypted storage
+
+### Organizational Deployments
+
+When deploying for team/organizational use:
+
+**Infrastructure Security:**
+- Deploy Redis in private VPC/network
+- Use dedicated Redis instance (not shared with other services)
+- Enable Redis encryption at rest
+- Implement network segmentation and access controls
+- Use VPN or private network access for remote connections
+
+**Access Management:**
+- Document who has Redis access
+- Use separate Redis databases for different teams/security levels
+- Implement audit logging for Redis access
+- Regular access reviews and credential rotation
+- Consider using Redis Enterprise with RBAC
+
+**Data Governance:**
+- Define data retention policies
+- Implement automated cleanup of old/stale memories
+- Create backup and disaster recovery procedures
+- Document compliance requirements (GDPR, HIPAA, SOC2, etc.)
+- Train users on what not to store in memories
+
+**Example: Multi-team isolation using Redis databases:**
+```json
+{
+  "engineering-team": {
+    "REDIS_URL": "rediss://:password@redis.company.com:6379/0"
+  },
+  "product-team": {
+    "REDIS_URL": "rediss://:password@redis.company.com:6379/1"
+  },
+  "exec-team": {
+    "REDIS_URL": "rediss://:password@redis-exec.company.com:6379/0"
+  }
+}
+```
+
+### Incident Response
+
+If you suspect a security breach:
+
+1. **Immediately rotate Redis credentials**
+2. **Audit Redis access logs** for unauthorized access
+3. **Review stored memories** for exposed sensitive data
+4. **Flush compromised data** using `export_memories` + selective deletion
+5. **Update all team members** with new credentials
+6. **Review and strengthen** security controls
+
+### Compliance Considerations
+
+**GDPR (EU):**
+- Memories may contain personal data - ensure lawful basis for processing
+- Implement data subject access rights (export/delete memories)
+- Document data processing activities
+- Ensure adequate security measures
+
+**CCPA (California):**
+- Disclose data collection and storage practices
+- Provide mechanisms for data deletion
+- Honor do-not-sell requests
+
+**HIPAA (Healthcare):**
+- Do not store PHI (Protected Health Information) in memories
+- Use BAA-compliant Redis hosting if healthcare-related
+- Implement encryption at rest and in transit
+
+**SOC2/ISO27001:**
+- Document security controls and procedures
+- Implement access logging and monitoring
+- Regular security assessments and audits
+
+### Developer Responsibilities
+
+As a developer using Recall, you must:
+
+✅ **Do:**
+- Use secure, authenticated Redis instances
+- Enable TLS for all remote connections
+- Regularly audit stored memories
+- Implement proper access controls
+- Train your team on security best practices
+- Have incident response procedures
+- Comply with your organization's security policies
+
+❌ **Don't:**
+- Use public Redis instances for any sensitive data
+- Store credentials or secrets in memories (use environment variables/secret managers instead)
+- Share Redis connection strings publicly
+- Ignore security warnings or skip authentication
+- Store regulated data (PII, PHI, PCI) without proper controls
 
 ---
 

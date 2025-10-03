@@ -8,6 +8,8 @@ import {
   DeleteMemorySchema,
   SearchMemorySchema,
   OrganizeSessionSchema,
+  ConvertToGlobalSchema,
+  ConvertToWorkspaceSchema,
 } from '../types.js';
 import {
   recall_relevant_context,
@@ -290,6 +292,87 @@ export const tools = {
         throw new McpError(
           ErrorCode.InternalError,
           `Failed to organize session: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    },
+  },
+
+  // Global memory conversion tools
+  convert_to_global: {
+    description: 'Convert a workspace-specific memory to global (accessible across all workspaces)',
+    inputSchema: zodToJsonSchema(ConvertToGlobalSchema),
+    handler: async (args: z.infer<typeof ConvertToGlobalSchema>) => {
+      try {
+        const result = await memoryStore.convertToGlobal(args.memory_id);
+
+        if (!result) {
+          throw new McpError(
+            ErrorCode.InvalidRequest,
+            `Memory not found: ${args.memory_id}`
+          );
+        }
+
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: true,
+                memory_id: result.id,
+                is_global: result.is_global,
+                content: result.content,
+                message: 'Memory converted to global successfully',
+              }, null, 2),
+            },
+          ],
+        };
+      } catch (error) {
+        if (error instanceof McpError) throw error;
+        throw new McpError(
+          ErrorCode.InternalError,
+          `Failed to convert memory to global: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    },
+  },
+
+  convert_to_workspace: {
+    description: 'Convert a global memory to workspace-specific',
+    inputSchema: zodToJsonSchema(ConvertToWorkspaceSchema),
+    handler: async (args: z.infer<typeof ConvertToWorkspaceSchema>) => {
+      try {
+        const result = await memoryStore.convertToWorkspace(
+          args.memory_id,
+          args.workspace_id
+        );
+
+        if (!result) {
+          throw new McpError(
+            ErrorCode.InvalidRequest,
+            `Memory not found: ${args.memory_id}`
+          );
+        }
+
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: true,
+                memory_id: result.id,
+                is_global: result.is_global,
+                workspace_id: result.workspace_id,
+                content: result.content,
+                message: 'Memory converted to workspace-specific successfully',
+              }, null, 2),
+            },
+          ],
+        };
+      } catch (error) {
+        if (error instanceof McpError) throw error;
+        throw new McpError(
+          ErrorCode.InternalError,
+          `Failed to convert memory to workspace: ${error instanceof Error ? error.message : String(error)}`
         );
       }
     },

@@ -191,6 +191,61 @@ Then in a new conversation:
 
 ---
 
+## Upgrading
+
+### Automatic Updates (Recommended)
+
+If you use **`npx -y @joseairosa/recall`** in your config, you **automatically get the latest version** on every Claude restart. No action needed! 🎉
+
+```json
+{
+  "mcpServers": {
+    "recall": {
+      "command": "npx",
+      "args": ["-y", "@joseairosa/recall"]  // ← Always fetches latest
+    }
+  }
+}
+```
+
+### Manual Updates
+
+**If using global installation:**
+
+```bash
+# Update to latest version
+npm update -g @joseairosa/recall
+
+# Or install specific version
+npm install -g @joseairosa/recall@1.3.0
+
+# Check installed version
+npm list -g @joseairosa/recall
+```
+
+**If using from source:**
+
+```bash
+cd recall
+git pull origin main
+npm install
+npm run build
+```
+
+**After updating:**
+1. Restart Claude Code or Claude Desktop
+2. Verify new version: Ask Claude "What Recall version are you using?"
+3. Check CHANGELOG.md for new features and breaking changes
+
+### Version-Specific Upgrades
+
+**Upgrading to v1.3.0:**
+- No breaking changes, fully backward compatible
+- To use global memories: Add `WORKSPACE_MODE=hybrid` to your config
+- See [Migration Guide](#migrating-from-v121-to-v130) below
+
+---
+
 ## How to Use
 
 ### Store Important Information

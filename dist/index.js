@@ -205,7 +205,9 @@ var MemoryEntrySchema = z.object({
   session_id: z.string().optional().describe("Optional session grouping"),
   embedding: z.array(z.number()).optional().describe("Vector embedding"),
   ttl_seconds: z.number().optional().describe("Time-to-live in seconds (auto-expires)"),
-  expires_at: z.number().optional().describe("Unix timestamp when memory expires")
+  expires_at: z.number().optional().describe("Unix timestamp when memory expires"),
+  is_global: z.boolean().default(false).describe("If true, memory is accessible across all workspaces"),
+  workspace_id: z.string().describe("Workspace identifier (empty for global memories)")
 });
 var CreateMemorySchema = z.object({
   content: z.string().min(1).describe("The memory content to store"),
@@ -214,7 +216,8 @@ var CreateMemorySchema = z.object({
   importance: z.number().min(1).max(10).default(5).describe("Importance score 1-10"),
   summary: z.string().optional().describe("Optional summary"),
   session_id: z.string().optional().describe("Optional session ID"),
-  ttl_seconds: z.number().min(60).optional().describe("Time-to-live in seconds (minimum 60s)")
+  ttl_seconds: z.number().min(60).optional().describe("Time-to-live in seconds (minimum 60s)"),
+  is_global: z.boolean().default(false).describe("If true, memory is accessible across all workspaces")
 });
 var BatchCreateMemoriesSchema = z.object({
   memories: z.array(CreateMemorySchema).min(1).describe("Array of memories to store")
@@ -250,6 +253,18 @@ function createWorkspaceId(path) {
     hash = hash & hash;
   }
   return Math.abs(hash).toString(36);
+}
+function getWorkspaceMode() {
+  const mode = process.env.WORKSPACE_MODE?.toLowerCase();
+  switch (mode) {
+    case "global":
+      return "global" /* GLOBAL */;
+    case "hybrid":
+      return "hybrid" /* HYBRID */;
+    case "isolated":
+    default:
+      return "isolated" /* ISOLATED */;
+  }
 }
 var RecallContextSchema = z.object({
   current_task: z.string().describe("Description of what I'm currently working on"),
@@ -288,6 +303,7 @@ var ConsolidateMemoriesSchema = z.object({
   keep_id: z.string().optional().describe("Optional ID of memory to keep (default: highest importance)")
 });
 var RedisKeys = {
+  // Workspace-scoped keys
   memory: (workspace, id) => `ws:${workspace}:memory:${id}`,
   memories: (workspace) => `ws:${workspace}:memories:all`,
   byType: (workspace, type) => `ws:${workspace}:memories:type:${type}`,
@@ -295,8 +311,22 @@ var RedisKeys = {
   timeline: (workspace) => `ws:${workspace}:memories:timeline`,
   session: (workspace, id) => `ws:${workspace}:session:${id}`,
   sessions: (workspace) => `ws:${workspace}:sessions:all`,
-  important: (workspace) => `ws:${workspace}:memories:important`
+  important: (workspace) => `ws:${workspace}:memories:important`,
+  // Global keys (workspace-independent)
+  globalMemory: (id) => `global:memory:${id}`,
+  globalMemories: () => `global:memories:all`,
+  globalByType: (type) => `global:memories:type:${type}`,
+  globalByTag: (tag) => `global:memories:tag:${tag}`,
+  globalTimeline: () => `global:memories:timeline`,
+  globalImportant: () => `global:memories:important`
 };
+var ConvertToGlobalSchema = z.object({
+  memory_id: z.string().describe("ID of the memory to convert to global")
+});
+var ConvertToWorkspaceSchema = z.object({
+  memory_id: z.string().describe("ID of the global memory to convert to workspace-specific"),
+  workspace_id: z.string().optional().describe("Target workspace (default: current workspace)")
+});
 
 // src/redis/memory-store.ts
 var MemoryStore = class {
@@ -320,6 +350,7 @@ var MemoryStore = class {
     if (data.ttl_seconds) {
       expiresAt = timestamp + data.ttl_seconds * 1e3;
     }
+    const isGlobal = data.is_global || false;
     const memory = {
       id,
       timestamp,
@@ -331,21 +362,36 @@ var MemoryStore = class {
       session_id: data.session_id,
       embedding,
       ttl_seconds: data.ttl_seconds,
-      expires_at: expiresAt
+      expires_at: expiresAt,
+      is_global: isGlobal,
+      workspace_id: isGlobal ? "" : this.workspaceId
     };
     const pipeline = this.redis.pipeline();
-    pipeline.hset(RedisKeys.memory(this.workspaceId, id), this.serializeMemory(memory));
+    const memoryKey = isGlobal ? RedisKeys.globalMemory(id) : RedisKeys.memory(this.workspaceId, id);
+    pipeline.hset(memoryKey, this.serializeMemory(memory));
     if (data.ttl_seconds) {
-      pipeline.expire(RedisKeys.memory(this.workspaceId, id), data.ttl_seconds);
+      pipeline.expire(memoryKey, data.ttl_seconds);
     }
-    pipeline.sadd(RedisKeys.memories(this.workspaceId), id);
-    pipeline.zadd(RedisKeys.timeline(this.workspaceId), timestamp, id);
-    pipeline.sadd(RedisKeys.byType(this.workspaceId, data.context_type), id);
-    for (const tag of data.tags) {
-      pipeline.sadd(RedisKeys.byTag(this.workspaceId, tag), id);
-    }
-    if (data.importance >= 8) {
-      pipeline.zadd(RedisKeys.important(this.workspaceId), data.importance, id);
+    if (isGlobal) {
+      pipeline.sadd(RedisKeys.globalMemories(), id);
+      pipeline.zadd(RedisKeys.globalTimeline(), timestamp, id);
+      pipeline.sadd(RedisKeys.globalByType(data.context_type), id);
+      for (const tag of data.tags) {
+        pipeline.sadd(RedisKeys.globalByTag(tag), id);
+      }
+      if (data.importance >= 8) {
+        pipeline.zadd(RedisKeys.globalImportant(), data.importance, id);
+      }
+    } else {
+      pipeline.sadd(RedisKeys.memories(this.workspaceId), id);
+      pipeline.zadd(RedisKeys.timeline(this.workspaceId), timestamp, id);
+      pipeline.sadd(RedisKeys.byType(this.workspaceId, data.context_type), id);
+      for (const tag of data.tags) {
+        pipeline.sadd(RedisKeys.byTag(this.workspaceId, tag), id);
+      }
+      if (data.importance >= 8) {
+        pipeline.zadd(RedisKeys.important(this.workspaceId), data.importance, id);
+      }
     }
     await pipeline.exec();
     return memory;
@@ -359,13 +405,31 @@ var MemoryStore = class {
     }
     return results;
   }
-  // Get memory by ID
-  async getMemory(id) {
-    const data = await this.redis.hgetall(RedisKeys.memory(this.workspaceId, id));
-    if (!data || Object.keys(data).length === 0) {
+  // Get memory by ID (checks both workspace and global)
+  async getMemory(id, isGlobal) {
+    if (isGlobal === true) {
+      const globalData2 = await this.redis.hgetall(RedisKeys.globalMemory(id));
+      if (globalData2 && Object.keys(globalData2).length > 0) {
+        return this.deserializeMemory(globalData2);
+      }
       return null;
     }
-    return this.deserializeMemory(data);
+    if (isGlobal === false) {
+      const wsData2 = await this.redis.hgetall(RedisKeys.memory(this.workspaceId, id));
+      if (wsData2 && Object.keys(wsData2).length > 0) {
+        return this.deserializeMemory(wsData2);
+      }
+      return null;
+    }
+    const wsData = await this.redis.hgetall(RedisKeys.memory(this.workspaceId, id));
+    if (wsData && Object.keys(wsData).length > 0) {
+      return this.deserializeMemory(wsData);
+    }
+    const globalData = await this.redis.hgetall(RedisKeys.globalMemory(id));
+    if (globalData && Object.keys(globalData).length > 0) {
+      return this.deserializeMemory(globalData);
+    }
+    return null;
   }
   // Get multiple memories by IDs
   async getMemories(ids) {
@@ -378,38 +442,103 @@ var MemoryStore = class {
     }
     return memories;
   }
-  // Get recent memories
+  // Get recent memories (respects workspace mode)
   async getRecentMemories(limit = 50) {
-    const ids = await this.redis.zrevrange(RedisKeys.timeline(this.workspaceId), 0, limit - 1);
-    return this.getMemories(ids);
+    const mode = getWorkspaceMode();
+    if (mode === "global" /* GLOBAL */) {
+      const ids = await this.redis.zrevrange(RedisKeys.globalTimeline(), 0, limit - 1);
+      return this.getMemories(ids);
+    } else if (mode === "isolated" /* ISOLATED */) {
+      const ids = await this.redis.zrevrange(RedisKeys.timeline(this.workspaceId), 0, limit - 1);
+      return this.getMemories(ids);
+    } else {
+      const wsIds = await this.redis.zrevrange(RedisKeys.timeline(this.workspaceId), 0, limit - 1);
+      const globalIds = await this.redis.zrevrange(RedisKeys.globalTimeline(), 0, limit - 1);
+      const allMemories = await this.getMemories([...wsIds, ...globalIds]);
+      allMemories.sort((a, b) => b.timestamp - a.timestamp);
+      return allMemories.slice(0, limit);
+    }
   }
-  // Get memories by type
+  // Get memories by type (respects workspace mode)
   async getMemoriesByType(type, limit) {
-    const ids = await this.redis.smembers(RedisKeys.byType(this.workspaceId, type));
+    const mode = getWorkspaceMode();
+    let ids = [];
+    if (mode === "global" /* GLOBAL */) {
+      ids = await this.redis.smembers(RedisKeys.globalByType(type));
+    } else if (mode === "isolated" /* ISOLATED */) {
+      ids = await this.redis.smembers(RedisKeys.byType(this.workspaceId, type));
+    } else {
+      const wsIds = await this.redis.smembers(RedisKeys.byType(this.workspaceId, type));
+      const globalIds = await this.redis.smembers(RedisKeys.globalByType(type));
+      ids = [.../* @__PURE__ */ new Set([...wsIds, ...globalIds])];
+    }
     const memories = await this.getMemories(ids);
     memories.sort((a, b) => b.timestamp - a.timestamp);
     return limit ? memories.slice(0, limit) : memories;
   }
-  // Get memories by tag
+  // Get memories by tag (respects workspace mode)
   async getMemoriesByTag(tag, limit) {
-    const ids = await this.redis.smembers(RedisKeys.byTag(this.workspaceId, tag));
+    const mode = getWorkspaceMode();
+    let ids = [];
+    if (mode === "global" /* GLOBAL */) {
+      ids = await this.redis.smembers(RedisKeys.globalByTag(tag));
+    } else if (mode === "isolated" /* ISOLATED */) {
+      ids = await this.redis.smembers(RedisKeys.byTag(this.workspaceId, tag));
+    } else {
+      const wsIds = await this.redis.smembers(RedisKeys.byTag(this.workspaceId, tag));
+      const globalIds = await this.redis.smembers(RedisKeys.globalByTag(tag));
+      ids = [.../* @__PURE__ */ new Set([...wsIds, ...globalIds])];
+    }
     const memories = await this.getMemories(ids);
     memories.sort((a, b) => b.timestamp - a.timestamp);
     return limit ? memories.slice(0, limit) : memories;
   }
-  // Get important memories
+  // Get important memories (respects workspace mode)
   async getImportantMemories(minImportance = 8, limit) {
-    const results = await this.redis.zrevrangebyscore(
-      RedisKeys.important(this.workspaceId),
-      10,
-      minImportance,
-      "LIMIT",
-      0,
-      limit || 100
-    );
+    const mode = getWorkspaceMode();
+    let results = [];
+    if (mode === "global" /* GLOBAL */) {
+      results = await this.redis.zrevrangebyscore(
+        RedisKeys.globalImportant(),
+        10,
+        minImportance,
+        "LIMIT",
+        0,
+        limit || 100
+      );
+    } else if (mode === "isolated" /* ISOLATED */) {
+      results = await this.redis.zrevrangebyscore(
+        RedisKeys.important(this.workspaceId),
+        10,
+        minImportance,
+        "LIMIT",
+        0,
+        limit || 100
+      );
+    } else {
+      const wsResults = await this.redis.zrevrangebyscore(
+        RedisKeys.important(this.workspaceId),
+        10,
+        minImportance,
+        "LIMIT",
+        0,
+        limit || 100
+      );
+      const globalResults = await this.redis.zrevrangebyscore(
+        RedisKeys.globalImportant(),
+        10,
+        minImportance,
+        "LIMIT",
+        0,
+        limit || 100
+      );
+      const allMemories = await this.getMemories([...wsResults, ...globalResults]);
+      allMemories.sort((a, b) => b.importance - a.importance);
+      return allMemories.slice(0, limit || 100);
+    }
     return this.getMemories(results);
   }
-  // Update memory
+  // Update memory (handles both workspace and global)
   async updateMemory(id, updates) {
     const existing = await this.getMemory(id);
     if (!existing) {
@@ -426,73 +555,140 @@ var MemoryStore = class {
       embedding,
       summary: updates.summary || (updates.content ? this.generateSummary(updates.content) : existing.summary)
     };
-    pipeline.hset(RedisKeys.memory(this.workspaceId, id), this.serializeMemory(updated));
+    const isGlobal = existing.is_global;
+    const memoryKey = isGlobal ? RedisKeys.globalMemory(id) : RedisKeys.memory(this.workspaceId, id);
+    pipeline.hset(memoryKey, this.serializeMemory(updated));
     if (updates.context_type && updates.context_type !== existing.context_type) {
-      pipeline.srem(RedisKeys.byType(this.workspaceId, existing.context_type), id);
-      pipeline.sadd(RedisKeys.byType(this.workspaceId, updates.context_type), id);
+      if (isGlobal) {
+        pipeline.srem(RedisKeys.globalByType(existing.context_type), id);
+        pipeline.sadd(RedisKeys.globalByType(updates.context_type), id);
+      } else {
+        pipeline.srem(RedisKeys.byType(this.workspaceId, existing.context_type), id);
+        pipeline.sadd(RedisKeys.byType(this.workspaceId, updates.context_type), id);
+      }
     }
     if (updates.tags) {
       for (const tag of existing.tags) {
         if (!updates.tags.includes(tag)) {
-          pipeline.srem(RedisKeys.byTag(this.workspaceId, tag), id);
+          if (isGlobal) {
+            pipeline.srem(RedisKeys.globalByTag(tag), id);
+          } else {
+            pipeline.srem(RedisKeys.byTag(this.workspaceId, tag), id);
+          }
         }
       }
       for (const tag of updates.tags) {
         if (!existing.tags.includes(tag)) {
-          pipeline.sadd(RedisKeys.byTag(this.workspaceId, tag), id);
+          if (isGlobal) {
+            pipeline.sadd(RedisKeys.globalByTag(tag), id);
+          } else {
+            pipeline.sadd(RedisKeys.byTag(this.workspaceId, tag), id);
+          }
         }
       }
     }
     if (updates.importance !== void 0) {
       if (existing.importance >= 8) {
-        pipeline.zrem(RedisKeys.important(this.workspaceId), id);
+        if (isGlobal) {
+          pipeline.zrem(RedisKeys.globalImportant(), id);
+        } else {
+          pipeline.zrem(RedisKeys.important(this.workspaceId), id);
+        }
       }
       if (updates.importance >= 8) {
-        pipeline.zadd(RedisKeys.important(this.workspaceId), updates.importance, id);
+        if (isGlobal) {
+          pipeline.zadd(RedisKeys.globalImportant(), updates.importance, id);
+        } else {
+          pipeline.zadd(RedisKeys.important(this.workspaceId), updates.importance, id);
+        }
       }
     }
     await pipeline.exec();
     return updated;
   }
-  // Delete memory
+  // Delete memory (handles both workspace and global)
   async deleteMemory(id) {
     const memory = await this.getMemory(id);
     if (!memory) {
       return false;
     }
     const pipeline = this.redis.pipeline();
-    pipeline.del(RedisKeys.memory(this.workspaceId, id));
-    pipeline.srem(RedisKeys.memories(this.workspaceId), id);
-    pipeline.zrem(RedisKeys.timeline(this.workspaceId), id);
-    pipeline.srem(RedisKeys.byType(this.workspaceId, memory.context_type), id);
-    for (const tag of memory.tags) {
-      pipeline.srem(RedisKeys.byTag(this.workspaceId, tag), id);
-    }
-    if (memory.importance >= 8) {
-      pipeline.zrem(RedisKeys.important(this.workspaceId), id);
+    const isGlobal = memory.is_global;
+    if (isGlobal) {
+      pipeline.del(RedisKeys.globalMemory(id));
+      pipeline.srem(RedisKeys.globalMemories(), id);
+      pipeline.zrem(RedisKeys.globalTimeline(), id);
+      pipeline.srem(RedisKeys.globalByType(memory.context_type), id);
+      for (const tag of memory.tags) {
+        pipeline.srem(RedisKeys.globalByTag(tag), id);
+      }
+      if (memory.importance >= 8) {
+        pipeline.zrem(RedisKeys.globalImportant(), id);
+      }
+    } else {
+      pipeline.del(RedisKeys.memory(this.workspaceId, id));
+      pipeline.srem(RedisKeys.memories(this.workspaceId), id);
+      pipeline.zrem(RedisKeys.timeline(this.workspaceId), id);
+      pipeline.srem(RedisKeys.byType(this.workspaceId, memory.context_type), id);
+      for (const tag of memory.tags) {
+        pipeline.srem(RedisKeys.byTag(this.workspaceId, tag), id);
+      }
+      if (memory.importance >= 8) {
+        pipeline.zrem(RedisKeys.important(this.workspaceId), id);
+      }
     }
     await pipeline.exec();
     return true;
   }
-  // Semantic search
+  // Semantic search (respects workspace mode with global memory weighting)
   async searchMemories(query, limit = 10, minImportance, contextTypes) {
     const queryEmbedding = await generateEmbedding(query);
-    let ids;
-    if (contextTypes && contextTypes.length > 0) {
-      const sets = contextTypes.map((type) => RedisKeys.byType(this.workspaceId, type));
-      ids = await this.redis.sunion(...sets);
+    const mode = getWorkspaceMode();
+    let memories = [];
+    if (mode === "global" /* GLOBAL */) {
+      let ids;
+      if (contextTypes && contextTypes.length > 0) {
+        const sets = contextTypes.map((type) => RedisKeys.globalByType(type));
+        ids = await this.redis.sunion(...sets);
+      } else {
+        ids = await this.redis.smembers(RedisKeys.globalMemories());
+      }
+      memories = await this.getMemories(ids);
+    } else if (mode === "isolated" /* ISOLATED */) {
+      let ids;
+      if (contextTypes && contextTypes.length > 0) {
+        const sets = contextTypes.map((type) => RedisKeys.byType(this.workspaceId, type));
+        ids = await this.redis.sunion(...sets);
+      } else {
+        ids = await this.redis.smembers(RedisKeys.memories(this.workspaceId));
+      }
+      memories = await this.getMemories(ids);
     } else {
-      ids = await this.redis.smembers(RedisKeys.memories(this.workspaceId));
+      let wsIds;
+      let globalIds;
+      if (contextTypes && contextTypes.length > 0) {
+        const wsSets = contextTypes.map((type) => RedisKeys.byType(this.workspaceId, type));
+        const globalSets = contextTypes.map((type) => RedisKeys.globalByType(type));
+        wsIds = await this.redis.sunion(...wsSets);
+        globalIds = await this.redis.sunion(...globalSets);
+      } else {
+        wsIds = await this.redis.smembers(RedisKeys.memories(this.workspaceId));
+        globalIds = await this.redis.smembers(RedisKeys.globalMemories());
+      }
+      memories = await this.getMemories([...wsIds, ...globalIds]);
     }
-    const memories = await this.getMemories(ids);
     let filtered = memories;
     if (minImportance !== void 0) {
       filtered = memories.filter((m) => m.importance >= minImportance);
     }
-    const withSimilarity = filtered.map((memory) => ({
-      ...memory,
-      similarity: memory.embedding ? cosineSimilarity(queryEmbedding, memory.embedding) : 0
-    }));
+    const withSimilarity = filtered.map((memory) => {
+      const baseSimilarity = memory.embedding ? cosineSimilarity(queryEmbedding, memory.embedding) : 0;
+      const similarity = mode === "hybrid" /* HYBRID */ && memory.is_global ? baseSimilarity * 0.9 : baseSimilarity;
+      return {
+        ...memory,
+        similarity
+      };
+    });
     withSimilarity.sort((a, b) => b.similarity - a.similarity);
     return withSimilarity.slice(0, limit);
   }
@@ -632,7 +828,9 @@ ${contentParts.join("\n\n")}` : toKeep.content;
       session_id: memory.session_id || "",
       embedding: JSON.stringify(memory.embedding || []),
       ttl_seconds: memory.ttl_seconds?.toString() || "",
-      expires_at: memory.expires_at?.toString() || ""
+      expires_at: memory.expires_at?.toString() || "",
+      is_global: memory.is_global ? "true" : "false",
+      workspace_id: memory.workspace_id || ""
     };
   }
   // Helper: Deserialize memory from Redis
@@ -648,8 +846,87 @@ ${contentParts.join("\n\n")}` : toKeep.content;
       session_id: data.session_id || void 0,
       embedding: JSON.parse(data.embedding || "[]"),
       ttl_seconds: data.ttl_seconds ? parseInt(data.ttl_seconds, 10) : void 0,
-      expires_at: data.expires_at ? parseInt(data.expires_at, 10) : void 0
+      expires_at: data.expires_at ? parseInt(data.expires_at, 10) : void 0,
+      is_global: data.is_global === "true",
+      workspace_id: data.workspace_id || ""
     };
+  }
+  // Convert workspace memory to global
+  async convertToGlobal(memoryId) {
+    const memory = await this.getMemory(memoryId);
+    if (!memory) {
+      return null;
+    }
+    if (memory.is_global) {
+      return memory;
+    }
+    const pipeline = this.redis.pipeline();
+    pipeline.del(RedisKeys.memory(this.workspaceId, memoryId));
+    pipeline.srem(RedisKeys.memories(this.workspaceId), memoryId);
+    pipeline.zrem(RedisKeys.timeline(this.workspaceId), memoryId);
+    pipeline.srem(RedisKeys.byType(this.workspaceId, memory.context_type), memoryId);
+    for (const tag of memory.tags) {
+      pipeline.srem(RedisKeys.byTag(this.workspaceId, tag), memoryId);
+    }
+    if (memory.importance >= 8) {
+      pipeline.zrem(RedisKeys.important(this.workspaceId), memoryId);
+    }
+    const globalMemory = {
+      ...memory,
+      is_global: true,
+      workspace_id: ""
+    };
+    pipeline.hset(RedisKeys.globalMemory(memoryId), this.serializeMemory(globalMemory));
+    pipeline.sadd(RedisKeys.globalMemories(), memoryId);
+    pipeline.zadd(RedisKeys.globalTimeline(), memory.timestamp, memoryId);
+    pipeline.sadd(RedisKeys.globalByType(memory.context_type), memoryId);
+    for (const tag of memory.tags) {
+      pipeline.sadd(RedisKeys.globalByTag(tag), memoryId);
+    }
+    if (memory.importance >= 8) {
+      pipeline.zadd(RedisKeys.globalImportant(), memory.importance, memoryId);
+    }
+    await pipeline.exec();
+    return globalMemory;
+  }
+  // Convert global memory to workspace
+  async convertToWorkspace(memoryId, targetWorkspaceId) {
+    const memory = await this.getMemory(memoryId);
+    if (!memory) {
+      return null;
+    }
+    if (!memory.is_global) {
+      return memory;
+    }
+    const workspaceId = targetWorkspaceId || this.workspaceId;
+    const pipeline = this.redis.pipeline();
+    pipeline.del(RedisKeys.globalMemory(memoryId));
+    pipeline.srem(RedisKeys.globalMemories(), memoryId);
+    pipeline.zrem(RedisKeys.globalTimeline(), memoryId);
+    pipeline.srem(RedisKeys.globalByType(memory.context_type), memoryId);
+    for (const tag of memory.tags) {
+      pipeline.srem(RedisKeys.globalByTag(tag), memoryId);
+    }
+    if (memory.importance >= 8) {
+      pipeline.zrem(RedisKeys.globalImportant(), memoryId);
+    }
+    const workspaceMemory = {
+      ...memory,
+      is_global: false,
+      workspace_id: workspaceId
+    };
+    pipeline.hset(RedisKeys.memory(workspaceId, memoryId), this.serializeMemory(workspaceMemory));
+    pipeline.sadd(RedisKeys.memories(workspaceId), memoryId);
+    pipeline.zadd(RedisKeys.timeline(workspaceId), memory.timestamp, memoryId);
+    pipeline.sadd(RedisKeys.byType(workspaceId, memory.context_type), memoryId);
+    for (const tag of memory.tags) {
+      pipeline.sadd(RedisKeys.byTag(workspaceId, tag), memoryId);
+    }
+    if (memory.importance >= 8) {
+      pipeline.zadd(RedisKeys.important(workspaceId), memory.importance, memoryId);
+    }
+    await pipeline.exec();
+    return workspaceMemory;
   }
 };
 
@@ -1538,6 +1815,81 @@ var tools = {
         throw new McpError2(
           ErrorCode2.InternalError,
           `Failed to organize session: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+  },
+  // Global memory conversion tools
+  convert_to_global: {
+    description: "Convert a workspace-specific memory to global (accessible across all workspaces)",
+    inputSchema: zodToJsonSchema2(ConvertToGlobalSchema),
+    handler: async (args) => {
+      try {
+        const result = await memoryStore2.convertToGlobal(args.memory_id);
+        if (!result) {
+          throw new McpError2(
+            ErrorCode2.InvalidRequest,
+            `Memory not found: ${args.memory_id}`
+          );
+        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                success: true,
+                memory_id: result.id,
+                is_global: result.is_global,
+                content: result.content,
+                message: "Memory converted to global successfully"
+              }, null, 2)
+            }
+          ]
+        };
+      } catch (error) {
+        if (error instanceof McpError2) throw error;
+        throw new McpError2(
+          ErrorCode2.InternalError,
+          `Failed to convert memory to global: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+  },
+  convert_to_workspace: {
+    description: "Convert a global memory to workspace-specific",
+    inputSchema: zodToJsonSchema2(ConvertToWorkspaceSchema),
+    handler: async (args) => {
+      try {
+        const result = await memoryStore2.convertToWorkspace(
+          args.memory_id,
+          args.workspace_id
+        );
+        if (!result) {
+          throw new McpError2(
+            ErrorCode2.InvalidRequest,
+            `Memory not found: ${args.memory_id}`
+          );
+        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                success: true,
+                memory_id: result.id,
+                is_global: result.is_global,
+                workspace_id: result.workspace_id,
+                content: result.content,
+                message: "Memory converted to workspace-specific successfully"
+              }, null, 2)
+            }
+          ]
+        };
+      } catch (error) {
+        if (error instanceof McpError2) throw error;
+        throw new McpError2(
+          ErrorCode2.InternalError,
+          `Failed to convert memory to workspace: ${error instanceof Error ? error.message : String(error)}`
         );
       }
     }

@@ -29,6 +29,8 @@ export const MemoryEntrySchema = z.object({
   embedding: z.array(z.number()).optional().describe('Vector embedding'),
   ttl_seconds: z.number().optional().describe('Time-to-live in seconds (auto-expires)'),
   expires_at: z.number().optional().describe('Unix timestamp when memory expires'),
+  is_global: z.boolean().default(false).describe('If true, memory is accessible across all workspaces'),
+  workspace_id: z.string().describe('Workspace identifier (empty for global memories)'),
 });
 
 export type MemoryEntry = z.infer<typeof MemoryEntrySchema>;
@@ -42,6 +44,7 @@ export const CreateMemorySchema = z.object({
   summary: z.string().optional().describe('Optional summary'),
   session_id: z.string().optional().describe('Optional session ID'),
   ttl_seconds: z.number().min(60).optional().describe('Time-to-live in seconds (minimum 60s)'),
+  is_global: z.boolean().default(false).describe('If true, memory is accessible across all workspaces'),
 });
 
 export type CreateMemory = z.infer<typeof CreateMemorySchema>;
@@ -92,10 +95,18 @@ export interface SessionInfo {
   memory_ids: string[];
 }
 
+// Workspace mode configuration
+export enum WorkspaceMode {
+  ISOLATED = 'isolated',  // Default: workspace-only (current behavior)
+  GLOBAL = 'global',      // All memories shared across workspaces
+  HYBRID = 'hybrid'       // Support both global + workspace memories
+}
+
 // Workspace context
 export interface WorkspaceContext {
   workspace_path: string;
   workspace_id: string; // Hash of the path for Redis keys
+  mode: WorkspaceMode;   // Workspace isolation mode
 }
 
 // Helper to create workspace ID from path
@@ -108,6 +119,21 @@ export function createWorkspaceId(path: string): string {
     hash = hash & hash;
   }
   return Math.abs(hash).toString(36);
+}
+
+// Helper to get workspace mode from environment
+export function getWorkspaceMode(): WorkspaceMode {
+  const mode = process.env.WORKSPACE_MODE?.toLowerCase();
+
+  switch (mode) {
+    case 'global':
+      return WorkspaceMode.GLOBAL;
+    case 'hybrid':
+      return WorkspaceMode.HYBRID;
+    case 'isolated':
+    default:
+      return WorkspaceMode.ISOLATED;
+  }
 }
 
 // Recall context schema (for proactive context retrieval)
@@ -196,8 +222,9 @@ export interface DuplicateGroup {
   similarity_score: number;
 }
 
-// Redis keys helper with workspace isolation
+// Redis keys helper with workspace isolation and global support
 export const RedisKeys = {
+  // Workspace-scoped keys
   memory: (workspace: string, id: string) => `ws:${workspace}:memory:${id}`,
   memories: (workspace: string) => `ws:${workspace}:memories:all`,
   byType: (workspace: string, type: ContextType) => `ws:${workspace}:memories:type:${type}`,
@@ -206,4 +233,32 @@ export const RedisKeys = {
   session: (workspace: string, id: string) => `ws:${workspace}:session:${id}`,
   sessions: (workspace: string) => `ws:${workspace}:sessions:all`,
   important: (workspace: string) => `ws:${workspace}:memories:important`,
+
+  // Global keys (workspace-independent)
+  globalMemory: (id: string) => `global:memory:${id}`,
+  globalMemories: () => `global:memories:all`,
+  globalByType: (type: ContextType) => `global:memories:type:${type}`,
+  globalByTag: (tag: string) => `global:memories:tag:${tag}`,
+  globalTimeline: () => `global:memories:timeline`,
+  globalImportant: () => `global:memories:important`,
 } as const;
+
+// Helper to get the appropriate key based on is_global flag
+export function getMemoryKey(workspace: string, id: string, isGlobal: boolean): string {
+  return isGlobal ? RedisKeys.globalMemory(id) : RedisKeys.memory(workspace, id);
+}
+
+// Convert memory to global schema
+export const ConvertToGlobalSchema = z.object({
+  memory_id: z.string().describe('ID of the memory to convert to global'),
+});
+
+export type ConvertToGlobal = z.infer<typeof ConvertToGlobalSchema>;
+
+// Convert memory to workspace schema
+export const ConvertToWorkspaceSchema = z.object({
+  memory_id: z.string().describe('ID of the global memory to convert to workspace-specific'),
+  workspace_id: z.string().optional().describe('Target workspace (default: current workspace)'),
+});
+
+export type ConvertToWorkspace = z.infer<typeof ConvertToWorkspaceSchema>;

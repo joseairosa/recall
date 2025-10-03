@@ -2,7 +2,7 @@ import { ulid } from 'ulid';
 import type { Redis } from 'ioredis';
 import { getRedisClient } from './client.js';
 import { generateEmbedding, cosineSimilarity } from '../embeddings/generator.js';
-import { RedisKeys, createWorkspaceId, getWorkspaceMode, WorkspaceMode, type MemoryEntry, type CreateMemory, type SessionInfo, type ContextType } from '../types.js';
+import { RedisKeys, createWorkspaceId, getWorkspaceMode, WorkspaceMode, type MemoryEntry, type CreateMemory, type SessionInfo, type ContextType, type MemoryRelationship, type RelationshipType, type RelatedMemoryResult, type MemoryGraph, type MemoryGraphNode } from '../types.js';
 
 export class MemoryStore {
   private redis: Redis;
@@ -810,5 +810,365 @@ export class MemoryStore {
     await pipeline.exec();
 
     return workspaceMemory;
+  }
+
+  // ============================================================================
+  // Memory Relationships (v1.4.0)
+  // ============================================================================
+
+  // Serialize relationship for Redis storage
+  private serializeRelationship(relationship: MemoryRelationship): Record<string, string> {
+    return {
+      id: relationship.id,
+      from_memory_id: relationship.from_memory_id,
+      to_memory_id: relationship.to_memory_id,
+      relationship_type: relationship.relationship_type,
+      created_at: relationship.created_at,
+      metadata: relationship.metadata ? JSON.stringify(relationship.metadata) : '',
+    };
+  }
+
+  // Deserialize relationship from Redis
+  private deserializeRelationship(data: Record<string, string>): MemoryRelationship {
+    return {
+      id: data.id,
+      from_memory_id: data.from_memory_id,
+      to_memory_id: data.to_memory_id,
+      relationship_type: data.relationship_type as RelationshipType,
+      created_at: data.created_at,
+      metadata: data.metadata ? JSON.parse(data.metadata) : undefined,
+    };
+  }
+
+  // Create a relationship between two memories
+  async createRelationship(
+    fromMemoryId: string,
+    toMemoryId: string,
+    relationshipType: RelationshipType,
+    metadata?: Record<string, unknown>
+  ): Promise<MemoryRelationship> {
+    // Validate both memories exist
+    const fromMemory = await this.getMemory(fromMemoryId);
+    const toMemory = await this.getMemory(toMemoryId);
+
+    if (!fromMemory) {
+      throw new Error(`Source memory not found: ${fromMemoryId}`);
+    }
+    if (!toMemory) {
+      throw new Error(`Target memory not found: ${toMemoryId}`);
+    }
+
+    // Prevent self-references
+    if (fromMemoryId === toMemoryId) {
+      throw new Error('Cannot create relationship to self');
+    }
+
+    // Check if relationship already exists
+    const existing = await this.findRelationship(fromMemoryId, toMemoryId, relationshipType);
+    if (existing) {
+      return existing; // Idempotent
+    }
+
+    const id = ulid();
+    const relationship: MemoryRelationship = {
+      id,
+      from_memory_id: fromMemoryId,
+      to_memory_id: toMemoryId,
+      relationship_type: relationshipType,
+      created_at: new Date().toISOString(),
+      metadata,
+    };
+
+    // Determine if this is a global relationship (both memories are global)
+    const isGlobal = fromMemory.is_global && toMemory.is_global;
+
+    const pipeline = this.redis.pipeline();
+
+    if (isGlobal) {
+      pipeline.hset(RedisKeys.globalRelationship(id), this.serializeRelationship(relationship));
+      pipeline.sadd(RedisKeys.globalRelationships(), id);
+      pipeline.sadd(RedisKeys.globalMemoryRelationships(fromMemoryId), id);
+      pipeline.sadd(RedisKeys.globalMemoryRelationshipsOut(fromMemoryId), id);
+      pipeline.sadd(RedisKeys.globalMemoryRelationshipsIn(toMemoryId), id);
+    } else {
+      pipeline.hset(RedisKeys.relationship(this.workspaceId, id), this.serializeRelationship(relationship));
+      pipeline.sadd(RedisKeys.relationships(this.workspaceId), id);
+      pipeline.sadd(RedisKeys.memoryRelationships(this.workspaceId, fromMemoryId), id);
+      pipeline.sadd(RedisKeys.memoryRelationshipsOut(this.workspaceId, fromMemoryId), id);
+      pipeline.sadd(RedisKeys.memoryRelationshipsIn(this.workspaceId, toMemoryId), id);
+    }
+
+    await pipeline.exec();
+
+    return relationship;
+  }
+
+  // Find existing relationship
+  private async findRelationship(
+    fromMemoryId: string,
+    toMemoryId: string,
+    relationshipType: RelationshipType
+  ): Promise<MemoryRelationship | null> {
+    // Get all relationships for from memory
+    const relationshipIds = await this.getMemoryRelationshipIds(fromMemoryId, 'outgoing');
+
+    for (const relId of relationshipIds) {
+      const rel = await this.getRelationship(relId);
+      if (
+        rel &&
+        rel.from_memory_id === fromMemoryId &&
+        rel.to_memory_id === toMemoryId &&
+        rel.relationship_type === relationshipType
+      ) {
+        return rel;
+      }
+    }
+
+    return null;
+  }
+
+  // Get a single relationship by ID
+  async getRelationship(relationshipId: string): Promise<MemoryRelationship | null> {
+    // Try workspace first
+    const wsData = await this.redis.hgetall(RedisKeys.relationship(this.workspaceId, relationshipId));
+    if (wsData && Object.keys(wsData).length > 0) {
+      return this.deserializeRelationship(wsData);
+    }
+
+    // Try global
+    const globalData = await this.redis.hgetall(RedisKeys.globalRelationship(relationshipId));
+    if (globalData && Object.keys(globalData).length > 0) {
+      return this.deserializeRelationship(globalData);
+    }
+
+    return null;
+  }
+
+  // Get relationship IDs for a memory
+  private async getMemoryRelationshipIds(
+    memoryId: string,
+    direction: 'outgoing' | 'incoming' | 'both' = 'both'
+  ): Promise<string[]> {
+    const mode = getWorkspaceMode();
+    const ids = new Set<string>();
+
+    // Helper to add IDs from a Redis key
+    const addIds = async (key: string) => {
+      const keyIds = await this.redis.smembers(key);
+      keyIds.forEach(id => ids.add(id));
+    };
+
+    // Workspace relationships
+    if (mode === WorkspaceMode.ISOLATED || mode === WorkspaceMode.HYBRID) {
+      if (direction === 'outgoing' || direction === 'both') {
+        await addIds(RedisKeys.memoryRelationshipsOut(this.workspaceId, memoryId));
+      }
+      if (direction === 'incoming' || direction === 'both') {
+        await addIds(RedisKeys.memoryRelationshipsIn(this.workspaceId, memoryId));
+      }
+    }
+
+    // Global relationships
+    if (mode === WorkspaceMode.GLOBAL || mode === WorkspaceMode.HYBRID) {
+      if (direction === 'outgoing' || direction === 'both') {
+        await addIds(RedisKeys.globalMemoryRelationshipsOut(memoryId));
+      }
+      if (direction === 'incoming' || direction === 'both') {
+        await addIds(RedisKeys.globalMemoryRelationshipsIn(memoryId));
+      }
+    }
+
+    return Array.from(ids);
+  }
+
+  // Get all relationships for a memory
+  async getMemoryRelationships(
+    memoryId: string,
+    direction: 'outgoing' | 'incoming' | 'both' = 'both'
+  ): Promise<MemoryRelationship[]> {
+    const relationshipIds = await this.getMemoryRelationshipIds(memoryId, direction);
+    const relationships: MemoryRelationship[] = [];
+
+    for (const relId of relationshipIds) {
+      const rel = await this.getRelationship(relId);
+      if (rel) {
+        relationships.push(rel);
+      }
+    }
+
+    return relationships;
+  }
+
+  // Get related memories with graph traversal
+  async getRelatedMemories(
+    memoryId: string,
+    options: {
+      relationshipTypes?: RelationshipType[];
+      depth?: number;
+      direction?: 'outgoing' | 'incoming' | 'both';
+    } = {}
+  ): Promise<RelatedMemoryResult[]> {
+    const { relationshipTypes, depth = 1, direction = 'both' } = options;
+
+    const results: RelatedMemoryResult[] = [];
+    const visited = new Set<string>();
+
+    await this.traverseGraph(memoryId, depth, visited, results, relationshipTypes, direction, 0);
+
+    return results;
+  }
+
+  // Traverse relationship graph
+  private async traverseGraph(
+    memoryId: string,
+    maxDepth: number,
+    visited: Set<string>,
+    results: RelatedMemoryResult[],
+    relationshipTypes?: RelationshipType[],
+    direction: 'outgoing' | 'incoming' | 'both' = 'both',
+    currentDepth: number = 0
+  ): Promise<void> {
+    if (currentDepth >= maxDepth || visited.has(memoryId)) {
+      return;
+    }
+
+    visited.add(memoryId);
+
+    // Get relationships for this memory
+    const relationships = await this.getMemoryRelationships(memoryId, direction);
+
+    // Filter by type if specified
+    const filtered = relationshipTypes
+      ? relationships.filter(r => relationshipTypes.includes(r.relationship_type))
+      : relationships;
+
+    for (const relationship of filtered) {
+      const relatedMemoryId =
+        relationship.from_memory_id === memoryId
+          ? relationship.to_memory_id
+          : relationship.from_memory_id;
+
+      if (!visited.has(relatedMemoryId)) {
+        const memory = await this.getMemory(relatedMemoryId);
+        if (memory) {
+          results.push({
+            memory,
+            relationship,
+            depth: currentDepth + 1,
+          });
+
+          // Recurse if not at max depth
+          if (currentDepth + 1 < maxDepth) {
+            await this.traverseGraph(
+              relatedMemoryId,
+              maxDepth,
+              visited,
+              results,
+              relationshipTypes,
+              direction,
+              currentDepth + 1
+            );
+          }
+        }
+      }
+    }
+  }
+
+  // Delete a relationship
+  async deleteRelationship(relationshipId: string): Promise<boolean> {
+    const relationship = await this.getRelationship(relationshipId);
+    if (!relationship) {
+      return false;
+    }
+
+    // Check if global based on memories
+    const fromMemory = await this.getMemory(relationship.from_memory_id);
+    const isGlobal = fromMemory?.is_global || false;
+
+    const pipeline = this.redis.pipeline();
+
+    if (isGlobal) {
+      pipeline.del(RedisKeys.globalRelationship(relationshipId));
+      pipeline.srem(RedisKeys.globalRelationships(), relationshipId);
+      pipeline.srem(RedisKeys.globalMemoryRelationships(relationship.from_memory_id), relationshipId);
+      pipeline.srem(RedisKeys.globalMemoryRelationshipsOut(relationship.from_memory_id), relationshipId);
+      pipeline.srem(RedisKeys.globalMemoryRelationshipsIn(relationship.to_memory_id), relationshipId);
+    } else {
+      pipeline.del(RedisKeys.relationship(this.workspaceId, relationshipId));
+      pipeline.srem(RedisKeys.relationships(this.workspaceId), relationshipId);
+      pipeline.srem(RedisKeys.memoryRelationships(this.workspaceId, relationship.from_memory_id), relationshipId);
+      pipeline.srem(RedisKeys.memoryRelationshipsOut(this.workspaceId, relationship.from_memory_id), relationshipId);
+      pipeline.srem(RedisKeys.memoryRelationshipsIn(this.workspaceId, relationship.to_memory_id), relationshipId);
+    }
+
+    await pipeline.exec();
+
+    return true;
+  }
+
+  // Get full memory graph
+  async getMemoryGraph(
+    rootMemoryId: string,
+    maxDepth: number = 2,
+    maxNodes: number = 50
+  ): Promise<MemoryGraph> {
+    const nodes: Record<string, MemoryGraphNode> = {};
+    const visited = new Set<string>();
+    let maxDepthReached = 0;
+
+    await this.buildGraph(rootMemoryId, maxDepth, maxNodes, nodes, visited, 0);
+
+    // Track max depth actually reached
+    for (const node of Object.values(nodes)) {
+      maxDepthReached = Math.max(maxDepthReached, node.depth);
+    }
+
+    return {
+      root_memory_id: rootMemoryId,
+      nodes,
+      total_nodes: Object.keys(nodes).length,
+      max_depth_reached: maxDepthReached,
+    };
+  }
+
+  // Build graph recursively
+  private async buildGraph(
+    memoryId: string,
+    maxDepth: number,
+    maxNodes: number,
+    nodes: Record<string, MemoryGraphNode>,
+    visited: Set<string>,
+    currentDepth: number
+  ): Promise<void> {
+    if (currentDepth > maxDepth || visited.has(memoryId) || Object.keys(nodes).length >= maxNodes) {
+      return;
+    }
+
+    visited.add(memoryId);
+
+    const memory = await this.getMemory(memoryId);
+    if (!memory) {
+      return;
+    }
+
+    const relationships = await this.getMemoryRelationships(memoryId, 'both');
+
+    nodes[memoryId] = {
+      memory,
+      relationships,
+      depth: currentDepth,
+    };
+
+    // Recurse for related memories
+    for (const relationship of relationships) {
+      const relatedId =
+        relationship.from_memory_id === memoryId
+          ? relationship.to_memory_id
+          : relationship.from_memory_id;
+
+      if (!visited.has(relatedId) && Object.keys(nodes).length < maxNodes) {
+        await this.buildGraph(relatedId, maxDepth, maxNodes, nodes, visited, currentDepth + 1);
+      }
+    }
   }
 }

@@ -593,4 +593,183 @@ export const resources = {
       }
     },
   },
+
+  // ============================================================================
+  // Relationship Resources (v1.4.0)
+  // ============================================================================
+
+  'memory://relationships': {
+    name: 'All Memory Relationships',
+    description: 'List all memory relationships in the current workspace',
+    mimeType: 'application/json',
+    handler: async (uri: URL) => {
+      const limit = parseInt(uri.searchParams.get('limit') || '100', 10);
+      const mode = getWorkspaceMode();
+
+      // Get all relationship IDs based on mode
+      let relationshipIds: string[] = [];
+
+      if (mode === WorkspaceMode.ISOLATED || mode === WorkspaceMode.HYBRID) {
+        const workspaceIds = await redis.smembers(RedisKeys.relationships(memoryStore['workspaceId']));
+        relationshipIds.push(...workspaceIds);
+      }
+
+      if (mode === WorkspaceMode.GLOBAL || mode === WorkspaceMode.HYBRID) {
+        const globalIds = await redis.smembers(RedisKeys.globalRelationships());
+        relationshipIds.push(...globalIds);
+      }
+
+      // Limit results
+      relationshipIds = relationshipIds.slice(0, limit);
+
+      // Fetch relationships
+      const relationships = await Promise.all(
+        relationshipIds.map(async id => {
+          const rel = await memoryStore.getRelationship(id);
+          return rel;
+        })
+      );
+
+      const validRelationships = relationships.filter((r): r is NonNullable<typeof r> => r !== null);
+
+      return {
+        contents: [
+          {
+            uri: uri.toString(),
+            mimeType: 'application/json',
+            text: JSON.stringify(
+              {
+                count: validRelationships.length,
+                workspace_mode: mode,
+                relationships: validRelationships.map(r => ({
+                  id: r.id,
+                  from_memory_id: r.from_memory_id,
+                  to_memory_id: r.to_memory_id,
+                  relationship_type: r.relationship_type,
+                  created_at: r.created_at,
+                  metadata: r.metadata,
+                })),
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    },
+  },
+
+  'memory://memory/{id}/related': {
+    name: 'Related Memories',
+    description: 'Get memories related to a specific memory',
+    mimeType: 'application/json',
+    handler: async (uri: URL) => {
+      const memoryId = uri.pathname.split('/')[2];
+      if (!memoryId) {
+        throw new McpError(ErrorCode.InvalidRequest, 'Memory ID is required');
+      }
+
+      const depth = parseInt(uri.searchParams.get('depth') || '1', 10);
+      const direction = (uri.searchParams.get('direction') || 'both') as 'outgoing' | 'incoming' | 'both';
+
+      const results = await memoryStore.getRelatedMemories(memoryId, {
+        depth,
+        direction,
+      });
+
+      return {
+        contents: [
+          {
+            uri: uri.toString(),
+            mimeType: 'application/json',
+            text: JSON.stringify(
+              {
+                root_memory_id: memoryId,
+                total_related: results.length,
+                depth,
+                direction,
+                related_memories: results.map(r => ({
+                  memory_id: r.memory.id,
+                  content: r.memory.content,
+                  summary: r.memory.summary,
+                  context_type: r.memory.context_type,
+                  importance: r.memory.importance,
+                  tags: r.memory.tags,
+                  is_global: r.memory.is_global,
+                  relationship: {
+                    id: r.relationship.id,
+                    type: r.relationship.relationship_type,
+                    from: r.relationship.from_memory_id,
+                    to: r.relationship.to_memory_id,
+                  },
+                  depth: r.depth,
+                })),
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    },
+  },
+
+  'memory://graph/{id}': {
+    name: 'Memory Graph',
+    description: 'Get a graph of related memories starting from a root memory',
+    mimeType: 'application/json',
+    handler: async (uri: URL) => {
+      const memoryId = uri.pathname.split('/')[2];
+      if (!memoryId) {
+        throw new McpError(ErrorCode.InvalidRequest, 'Memory ID is required');
+      }
+
+      const maxDepth = parseInt(uri.searchParams.get('depth') || '2', 10);
+      const maxNodes = parseInt(uri.searchParams.get('max_nodes') || '50', 10);
+
+      const graph = await memoryStore.getMemoryGraph(memoryId, maxDepth, maxNodes);
+
+      // Format graph for display
+      const formattedNodes = Object.fromEntries(
+        Object.entries(graph.nodes).map(([nodeId, node]) => [
+          nodeId,
+          {
+            memory_id: node.memory.id,
+            content: node.memory.content,
+            summary: node.memory.summary,
+            context_type: node.memory.context_type,
+            importance: node.memory.importance,
+            tags: node.memory.tags,
+            is_global: node.memory.is_global,
+            depth: node.depth,
+            relationships: node.relationships.map(rel => ({
+              id: rel.id,
+              type: rel.relationship_type,
+              from: rel.from_memory_id,
+              to: rel.to_memory_id,
+            })),
+          },
+        ])
+      );
+
+      return {
+        contents: [
+          {
+            uri: uri.toString(),
+            mimeType: 'application/json',
+            text: JSON.stringify(
+              {
+                root_memory_id: graph.root_memory_id,
+                total_nodes: graph.total_nodes,
+                max_depth_reached: graph.max_depth_reached,
+                nodes: formattedNodes,
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    },
+  },
 };

@@ -28,6 +28,7 @@ import {
   FindDuplicatesSchema,
   ConsolidateMemoriesSchema,
 } from '../types.js';
+import { relationshipTools } from './relationship-tools.js';
 
 const memoryStore = new MemoryStore();
 
@@ -377,6 +378,9 @@ export const tools = {
       }
     },
   },
+
+  // Relationship tools (v1.4.0)
+  ...relationshipTools,
 };
 
 // Helper function to convert Zod schema to JSON Schema

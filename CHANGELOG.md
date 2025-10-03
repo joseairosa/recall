@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.0] - 2025-10-03
+
+### Added
+- **Memory Relationships** - Link related memories to create knowledge graphs
+  - `RelationshipType` enum with 7 relationship types:
+    - `relates_to` - Generic connection
+    - `parent_of` / `child_of` - Hierarchical relationships
+    - `references` - One memory references another
+    - `supersedes` - One memory replaces another
+    - `implements` - Implementation of a pattern/concept
+    - `example_of` - Example demonstrating a pattern
+  - Bidirectional relationship tracking (outgoing/incoming/both)
+  - Graph traversal with configurable depth (1-5 levels)
+  - Circular reference protection
+  - Global relationship support (inherits from memory scope)
+
+- **Relationship Tools** (4 new tools)
+  - `link_memories` - Create relationships between memories
+  - `get_related_memories` - Traverse relationship graph with depth control
+  - `unlink_memories` - Remove relationships
+  - `get_memory_graph` - Get full graph structure with max nodes limit
+
+- **Relationship Resources** (3 new resources)
+  - `memory://relationships?limit=100` - List all relationships
+  - `memory://memory/{id}/related?depth=1&direction=both` - Get related memories
+  - `memory://graph/{id}?depth=2&max_nodes=50` - Get memory graph structure
+
+### Technical
+- Added `MemoryRelationship` interface with metadata support
+- Added relationship Redis keys for workspace and global scopes
+- Implemented `createRelationship()`, `getRelationship()`, `deleteRelationship()` in MemoryStore
+- Implemented `getRelatedMemories()` with graph traversal algorithm
+- Implemented `getMemoryGraph()` for full graph construction
+- Added `serializeRelationship()` and `deserializeRelationship()` helpers
+- Relationship scope determined by memory scope (global + global = global)
+
+### Use Cases
+- Link code patterns to their implementations
+- Connect decisions to their rationale and consequences
+- Build knowledge graphs of related concepts
+- Track feature evolution across related memories
+- Create hierarchical memory structures
+
+**Tools:** 19 total (6 core + 3 smart + 4 advanced + 2 global + 4 relationships)
+**Resources:** 17 total (9 workspace + 5 global + 3 relationships)
+**Prompts:** 1 (`workspace_context`)
+
+---
+
 ## [1.3.0] - 2025-10-03
 
 ### Added

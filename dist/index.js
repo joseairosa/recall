@@ -62,8 +62,8 @@ async function checkRedisConnection() {
 }
 
 // src/tools/index.ts
-import { z as z3 } from "zod";
-import { McpError as McpError3, ErrorCode as ErrorCode3 } from "@modelcontextprotocol/sdk/types.js";
+import { z as z5 } from "zod";
+import { McpError as McpError6, ErrorCode as ErrorCode6 } from "@modelcontextprotocol/sdk/types.js";
 
 // src/redis/memory-store.ts
 import { ulid } from "ulid";
@@ -207,7 +207,8 @@ var MemoryEntrySchema = z.object({
   ttl_seconds: z.number().optional().describe("Time-to-live in seconds (auto-expires)"),
   expires_at: z.number().optional().describe("Unix timestamp when memory expires"),
   is_global: z.boolean().default(false).describe("If true, memory is accessible across all workspaces"),
-  workspace_id: z.string().describe("Workspace identifier (empty for global memories)")
+  workspace_id: z.string().describe("Workspace identifier (empty for global memories)"),
+  category: z.string().optional().describe("Category for organization (v1.5.0)")
 });
 var CreateMemorySchema = z.object({
   content: z.string().min(1).describe("The memory content to store"),
@@ -217,7 +218,8 @@ var CreateMemorySchema = z.object({
   summary: z.string().optional().describe("Optional summary"),
   session_id: z.string().optional().describe("Optional session ID"),
   ttl_seconds: z.number().min(60).optional().describe("Time-to-live in seconds (minimum 60s)"),
-  is_global: z.boolean().default(false).describe("If true, memory is accessible across all workspaces")
+  is_global: z.boolean().default(false).describe("If true, memory is accessible across all workspaces"),
+  category: z.string().optional().describe("Category for organization (v1.5.0)")
 });
 var BatchCreateMemoriesSchema = z.object({
   memories: z.array(CreateMemorySchema).min(1).describe("Array of memories to store")
@@ -229,7 +231,8 @@ var UpdateMemorySchema = z.object({
   tags: z.array(z.string()).optional(),
   importance: z.number().min(1).max(10).optional(),
   summary: z.string().optional(),
-  session_id: z.string().optional()
+  session_id: z.string().optional(),
+  category: z.string().optional().describe("Category for organization (v1.5.0)")
 });
 var DeleteMemorySchema = z.object({
   memory_id: z.string().describe("ULID of memory to delete")
@@ -238,7 +241,10 @@ var SearchMemorySchema = z.object({
   query: z.string().describe("Search query"),
   limit: z.number().min(1).max(100).default(10).describe("Number of results"),
   min_importance: z.number().min(1).max(10).optional().describe("Filter by minimum importance"),
-  context_types: z.array(ContextType).optional().describe("Filter by context types")
+  context_types: z.array(ContextType).optional().describe("Filter by context types"),
+  category: z.string().optional().describe("Filter by category (v1.5.0)"),
+  fuzzy: z.boolean().default(false).describe("Enable fuzzy search (v1.5.0)"),
+  regex: z.string().optional().describe("Regex pattern for advanced search (v1.5.0)")
 });
 var OrganizeSessionSchema = z.object({
   session_name: z.string().describe("Name for the session"),
@@ -330,7 +336,24 @@ var RedisKeys = {
   globalRelationships: () => `global:relationships:all`,
   globalMemoryRelationships: (memoryId) => `global:memory:${memoryId}:relationships`,
   globalMemoryRelationshipsOut: (memoryId) => `global:memory:${memoryId}:relationships:out`,
-  globalMemoryRelationshipsIn: (memoryId) => `global:memory:${memoryId}:relationships:in`
+  globalMemoryRelationshipsIn: (memoryId) => `global:memory:${memoryId}:relationships:in`,
+  // Version history keys (v1.5.0)
+  memoryVersions: (workspace, memoryId) => `ws:${workspace}:memory:${memoryId}:versions`,
+  memoryVersion: (workspace, memoryId, versionId) => `ws:${workspace}:memory:${memoryId}:version:${versionId}`,
+  globalMemoryVersions: (memoryId) => `global:memory:${memoryId}:versions`,
+  globalMemoryVersion: (memoryId, versionId) => `global:memory:${memoryId}:version:${versionId}`,
+  // Template keys (v1.5.0)
+  template: (workspace, id) => `ws:${workspace}:template:${id}`,
+  templates: (workspace) => `ws:${workspace}:templates:all`,
+  builtinTemplates: () => `builtin:templates:all`,
+  builtinTemplate: (id) => `builtin:template:${id}`,
+  // Category keys (v1.5.0)
+  memoryCategory: (workspace, memoryId) => `ws:${workspace}:memory:${memoryId}:category`,
+  category: (workspace, category) => `ws:${workspace}:category:${category}`,
+  categories: (workspace) => `ws:${workspace}:categories:all`,
+  globalMemoryCategory: (memoryId) => `global:memory:${memoryId}:category`,
+  globalCategory: (category) => `global:category:${category}`,
+  globalCategories: () => `global:categories:all`
 };
 var ConvertToGlobalSchema = z.object({
   memory_id: z.string().describe("ID of the memory to convert to global")
@@ -377,6 +400,60 @@ var GetMemoryGraphSchema = z.object({
   max_depth: z.number().min(1).max(3).default(2).describe("Maximum graph depth"),
   max_nodes: z.number().min(1).max(100).default(50).describe("Maximum nodes to return")
 });
+var MemoryVersionSchema = z.object({
+  version_id: z.string().describe("Version identifier (ULID)"),
+  memory_id: z.string().describe("Memory this version belongs to"),
+  content: z.string().describe("Content at this version"),
+  context_type: ContextType,
+  importance: z.number().min(1).max(10),
+  tags: z.array(z.string()).default([]),
+  summary: z.string().optional(),
+  created_at: z.string().describe("ISO 8601 timestamp"),
+  created_by: z.enum(["user", "system"]).default("user").describe("Who created this version"),
+  change_reason: z.string().optional().describe("Reason for the change")
+});
+var GetMemoryHistorySchema = z.object({
+  memory_id: z.string().describe("Memory ID to get history for"),
+  limit: z.number().min(1).max(100).default(50).describe("Maximum versions to return")
+});
+var RollbackMemorySchema = z.object({
+  memory_id: z.string().describe("Memory ID to rollback"),
+  version_id: z.string().describe("Version ID to rollback to"),
+  preserve_relationships: z.boolean().default(true).describe("Preserve current relationships after rollback")
+});
+var MemoryTemplateSchema = z.object({
+  template_id: z.string().describe("Template identifier (ULID)"),
+  name: z.string().describe("Template name"),
+  description: z.string().optional().describe("Template description"),
+  context_type: ContextType,
+  content_template: z.string().describe("Template content with {{placeholders}}"),
+  default_tags: z.array(z.string()).default([]),
+  default_importance: z.number().min(1).max(10).default(5),
+  is_builtin: z.boolean().default(false).describe("Built-in template (cannot be deleted)"),
+  created_at: z.string().describe("ISO 8601 timestamp")
+});
+var CreateFromTemplateSchema = z.object({
+  template_id: z.string().describe("Template ID to use"),
+  variables: z.record(z.string()).describe("Variables to fill in template (key-value pairs)"),
+  tags: z.array(z.string()).optional().describe("Additional tags (merged with template defaults)"),
+  importance: z.number().min(1).max(10).optional().describe("Override template importance"),
+  is_global: z.boolean().default(false).describe("Create as global memory")
+});
+var CreateTemplateSchema = z.object({
+  name: z.string().min(1).describe("Template name"),
+  description: z.string().optional().describe("Template description"),
+  context_type: ContextType.default("information"),
+  content_template: z.string().min(1).describe("Template content with {{placeholders}}"),
+  default_tags: z.array(z.string()).default([]),
+  default_importance: z.number().min(1).max(10).default(5)
+});
+var SetMemoryCategorySchema = z.object({
+  memory_id: z.string().describe("Memory ID"),
+  category: z.string().describe("Category name")
+});
+var ListCategoriesSchema = z.object({
+  include_counts: z.boolean().default(true).describe("Include memory counts per category")
+});
 
 // src/redis/memory-store.ts
 var MemoryStore = class {
@@ -414,7 +491,9 @@ var MemoryStore = class {
       ttl_seconds: data.ttl_seconds,
       expires_at: expiresAt,
       is_global: isGlobal,
-      workspace_id: isGlobal ? "" : this.workspaceId
+      workspace_id: isGlobal ? "" : this.workspaceId,
+      category: data.category
+      // v1.5.0
     };
     const pipeline = this.redis.pipeline();
     const memoryKey = isGlobal ? RedisKeys.globalMemory(id) : RedisKeys.memory(this.workspaceId, id);
@@ -432,6 +511,11 @@ var MemoryStore = class {
       if (data.importance >= 8) {
         pipeline.zadd(RedisKeys.globalImportant(), data.importance, id);
       }
+      if (data.category) {
+        pipeline.set(RedisKeys.globalMemoryCategory(id), data.category);
+        pipeline.sadd(RedisKeys.globalCategory(data.category), id);
+        pipeline.zadd(RedisKeys.globalCategories(), timestamp, data.category);
+      }
     } else {
       pipeline.sadd(RedisKeys.memories(this.workspaceId), id);
       pipeline.zadd(RedisKeys.timeline(this.workspaceId), timestamp, id);
@@ -441,6 +525,11 @@ var MemoryStore = class {
       }
       if (data.importance >= 8) {
         pipeline.zadd(RedisKeys.important(this.workspaceId), data.importance, id);
+      }
+      if (data.category) {
+        pipeline.set(RedisKeys.memoryCategory(this.workspaceId, id), data.category);
+        pipeline.sadd(RedisKeys.category(this.workspaceId, data.category), id);
+        pipeline.zadd(RedisKeys.categories(this.workspaceId), timestamp, data.category);
       }
     }
     await pipeline.exec();
@@ -594,6 +683,7 @@ var MemoryStore = class {
     if (!existing) {
       return null;
     }
+    await this.createVersion(existing, "user", "Memory updated");
     const pipeline = this.redis.pipeline();
     let embedding = existing.embedding;
     if (updates.content && updates.content !== existing.content) {
@@ -691,7 +781,7 @@ var MemoryStore = class {
     return true;
   }
   // Semantic search (respects workspace mode with global memory weighting)
-  async searchMemories(query, limit = 10, minImportance, contextTypes) {
+  async searchMemories(query, limit = 10, minImportance, contextTypes, category, fuzzy = false, regex) {
     const queryEmbedding = await generateEmbedding(query);
     const mode = getWorkspaceMode();
     let memories = [];
@@ -731,8 +821,26 @@ var MemoryStore = class {
     if (minImportance !== void 0) {
       filtered = memories.filter((m) => m.importance >= minImportance);
     }
+    if (category) {
+      filtered = filtered.filter((m) => m.category === category);
+    }
+    if (regex) {
+      try {
+        const regexPattern = new RegExp(regex, "i");
+        filtered = filtered.filter((m) => regexPattern.test(m.content));
+      } catch (error) {
+        console.error("Invalid regex pattern:", error);
+      }
+    }
     const withSimilarity = filtered.map((memory) => {
-      const baseSimilarity = memory.embedding ? cosineSimilarity(queryEmbedding, memory.embedding) : 0;
+      let baseSimilarity = memory.embedding ? cosineSimilarity(queryEmbedding, memory.embedding) : 0;
+      if (fuzzy) {
+        const queryWords = query.toLowerCase().split(/\s+/);
+        const contentWords = memory.content.toLowerCase().split(/\s+/);
+        const matchCount = queryWords.filter((qw) => contentWords.some((cw) => cw.includes(qw))).length;
+        const fuzzyBoost = matchCount / queryWords.length * 0.2;
+        baseSimilarity = Math.min(1, baseSimilarity + fuzzyBoost);
+      }
       const similarity = mode === "hybrid" /* HYBRID */ && memory.is_global ? baseSimilarity * 0.9 : baseSimilarity;
       return {
         ...memory,
@@ -880,7 +988,9 @@ ${contentParts.join("\n\n")}` : toKeep.content;
       ttl_seconds: memory.ttl_seconds?.toString() || "",
       expires_at: memory.expires_at?.toString() || "",
       is_global: memory.is_global ? "true" : "false",
-      workspace_id: memory.workspace_id || ""
+      workspace_id: memory.workspace_id || "",
+      category: memory.category || ""
+      // v1.5.0
     };
   }
   // Helper: Deserialize memory from Redis
@@ -898,7 +1008,9 @@ ${contentParts.join("\n\n")}` : toKeep.content;
       ttl_seconds: data.ttl_seconds ? parseInt(data.ttl_seconds, 10) : void 0,
       expires_at: data.expires_at ? parseInt(data.expires_at, 10) : void 0,
       is_global: data.is_global === "true",
-      workspace_id: data.workspace_id || ""
+      workspace_id: data.workspace_id || "",
+      category: data.category || void 0
+      // v1.5.0
     };
   }
   // Convert workspace memory to global
@@ -1212,6 +1324,260 @@ ${contentParts.join("\n\n")}` : toKeep.content;
         await this.buildGraph(relatedId, maxDepth, maxNodes, nodes, visited, currentDepth + 1);
       }
     }
+  }
+  // ============================================================================
+  // Memory Versioning & History (v1.5.0)
+  // ============================================================================
+  async createVersion(memory, createdBy = "user", changeReason) {
+    const versionId = ulid();
+    const version = {
+      version_id: versionId,
+      memory_id: memory.id,
+      content: memory.content,
+      context_type: memory.context_type,
+      importance: memory.importance,
+      tags: memory.tags,
+      summary: memory.summary,
+      created_at: (/* @__PURE__ */ new Date()).toISOString(),
+      created_by: createdBy,
+      change_reason: changeReason
+    };
+    const isGlobal = memory.is_global;
+    const timestamp = Date.now();
+    const pipeline = this.redis.pipeline();
+    if (isGlobal) {
+      pipeline.hset(
+        RedisKeys.globalMemoryVersion(memory.id, versionId),
+        version
+      );
+      pipeline.zadd(RedisKeys.globalMemoryVersions(memory.id), timestamp, versionId);
+    } else {
+      pipeline.hset(
+        RedisKeys.memoryVersion(this.workspaceId, memory.id, versionId),
+        version
+      );
+      pipeline.zadd(RedisKeys.memoryVersions(this.workspaceId, memory.id), timestamp, versionId);
+    }
+    const versionsKey = isGlobal ? RedisKeys.globalMemoryVersions(memory.id) : RedisKeys.memoryVersions(this.workspaceId, memory.id);
+    pipeline.zremrangebyrank(versionsKey, 0, -51);
+    await pipeline.exec();
+    return versionId;
+  }
+  async getMemoryHistory(memoryId, limit = 50) {
+    const memory = await this.getMemory(memoryId);
+    if (!memory) {
+      return [];
+    }
+    const isGlobal = memory.is_global;
+    const versionsKey = isGlobal ? RedisKeys.globalMemoryVersions(memoryId) : RedisKeys.memoryVersions(this.workspaceId, memoryId);
+    const versionIds = await this.redis.zrevrange(versionsKey, 0, limit - 1);
+    if (versionIds.length === 0) {
+      return [];
+    }
+    const versions = [];
+    for (const versionId of versionIds) {
+      const versionKey = isGlobal ? RedisKeys.globalMemoryVersion(memoryId, versionId) : RedisKeys.memoryVersion(this.workspaceId, memoryId, versionId);
+      const versionData = await this.redis.hgetall(versionKey);
+      if (versionData && Object.keys(versionData).length > 0) {
+        versions.push({
+          version_id: versionData.version_id,
+          memory_id: versionData.memory_id,
+          content: versionData.content,
+          context_type: versionData.context_type,
+          importance: parseInt(versionData.importance, 10),
+          tags: versionData.tags ? JSON.parse(versionData.tags) : [],
+          summary: versionData.summary,
+          created_at: versionData.created_at,
+          created_by: versionData.created_by,
+          change_reason: versionData.change_reason
+        });
+      }
+    }
+    return versions;
+  }
+  async rollbackMemory(memoryId, versionId, preserveRelationships = true) {
+    const memory = await this.getMemory(memoryId);
+    if (!memory) {
+      throw new Error("Memory not found");
+    }
+    const isGlobal = memory.is_global;
+    const versionKey = isGlobal ? RedisKeys.globalMemoryVersion(memoryId, versionId) : RedisKeys.memoryVersion(this.workspaceId, memoryId, versionId);
+    const versionData = await this.redis.hgetall(versionKey);
+    if (!versionData || Object.keys(versionData).length === 0) {
+      throw new Error("Version not found");
+    }
+    await this.createVersion(memory, "system", `Before rollback to version ${versionId}`);
+    const updates = {
+      content: versionData.content,
+      context_type: versionData.context_type,
+      importance: parseInt(versionData.importance, 10),
+      tags: versionData.tags ? JSON.parse(versionData.tags) : [],
+      summary: versionData.summary
+    };
+    const rolledBackMemory = await this.updateMemory(memoryId, updates);
+    if (rolledBackMemory) {
+      await this.createVersion(rolledBackMemory, "system", `Rolled back to version ${versionId}`);
+    }
+    return rolledBackMemory;
+  }
+  // ============================================================================
+  // Memory Templates (v1.5.0)
+  // ============================================================================
+  async createTemplate(data) {
+    const templateId = ulid();
+    const template = {
+      template_id: templateId,
+      name: data.name,
+      description: data.description,
+      context_type: data.context_type,
+      content_template: data.content_template,
+      default_tags: data.default_tags,
+      default_importance: data.default_importance,
+      is_builtin: false,
+      created_at: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    const pipeline = this.redis.pipeline();
+    pipeline.hset(RedisKeys.template(this.workspaceId, templateId), template);
+    pipeline.sadd(RedisKeys.templates(this.workspaceId), templateId);
+    await pipeline.exec();
+    return template;
+  }
+  async getTemplate(templateId) {
+    let templateData = await this.redis.hgetall(RedisKeys.template(this.workspaceId, templateId));
+    if (!templateData || Object.keys(templateData).length === 0) {
+      templateData = await this.redis.hgetall(RedisKeys.builtinTemplate(templateId));
+    }
+    if (!templateData || Object.keys(templateData).length === 0) {
+      return null;
+    }
+    return {
+      template_id: templateData.template_id,
+      name: templateData.name,
+      description: templateData.description,
+      context_type: templateData.context_type,
+      content_template: templateData.content_template,
+      default_tags: templateData.default_tags ? JSON.parse(templateData.default_tags) : [],
+      default_importance: parseInt(templateData.default_importance, 10),
+      is_builtin: templateData.is_builtin === "true",
+      created_at: templateData.created_at
+    };
+  }
+  async getAllTemplates() {
+    const workspaceIds = await this.redis.smembers(RedisKeys.templates(this.workspaceId));
+    const builtinIds = await this.redis.smembers(RedisKeys.builtinTemplates());
+    const allIds = [.../* @__PURE__ */ new Set([...workspaceIds, ...builtinIds])];
+    const templates = [];
+    for (const id of allIds) {
+      const template = await this.getTemplate(id);
+      if (template) {
+        templates.push(template);
+      }
+    }
+    return templates;
+  }
+  async createFromTemplate(templateId, variables, additionalTags, customImportance, isGlobal = false) {
+    const template = await this.getTemplate(templateId);
+    if (!template) {
+      throw new Error("Template not found");
+    }
+    let content = template.content_template;
+    for (const [key, value] of Object.entries(variables)) {
+      content = content.replace(new RegExp(`{{${key}}}`, "g"), value);
+    }
+    const unreplacedVars = content.match(/{{(\w+)}}/g);
+    if (unreplacedVars) {
+      throw new Error(`Missing variables: ${unreplacedVars.join(", ")}`);
+    }
+    const memoryData = {
+      content,
+      context_type: template.context_type,
+      tags: [...template.default_tags, ...additionalTags || []],
+      importance: customImportance !== void 0 ? customImportance : template.default_importance,
+      is_global: isGlobal
+    };
+    return this.createMemory(memoryData);
+  }
+  async deleteTemplate(templateId) {
+    const template = await this.getTemplate(templateId);
+    if (!template) {
+      return false;
+    }
+    if (template.is_builtin) {
+      throw new Error("Cannot delete builtin templates");
+    }
+    const pipeline = this.redis.pipeline();
+    pipeline.del(RedisKeys.template(this.workspaceId, templateId));
+    pipeline.srem(RedisKeys.templates(this.workspaceId), templateId);
+    await pipeline.exec();
+    return true;
+  }
+  // ============================================================================
+  // Memory Categories (v1.5.0)
+  // ============================================================================
+  async setMemoryCategory(memoryId, category) {
+    const memory = await this.getMemory(memoryId);
+    if (!memory) {
+      return null;
+    }
+    const isGlobal = memory.is_global;
+    const categoryKey = isGlobal ? RedisKeys.globalMemoryCategory(memoryId) : RedisKeys.memoryCategory(this.workspaceId, memoryId);
+    const categorySetKey = isGlobal ? RedisKeys.globalCategory(category) : RedisKeys.category(this.workspaceId, category);
+    const categoriesKey = isGlobal ? RedisKeys.globalCategories() : RedisKeys.categories(this.workspaceId);
+    const oldCategory = await this.redis.get(categoryKey);
+    if (oldCategory) {
+      const oldCategorySetKey = isGlobal ? RedisKeys.globalCategory(oldCategory) : RedisKeys.category(this.workspaceId, oldCategory);
+      await this.redis.srem(oldCategorySetKey, memoryId);
+    }
+    const pipeline = this.redis.pipeline();
+    pipeline.set(categoryKey, category);
+    pipeline.sadd(categorySetKey, memoryId);
+    pipeline.zadd(categoriesKey, Date.now(), category);
+    await pipeline.exec();
+    memory.category = category;
+    const memoryKey = isGlobal ? RedisKeys.globalMemory(memoryId) : RedisKeys.memory(this.workspaceId, memoryId);
+    await this.redis.hset(memoryKey, "category", category);
+    return memory;
+  }
+  async getMemoriesByCategory(category) {
+    const mode = getWorkspaceMode();
+    const memoryIds = [];
+    if (mode === "isolated" /* ISOLATED */ || mode === "hybrid" /* HYBRID */) {
+      const workspaceIds = await this.redis.smembers(RedisKeys.category(this.workspaceId, category));
+      memoryIds.push(...workspaceIds);
+    }
+    if (mode === "global" /* GLOBAL */ || mode === "hybrid" /* HYBRID */) {
+      const globalIds = await this.redis.smembers(RedisKeys.globalCategory(category));
+      memoryIds.push(...globalIds);
+    }
+    return this.getMemories(memoryIds);
+  }
+  async getAllCategories() {
+    const mode = getWorkspaceMode();
+    const categoryNames = [];
+    if (mode === "isolated" /* ISOLATED */ || mode === "hybrid" /* HYBRID */) {
+      const workspaceCategories = await this.redis.zrange(RedisKeys.categories(this.workspaceId), 0, -1);
+      categoryNames.push(...workspaceCategories);
+    }
+    if (mode === "global" /* GLOBAL */ || mode === "hybrid" /* HYBRID */) {
+      const globalCategories = await this.redis.zrange(RedisKeys.globalCategories(), 0, -1);
+      categoryNames.push(...globalCategories);
+    }
+    const uniqueCategories = [...new Set(categoryNames)];
+    const categories = [];
+    for (const category of uniqueCategories) {
+      const memories = await this.getMemoriesByCategory(category);
+      const lastUsed = await this.redis.zscore(
+        mode === "global" /* GLOBAL */ ? RedisKeys.globalCategories() : RedisKeys.categories(this.workspaceId),
+        category
+      );
+      categories.push({
+        category,
+        memory_count: memories.length,
+        created_at: new Date(parseInt(lastUsed || "0", 10)).toISOString(),
+        last_used: new Date(parseInt(lastUsed || "0", 10)).toISOString()
+      });
+    }
+    return categories;
   }
 };
 
@@ -3304,8 +3670,309 @@ var relationshipTools = {
   }
 };
 
-// src/tools/index.ts
+// src/tools/version-tools.ts
+import { ErrorCode as ErrorCode3, McpError as McpError3 } from "@modelcontextprotocol/sdk/types.js";
 var memoryStore3 = new MemoryStore();
+var versionTools = {
+  get_memory_history: {
+    description: "Get the version history of a memory",
+    inputSchema: zodToJsonSchema2(GetMemoryHistorySchema),
+    handler: async (args) => {
+      try {
+        const versions = await memoryStore3.getMemoryHistory(args.memory_id, args.limit);
+        if (versions.length === 0) {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                success: true,
+                memory_id: args.memory_id,
+                versions: [],
+                total_versions: 0,
+                message: "No version history found for this memory"
+              }, null, 2)
+            }]
+          };
+        }
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              success: true,
+              memory_id: args.memory_id,
+              versions,
+              total_versions: versions.length,
+              oldest_version: versions[versions.length - 1]?.created_at,
+              newest_version: versions[0]?.created_at
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        if (error instanceof McpError3) throw error;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        throw new McpError3(ErrorCode3.InternalError, `Failed to get memory history: ${errorMessage}`);
+      }
+    }
+  },
+  rollback_memory: {
+    description: "Rollback a memory to a previous version",
+    inputSchema: zodToJsonSchema2(RollbackMemorySchema),
+    handler: async (args) => {
+      try {
+        const rolledBackMemory = await memoryStore3.rollbackMemory(
+          args.memory_id,
+          args.version_id,
+          args.preserve_relationships
+        );
+        if (!rolledBackMemory) {
+          throw new McpError3(ErrorCode3.InternalError, "Failed to rollback memory");
+        }
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              success: true,
+              memory: {
+                id: rolledBackMemory.id,
+                content: rolledBackMemory.content,
+                context_type: rolledBackMemory.context_type,
+                importance: rolledBackMemory.importance,
+                tags: rolledBackMemory.tags,
+                summary: rolledBackMemory.summary,
+                category: rolledBackMemory.category
+              },
+              rolled_back_to: args.version_id,
+              preserve_relationships: args.preserve_relationships,
+              message: `Successfully rolled back memory to version ${args.version_id}`
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        if (error instanceof McpError3) throw error;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        throw new McpError3(ErrorCode3.InternalError, `Failed to rollback memory: ${errorMessage}`);
+      }
+    }
+  }
+};
+
+// src/tools/template-tools.ts
+import { z as z3 } from "zod";
+import { ErrorCode as ErrorCode4, McpError as McpError4 } from "@modelcontextprotocol/sdk/types.js";
+var memoryStore4 = new MemoryStore();
+var templateTools = {
+  create_template: {
+    description: "Create a new memory template with placeholders",
+    inputSchema: zodToJsonSchema2(CreateTemplateSchema),
+    handler: async (args) => {
+      try {
+        const template = await memoryStore4.createTemplate(args);
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              success: true,
+              template: {
+                template_id: template.template_id,
+                name: template.name,
+                description: template.description,
+                context_type: template.context_type,
+                content_template: template.content_template,
+                default_tags: template.default_tags,
+                default_importance: template.default_importance,
+                created_at: template.created_at
+              },
+              message: `Successfully created template "${template.name}"`
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        if (error instanceof McpError4) throw error;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        throw new McpError4(ErrorCode4.InternalError, `Failed to create template: ${errorMessage}`);
+      }
+    }
+  },
+  create_from_template: {
+    description: "Create a new memory from a template by filling in variables",
+    inputSchema: zodToJsonSchema2(CreateFromTemplateSchema),
+    handler: async (args) => {
+      try {
+        const memory = await memoryStore4.createFromTemplate(
+          args.template_id,
+          args.variables,
+          args.tags,
+          args.importance,
+          args.is_global
+        );
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              success: true,
+              memory: {
+                id: memory.id,
+                content: memory.content,
+                context_type: memory.context_type,
+                importance: memory.importance,
+                tags: memory.tags,
+                summary: memory.summary,
+                category: memory.category,
+                is_global: memory.is_global
+              },
+              template_id: args.template_id,
+              message: "Successfully created memory from template"
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        if (error instanceof McpError4) throw error;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        throw new McpError4(ErrorCode4.InternalError, `Failed to create from template: ${errorMessage}`);
+      }
+    }
+  },
+  list_templates: {
+    description: "List all available memory templates (workspace + builtin)",
+    inputSchema: zodToJsonSchema2(z3.object({})),
+    handler: async () => {
+      try {
+        const templates = await memoryStore4.getAllTemplates();
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              success: true,
+              templates: templates.map((t) => ({
+                template_id: t.template_id,
+                name: t.name,
+                description: t.description,
+                context_type: t.context_type,
+                content_template: t.content_template,
+                default_tags: t.default_tags,
+                default_importance: t.default_importance,
+                is_builtin: t.is_builtin,
+                created_at: t.created_at
+              })),
+              total: templates.length,
+              builtin_count: templates.filter((t) => t.is_builtin).length,
+              workspace_count: templates.filter((t) => !t.is_builtin).length
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        if (error instanceof McpError4) throw error;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        throw new McpError4(ErrorCode4.InternalError, `Failed to list templates: ${errorMessage}`);
+      }
+    }
+  }
+};
+
+// src/tools/category-tools.ts
+import { z as z4 } from "zod";
+import { ErrorCode as ErrorCode5, McpError as McpError5 } from "@modelcontextprotocol/sdk/types.js";
+var memoryStore5 = new MemoryStore();
+var categoryTools = {
+  set_memory_category: {
+    description: "Set or update the category of a memory",
+    inputSchema: zodToJsonSchema2(SetMemoryCategorySchema),
+    handler: async (args) => {
+      try {
+        const memory = await memoryStore5.setMemoryCategory(args.memory_id, args.category);
+        if (!memory) {
+          throw new McpError5(ErrorCode5.InvalidRequest, "Memory not found");
+        }
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              success: true,
+              memory: {
+                id: memory.id,
+                category: memory.category,
+                content: memory.content.substring(0, 100) + "..."
+              },
+              message: `Successfully set category to "${args.category}"`
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        if (error instanceof McpError5) throw error;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        throw new McpError5(ErrorCode5.InternalError, `Failed to set category: ${errorMessage}`);
+      }
+    }
+  },
+  list_categories: {
+    description: "List all categories with memory counts",
+    inputSchema: zodToJsonSchema2(ListCategoriesSchema),
+    handler: async (args) => {
+      try {
+        const categories = await memoryStore5.getAllCategories();
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              success: true,
+              categories: categories.map((c) => ({
+                category: c.category,
+                memory_count: args.include_counts ? c.memory_count : void 0,
+                last_used: c.last_used
+              })),
+              total_categories: categories.length,
+              total_memories: categories.reduce((sum, c) => sum + (c.memory_count || 0), 0)
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        if (error instanceof McpError5) throw error;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        throw new McpError5(ErrorCode5.InternalError, `Failed to list categories: ${errorMessage}`);
+      }
+    }
+  },
+  get_memories_by_category: {
+    description: "Get all memories in a specific category",
+    inputSchema: zodToJsonSchema2(z4.object({
+      category: z4.string().describe("Category name"),
+      limit: z4.number().min(1).max(100).default(50).describe("Maximum memories to return")
+    })),
+    handler: async (args) => {
+      try {
+        const memories = await memoryStore5.getMemoriesByCategory(args.category);
+        const limited = memories.slice(0, args.limit);
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              success: true,
+              category: args.category,
+              memories: limited.map((m) => ({
+                id: m.id,
+                content: m.content.substring(0, 100) + (m.content.length > 100 ? "..." : ""),
+                context_type: m.context_type,
+                importance: m.importance,
+                tags: m.tags,
+                summary: m.summary,
+                is_global: m.is_global
+              })),
+              total_in_category: memories.length,
+              returned: limited.length
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        if (error instanceof McpError5) throw error;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        throw new McpError5(ErrorCode5.InternalError, `Failed to get memories by category: ${errorMessage}`);
+      }
+    }
+  }
+};
+
+// src/tools/index.ts
+var memoryStore6 = new MemoryStore();
 var tools = {
   // Context management tools
   recall_relevant_context,
@@ -3319,8 +3986,8 @@ var tools = {
       try {
         return await exportMemories(args);
       } catch (error) {
-        throw new McpError3(
-          ErrorCode3.InternalError,
+        throw new McpError6(
+          ErrorCode6.InternalError,
           `Failed to export memories: ${error instanceof Error ? error.message : String(error)}`
         );
       }
@@ -3333,8 +4000,8 @@ var tools = {
       try {
         return await importMemories(args);
       } catch (error) {
-        throw new McpError3(
-          ErrorCode3.InternalError,
+        throw new McpError6(
+          ErrorCode6.InternalError,
           `Failed to import memories: ${error instanceof Error ? error.message : String(error)}`
         );
       }
@@ -3347,8 +4014,8 @@ var tools = {
       try {
         return await findDuplicates(args);
       } catch (error) {
-        throw new McpError3(
-          ErrorCode3.InternalError,
+        throw new McpError6(
+          ErrorCode6.InternalError,
           `Failed to find duplicates: ${error instanceof Error ? error.message : String(error)}`
         );
       }
@@ -3361,8 +4028,8 @@ var tools = {
       try {
         return await consolidateMemories(args);
       } catch (error) {
-        throw new McpError3(
-          ErrorCode3.InternalError,
+        throw new McpError6(
+          ErrorCode6.InternalError,
           `Failed to consolidate memories: ${error instanceof Error ? error.message : String(error)}`
         );
       }
@@ -3374,7 +4041,7 @@ var tools = {
     inputSchema: zodToJsonSchema3(CreateMemorySchema),
     handler: async (args) => {
       try {
-        const memory = await memoryStore3.createMemory(args);
+        const memory = await memoryStore6.createMemory(args);
         return {
           content: [
             {
@@ -3389,8 +4056,8 @@ var tools = {
           ]
         };
       } catch (error) {
-        throw new McpError3(
-          ErrorCode3.InternalError,
+        throw new McpError6(
+          ErrorCode6.InternalError,
           `Failed to store memory: ${error instanceof Error ? error.message : String(error)}`
         );
       }
@@ -3401,7 +4068,7 @@ var tools = {
     inputSchema: zodToJsonSchema3(BatchCreateMemoriesSchema),
     handler: async (args) => {
       try {
-        const memories = await memoryStore3.createMemories(args.memories);
+        const memories = await memoryStore6.createMemories(args.memories);
         return {
           content: [
             {
@@ -3415,8 +4082,8 @@ var tools = {
           ]
         };
       } catch (error) {
-        throw new McpError3(
-          ErrorCode3.InternalError,
+        throw new McpError6(
+          ErrorCode6.InternalError,
           `Failed to store memories: ${error instanceof Error ? error.message : String(error)}`
         );
       }
@@ -3428,9 +4095,9 @@ var tools = {
     handler: async (args) => {
       try {
         const { memory_id, ...updates } = args;
-        const memory = await memoryStore3.updateMemory(memory_id, updates);
+        const memory = await memoryStore6.updateMemory(memory_id, updates);
         if (!memory) {
-          throw new McpError3(ErrorCode3.InvalidRequest, `Memory ${memory_id} not found`);
+          throw new McpError6(ErrorCode6.InvalidRequest, `Memory ${memory_id} not found`);
         }
         return {
           content: [
@@ -3445,9 +4112,9 @@ var tools = {
           ]
         };
       } catch (error) {
-        if (error instanceof McpError3) throw error;
-        throw new McpError3(
-          ErrorCode3.InternalError,
+        if (error instanceof McpError6) throw error;
+        throw new McpError6(
+          ErrorCode6.InternalError,
           `Failed to update memory: ${error instanceof Error ? error.message : String(error)}`
         );
       }
@@ -3458,9 +4125,9 @@ var tools = {
     inputSchema: zodToJsonSchema3(DeleteMemorySchema),
     handler: async (args) => {
       try {
-        const success = await memoryStore3.deleteMemory(args.memory_id);
+        const success = await memoryStore6.deleteMemory(args.memory_id);
         if (!success) {
-          throw new McpError3(ErrorCode3.InvalidRequest, `Memory ${args.memory_id} not found`);
+          throw new McpError6(ErrorCode6.InvalidRequest, `Memory ${args.memory_id} not found`);
         }
         return {
           content: [
@@ -3475,24 +4142,27 @@ var tools = {
           ]
         };
       } catch (error) {
-        if (error instanceof McpError3) throw error;
-        throw new McpError3(
-          ErrorCode3.InternalError,
+        if (error instanceof McpError6) throw error;
+        throw new McpError6(
+          ErrorCode6.InternalError,
           `Failed to delete memory: ${error instanceof Error ? error.message : String(error)}`
         );
       }
     }
   },
   search_memories: {
-    description: "Search memories using semantic similarity",
+    description: "Search memories using semantic similarity with advanced filters (v1.5.0: category, fuzzy, regex)",
     inputSchema: zodToJsonSchema3(SearchMemorySchema),
     handler: async (args) => {
       try {
-        const results = await memoryStore3.searchMemories(
+        const results = await memoryStore6.searchMemories(
           args.query,
           args.limit,
           args.min_importance,
-          args.context_types
+          args.context_types,
+          args.category,
+          args.fuzzy,
+          args.regex
         );
         return {
           content: [
@@ -3501,6 +4171,13 @@ var tools = {
               text: JSON.stringify({
                 query: args.query,
                 count: results.length,
+                filters: {
+                  category: args.category,
+                  fuzzy: args.fuzzy,
+                  regex: args.regex,
+                  min_importance: args.min_importance,
+                  context_types: args.context_types
+                },
                 results: results.map((r) => ({
                   memory_id: r.id,
                   content: r.content,
@@ -3508,6 +4185,7 @@ var tools = {
                   context_type: r.context_type,
                   importance: r.importance,
                   tags: r.tags,
+                  category: r.category,
                   similarity: r.similarity,
                   timestamp: r.timestamp
                 }))
@@ -3516,8 +4194,8 @@ var tools = {
           ]
         };
       } catch (error) {
-        throw new McpError3(
-          ErrorCode3.InternalError,
+        throw new McpError6(
+          ErrorCode6.InternalError,
           `Failed to search memories: ${error instanceof Error ? error.message : String(error)}`
         );
       }
@@ -3528,7 +4206,7 @@ var tools = {
     inputSchema: zodToJsonSchema3(OrganizeSessionSchema),
     handler: async (args) => {
       try {
-        const session = await memoryStore3.createSession(
+        const session = await memoryStore6.createSession(
           args.session_name,
           args.memory_ids,
           args.summary
@@ -3548,8 +4226,8 @@ var tools = {
           ]
         };
       } catch (error) {
-        throw new McpError3(
-          ErrorCode3.InternalError,
+        throw new McpError6(
+          ErrorCode6.InternalError,
           `Failed to organize session: ${error instanceof Error ? error.message : String(error)}`
         );
       }
@@ -3561,10 +4239,10 @@ var tools = {
     inputSchema: zodToJsonSchema3(ConvertToGlobalSchema),
     handler: async (args) => {
       try {
-        const result = await memoryStore3.convertToGlobal(args.memory_id);
+        const result = await memoryStore6.convertToGlobal(args.memory_id);
         if (!result) {
-          throw new McpError3(
-            ErrorCode3.InvalidRequest,
+          throw new McpError6(
+            ErrorCode6.InvalidRequest,
             `Memory not found: ${args.memory_id}`
           );
         }
@@ -3583,9 +4261,9 @@ var tools = {
           ]
         };
       } catch (error) {
-        if (error instanceof McpError3) throw error;
-        throw new McpError3(
-          ErrorCode3.InternalError,
+        if (error instanceof McpError6) throw error;
+        throw new McpError6(
+          ErrorCode6.InternalError,
           `Failed to convert memory to global: ${error instanceof Error ? error.message : String(error)}`
         );
       }
@@ -3596,13 +4274,13 @@ var tools = {
     inputSchema: zodToJsonSchema3(ConvertToWorkspaceSchema),
     handler: async (args) => {
       try {
-        const result = await memoryStore3.convertToWorkspace(
+        const result = await memoryStore6.convertToWorkspace(
           args.memory_id,
           args.workspace_id
         );
         if (!result) {
-          throw new McpError3(
-            ErrorCode3.InvalidRequest,
+          throw new McpError6(
+            ErrorCode6.InvalidRequest,
             `Memory not found: ${args.memory_id}`
           );
         }
@@ -3622,19 +4300,25 @@ var tools = {
           ]
         };
       } catch (error) {
-        if (error instanceof McpError3) throw error;
-        throw new McpError3(
-          ErrorCode3.InternalError,
+        if (error instanceof McpError6) throw error;
+        throw new McpError6(
+          ErrorCode6.InternalError,
           `Failed to convert memory to workspace: ${error instanceof Error ? error.message : String(error)}`
         );
       }
     }
   },
   // Relationship tools (v1.4.0)
-  ...relationshipTools
+  ...relationshipTools,
+  // Version history tools (v1.5.0)
+  ...versionTools,
+  // Template tools (v1.5.0)
+  ...templateTools,
+  // Category tools (v1.5.0)
+  ...categoryTools
 };
 function zodToJsonSchema3(schema) {
-  if (schema instanceof z3.ZodObject) {
+  if (schema instanceof z5.ZodObject) {
     const shape = schema._def.shape();
     const properties = {};
     const required = [];
@@ -3653,22 +4337,22 @@ function zodToJsonSchema3(schema) {
   return zodToJsonSchemaInner2(schema);
 }
 function zodToJsonSchemaInner2(schema) {
-  if (schema instanceof z3.ZodString) {
+  if (schema instanceof z5.ZodString) {
     const result = { type: "string" };
     if (schema.description) result.description = schema.description;
     return result;
   }
-  if (schema instanceof z3.ZodNumber) {
+  if (schema instanceof z5.ZodNumber) {
     const result = { type: "number" };
     if (schema.description) result.description = schema.description;
     return result;
   }
-  if (schema instanceof z3.ZodBoolean) {
+  if (schema instanceof z5.ZodBoolean) {
     const result = { type: "boolean" };
     if (schema.description) result.description = schema.description;
     return result;
   }
-  if (schema instanceof z3.ZodArray) {
+  if (schema instanceof z5.ZodArray) {
     const result = {
       type: "array",
       items: zodToJsonSchemaInner2(schema.element)
@@ -3676,7 +4360,7 @@ function zodToJsonSchemaInner2(schema) {
     if (schema.description) result.description = schema.description;
     return result;
   }
-  if (schema instanceof z3.ZodEnum) {
+  if (schema instanceof z5.ZodEnum) {
     const result = {
       type: "string",
       enum: schema.options
@@ -3684,22 +4368,22 @@ function zodToJsonSchemaInner2(schema) {
     if (schema.description) result.description = schema.description;
     return result;
   }
-  if (schema instanceof z3.ZodOptional) {
+  if (schema instanceof z5.ZodOptional) {
     return zodToJsonSchemaInner2(schema.unwrap());
   }
-  if (schema instanceof z3.ZodDefault) {
+  if (schema instanceof z5.ZodDefault) {
     const inner = zodToJsonSchemaInner2(schema._def.innerType);
     inner.default = schema._def.defaultValue();
     return inner;
   }
-  if (schema instanceof z3.ZodObject) {
+  if (schema instanceof z5.ZodObject) {
     return zodToJsonSchema3(schema);
   }
   return { type: "string" };
 }
 
 // src/resources/index.ts
-import { McpError as McpError4, ErrorCode as ErrorCode4 } from "@modelcontextprotocol/sdk/types.js";
+import { McpError as McpError7, ErrorCode as ErrorCode7 } from "@modelcontextprotocol/sdk/types.js";
 
 // src/resources/analytics.ts
 async function getAnalytics(workspacePath) {
@@ -3817,7 +4501,7 @@ function formatAnalytics(data) {
 }
 
 // src/resources/index.ts
-var memoryStore4 = new MemoryStore();
+var memoryStore7 = new MemoryStore();
 var redis = getRedisClient();
 var resources = {
   "memory://recent": {
@@ -3826,7 +4510,7 @@ var resources = {
     mimeType: "application/json",
     handler: async (uri) => {
       const limit = parseInt(uri.searchParams.get("limit") || "50", 10);
-      const memories = await memoryStore4.getRecentMemories(limit);
+      const memories = await memoryStore7.getRecentMemories(limit);
       return {
         contents: [
           {
@@ -3861,7 +4545,7 @@ var resources = {
     handler: async (uri, params) => {
       const type = params.type;
       const limit = uri.searchParams.get("limit") ? parseInt(uri.searchParams.get("limit"), 10) : void 0;
-      const memories = await memoryStore4.getMemoriesByType(type, limit);
+      const memories = await memoryStore7.getMemoriesByType(type, limit);
       return {
         contents: [
           {
@@ -3895,7 +4579,7 @@ var resources = {
     handler: async (uri, params) => {
       const { tag } = params;
       const limit = uri.searchParams.get("limit") ? parseInt(uri.searchParams.get("limit"), 10) : void 0;
-      const memories = await memoryStore4.getMemoriesByTag(tag, limit);
+      const memories = await memoryStore7.getMemoriesByTag(tag, limit);
       return {
         contents: [
           {
@@ -3930,7 +4614,7 @@ var resources = {
     handler: async (uri) => {
       const minImportance = parseInt(uri.searchParams.get("min") || "8", 10);
       const limit = uri.searchParams.get("limit") ? parseInt(uri.searchParams.get("limit"), 10) : void 0;
-      const memories = await memoryStore4.getImportantMemories(minImportance, limit);
+      const memories = await memoryStore7.getImportantMemories(minImportance, limit);
       return {
         contents: [
           {
@@ -3964,11 +4648,11 @@ var resources = {
     mimeType: "application/json",
     handler: async (uri, params) => {
       const { session_id } = params;
-      const session = await memoryStore4.getSession(session_id);
+      const session = await memoryStore7.getSession(session_id);
       if (!session) {
-        throw new McpError4(ErrorCode4.InvalidRequest, `Session ${session_id} not found`);
+        throw new McpError7(ErrorCode7.InvalidRequest, `Session ${session_id} not found`);
       }
-      const memories = await memoryStore4.getSessionMemories(session_id);
+      const memories = await memoryStore7.getSessionMemories(session_id);
       return {
         contents: [
           {
@@ -4004,7 +4688,7 @@ var resources = {
     description: "Get list of all sessions",
     mimeType: "application/json",
     handler: async (uri) => {
-      const sessions = await memoryStore4.getAllSessions();
+      const sessions = await memoryStore7.getAllSessions();
       return {
         contents: [
           {
@@ -4034,7 +4718,7 @@ var resources = {
     description: "Get overall summary statistics of stored memories",
     mimeType: "application/json",
     handler: async (uri) => {
-      const stats = await memoryStore4.getSummaryStats();
+      const stats = await memoryStore7.getSummaryStats();
       return {
         contents: [
           {
@@ -4053,11 +4737,11 @@ var resources = {
     handler: async (uri) => {
       const query = uri.searchParams.get("q");
       if (!query) {
-        throw new McpError4(ErrorCode4.InvalidRequest, 'Query parameter "q" is required');
+        throw new McpError7(ErrorCode7.InvalidRequest, 'Query parameter "q" is required');
       }
       const limit = parseInt(uri.searchParams.get("limit") || "10", 10);
       const minImportance = uri.searchParams.get("min_importance") ? parseInt(uri.searchParams.get("min_importance"), 10) : void 0;
-      const results = await memoryStore4.searchMemories(query, limit, minImportance);
+      const results = await memoryStore7.searchMemories(query, limit, minImportance);
       return {
         contents: [
           {
@@ -4111,14 +4795,14 @@ var resources = {
     handler: async (uri) => {
       const mode = getWorkspaceMode();
       if (mode === "isolated" /* ISOLATED */) {
-        throw new McpError4(
-          ErrorCode4.InvalidRequest,
+        throw new McpError7(
+          ErrorCode7.InvalidRequest,
           "Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories."
         );
       }
       const limit = parseInt(uri.searchParams.get("limit") || "50", 10);
       const ids = await redis.zrevrange(RedisKeys.globalTimeline(), 0, limit - 1);
-      const memories = await memoryStore4.getMemories(ids);
+      const memories = await memoryStore7.getMemories(ids);
       return {
         contents: [
           {
@@ -4154,15 +4838,15 @@ var resources = {
     handler: async (uri, params) => {
       const mode = getWorkspaceMode();
       if (mode === "isolated" /* ISOLATED */) {
-        throw new McpError4(
-          ErrorCode4.InvalidRequest,
+        throw new McpError7(
+          ErrorCode7.InvalidRequest,
           "Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories."
         );
       }
       const type = params.type;
       const limit = uri.searchParams.get("limit") ? parseInt(uri.searchParams.get("limit"), 10) : void 0;
       const ids = await redis.smembers(RedisKeys.globalByType(type));
-      const allMemories = await memoryStore4.getMemories(ids);
+      const allMemories = await memoryStore7.getMemories(ids);
       allMemories.sort((a, b) => b.timestamp - a.timestamp);
       const memories = limit ? allMemories.slice(0, limit) : allMemories;
       return {
@@ -4200,15 +4884,15 @@ var resources = {
     handler: async (uri, params) => {
       const mode = getWorkspaceMode();
       if (mode === "isolated" /* ISOLATED */) {
-        throw new McpError4(
-          ErrorCode4.InvalidRequest,
+        throw new McpError7(
+          ErrorCode7.InvalidRequest,
           "Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories."
         );
       }
       const { tag } = params;
       const limit = uri.searchParams.get("limit") ? parseInt(uri.searchParams.get("limit"), 10) : void 0;
       const ids = await redis.smembers(RedisKeys.globalByTag(tag));
-      const allMemories = await memoryStore4.getMemories(ids);
+      const allMemories = await memoryStore7.getMemories(ids);
       allMemories.sort((a, b) => b.timestamp - a.timestamp);
       const memories = limit ? allMemories.slice(0, limit) : allMemories;
       return {
@@ -4247,8 +4931,8 @@ var resources = {
     handler: async (uri) => {
       const mode = getWorkspaceMode();
       if (mode === "isolated" /* ISOLATED */) {
-        throw new McpError4(
-          ErrorCode4.InvalidRequest,
+        throw new McpError7(
+          ErrorCode7.InvalidRequest,
           "Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories."
         );
       }
@@ -4262,7 +4946,7 @@ var resources = {
         0,
         limit || 100
       );
-      const memories = await memoryStore4.getMemories(results);
+      const memories = await memoryStore7.getMemories(results);
       return {
         contents: [
           {
@@ -4299,20 +4983,20 @@ var resources = {
     handler: async (uri) => {
       const mode = getWorkspaceMode();
       if (mode === "isolated" /* ISOLATED */) {
-        throw new McpError4(
-          ErrorCode4.InvalidRequest,
+        throw new McpError7(
+          ErrorCode7.InvalidRequest,
           "Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories."
         );
       }
       const query = uri.searchParams.get("q");
       if (!query) {
-        throw new McpError4(ErrorCode4.InvalidRequest, 'Query parameter "q" is required');
+        throw new McpError7(ErrorCode7.InvalidRequest, 'Query parameter "q" is required');
       }
       const limit = parseInt(uri.searchParams.get("limit") || "10", 10);
       const originalMode = process.env.WORKSPACE_MODE;
       process.env.WORKSPACE_MODE = "global";
       try {
-        const results = await memoryStore4.searchMemories(query, limit);
+        const results = await memoryStore7.searchMemories(query, limit);
         return {
           contents: [
             {
@@ -4362,7 +5046,7 @@ var resources = {
       const mode = getWorkspaceMode();
       let relationshipIds = [];
       if (mode === "isolated" /* ISOLATED */ || mode === "hybrid" /* HYBRID */) {
-        const workspaceIds = await redis.smembers(RedisKeys.relationships(memoryStore4["workspaceId"]));
+        const workspaceIds = await redis.smembers(RedisKeys.relationships(memoryStore7["workspaceId"]));
         relationshipIds.push(...workspaceIds);
       }
       if (mode === "global" /* GLOBAL */ || mode === "hybrid" /* HYBRID */) {
@@ -4372,7 +5056,7 @@ var resources = {
       relationshipIds = relationshipIds.slice(0, limit);
       const relationships = await Promise.all(
         relationshipIds.map(async (id) => {
-          const rel = await memoryStore4.getRelationship(id);
+          const rel = await memoryStore7.getRelationship(id);
           return rel;
         })
       );
@@ -4410,11 +5094,11 @@ var resources = {
     handler: async (uri) => {
       const memoryId = uri.pathname.split("/")[2];
       if (!memoryId) {
-        throw new McpError4(ErrorCode4.InvalidRequest, "Memory ID is required");
+        throw new McpError7(ErrorCode7.InvalidRequest, "Memory ID is required");
       }
       const depth = parseInt(uri.searchParams.get("depth") || "1", 10);
       const direction = uri.searchParams.get("direction") || "both";
-      const results = await memoryStore4.getRelatedMemories(memoryId, {
+      const results = await memoryStore7.getRelatedMemories(memoryId, {
         depth,
         direction
       });
@@ -4461,11 +5145,11 @@ var resources = {
     handler: async (uri) => {
       const memoryId = uri.pathname.split("/")[2];
       if (!memoryId) {
-        throw new McpError4(ErrorCode4.InvalidRequest, "Memory ID is required");
+        throw new McpError7(ErrorCode7.InvalidRequest, "Memory ID is required");
       }
       const maxDepth = parseInt(uri.searchParams.get("depth") || "2", 10);
       const maxNodes = parseInt(uri.searchParams.get("max_nodes") || "50", 10);
-      const graph = await memoryStore4.getMemoryGraph(memoryId, maxDepth, maxNodes);
+      const graph = await memoryStore7.getMemoryGraph(memoryId, maxDepth, maxNodes);
       const formattedNodes = Object.fromEntries(
         Object.entries(graph.nodes).map(([nodeId, node]) => [
           nodeId,
@@ -4575,20 +5259,20 @@ function getAgeString(timestamp) {
 }
 
 // src/prompts/index.ts
-var memoryStore5 = new MemoryStore();
+var memoryStore8 = new MemoryStore();
 var prompts = {
   workspace_context: {
     name: "workspace_context",
     description: "Critical workspace context: directives, decisions, and code patterns",
     arguments: [],
     handler: async () => {
-      const directives = await memoryStore5.getMemoriesByType("directive");
-      const decisions = await memoryStore5.getMemoriesByType("decision");
-      const patterns = await memoryStore5.getMemoriesByType("code_pattern");
+      const directives = await memoryStore8.getMemoriesByType("directive");
+      const decisions = await memoryStore8.getMemoriesByType("decision");
+      const patterns = await memoryStore8.getMemoriesByType("code_pattern");
       const importantDirectives = directives.filter((d) => d.importance >= 8);
       const importantDecisions = decisions.filter((d) => d.importance >= 7);
       const importantPatterns = patterns.filter((p) => p.importance >= 7);
-      const stats = await memoryStore5.getSummaryStats();
+      const stats = await memoryStore8.getSummaryStats();
       const workspacePath = stats.workspace_path;
       const contextText = formatWorkspaceContext(
         workspacePath,
@@ -4630,7 +5314,7 @@ async function getPrompt(name) {
 var server = new Server(
   {
     name: "@joseairosa/recall",
-    version: "1.4.0"
+    version: "1.5.0"
   },
   {
     capabilities: {

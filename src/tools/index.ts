@@ -29,6 +29,9 @@ import {
   ConsolidateMemoriesSchema,
 } from '../types.js';
 import { relationshipTools } from './relationship-tools.js';
+import { versionTools } from './version-tools.js';
+import { templateTools } from './template-tools.js';
+import { categoryTools } from './category-tools.js';
 
 const memoryStore = new MemoryStore();
 
@@ -223,7 +226,7 @@ export const tools = {
   },
 
   search_memories: {
-    description: 'Search memories using semantic similarity',
+    description: 'Search memories using semantic similarity with advanced filters (v1.5.0: category, fuzzy, regex)',
     inputSchema: zodToJsonSchema(SearchMemorySchema),
     handler: async (args: z.infer<typeof SearchMemorySchema>) => {
       try {
@@ -231,7 +234,10 @@ export const tools = {
           args.query,
           args.limit,
           args.min_importance,
-          args.context_types
+          args.context_types,
+          args.category,
+          args.fuzzy,
+          args.regex
         );
 
         return {
@@ -241,6 +247,13 @@ export const tools = {
               text: JSON.stringify({
                 query: args.query,
                 count: results.length,
+                filters: {
+                  category: args.category,
+                  fuzzy: args.fuzzy,
+                  regex: args.regex,
+                  min_importance: args.min_importance,
+                  context_types: args.context_types,
+                },
                 results: results.map(r => ({
                   memory_id: r.id,
                   content: r.content,
@@ -248,6 +261,7 @@ export const tools = {
                   context_type: r.context_type,
                   importance: r.importance,
                   tags: r.tags,
+                  category: r.category,
                   similarity: r.similarity,
                   timestamp: r.timestamp,
                 })),
@@ -381,6 +395,15 @@ export const tools = {
 
   // Relationship tools (v1.4.0)
   ...relationshipTools,
+
+  // Version history tools (v1.5.0)
+  ...versionTools,
+
+  // Template tools (v1.5.0)
+  ...templateTools,
+
+  // Category tools (v1.5.0)
+  ...categoryTools,
 };
 
 // Helper function to convert Zod schema to JSON Schema

@@ -347,6 +347,84 @@ Group related work:
 
 **What Claude does:** Uses `unlink_memories` to remove the relationship while keeping both memories intact.
 
+### Version History & Rollback (v1.5+)
+
+**View version history:**
+```
+"Show me the version history for memory mem_abc123"
+```
+
+**What Claude does:** Uses `get_memory_history` to retrieve all versions with timestamps and change reasons.
+
+**Rollback to previous version:**
+```
+"Rollback memory mem_abc123 to version ver_xyz789"
+```
+
+**What Claude does:** Uses `rollback_memory` to restore the memory to the specified version while preserving relationships.
+
+### Memory Templates (v1.5+)
+
+**Create a template:**
+```
+"Create a template for bug reports with fields: {{title}}, {{severity}}, {{steps}}"
+```
+
+**What Claude does:** Uses `create_template` to save a reusable template with placeholders.
+
+**Use a template:**
+```
+"Create a memory from bug template: title='Login fails', severity='high', steps='1. Click login 2. Error appears'"
+```
+
+**What Claude does:** Uses `create_from_template` to instantiate a memory with filled-in variables.
+
+### Categories (v1.5+)
+
+**Assign category:**
+```
+"Categorize memory mem_abc123 as 'authentication'"
+```
+
+**What Claude does:** Uses `set_memory_category` to organize the memory.
+
+**List categories:**
+```
+"Show me all categories with memory counts"
+```
+
+**What Claude does:** Uses `list_categories` to display all categories and their sizes.
+
+**Get memories by category:**
+```
+"Show me all memories in the 'authentication' category"
+```
+
+**What Claude does:** Uses `get_memories_by_category` to retrieve all memories in that category.
+
+### Advanced Search (v1.5+)
+
+**Fuzzy search:**
+```
+"Search for 'authentification' with fuzzy matching"
+```
+
+**What Claude does:** Uses `search_memories` with `fuzzy: true` to find similar words despite typos.
+
+**Regex search:**
+```
+"Find memories matching the pattern 'API.*v[0-9]+'"
+```
+
+**What Claude does:** Uses `search_memories` with `regex` parameter for pattern-based search.
+
+**Category filtering:**
+```
+"Search for 'login' only in the 'authentication' category"
+```
+
+**What Claude does:** Uses `search_memories` with both `query` and `category` parameters.
+
 ---
 
 ## Memory Types
@@ -368,16 +446,16 @@ Memories are categorized for better organization:
 
 ---
 
-## Available Tools (19)
+## Available Tools (27)
 
 Claude has access to these memory tools:
 
 ### Core Memory
 - **`store_memory`** - Store a single memory
 - **`store_batch_memories`** - Store multiple memories at once
-- **`update_memory`** - Update existing memory
+- **`update_memory`** - Update existing memory (auto-creates version in v1.5+)
 - **`delete_memory`** - Remove a memory
-- **`search_memories`** - Search using semantic similarity
+- **`search_memories`** - Search using semantic similarity (enhanced in v1.5+ with category/fuzzy/regex)
 - **`organize_session`** - Create session groups
 
 ### Smart Context (v1.1+)
@@ -400,6 +478,20 @@ Claude has access to these memory tools:
 - **`get_related_memories`** - Traverse relationship graph
 - **`unlink_memories`** - Remove relationships
 - **`get_memory_graph`** - Get full memory graph structure
+
+### Version History (v1.5+)
+- **`get_memory_history`** - View version history of a memory
+- **`rollback_memory`** - Rollback to a previous version
+
+### Templates (v1.5+)
+- **`create_template`** - Create reusable memory template
+- **`create_from_template`** - Instantiate memory from template
+- **`list_templates`** - List available templates
+
+### Categories (v1.5+)
+- **`set_memory_category`** - Assign category to a memory
+- **`list_categories`** - List all categories with counts
+- **`get_memories_by_category`** - Retrieve memories by category
 
 ---
 

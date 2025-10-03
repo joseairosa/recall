@@ -52,6 +52,7 @@ export class MemoryStore {
       expires_at: expiresAt,
       is_global: isGlobal,
       workspace_id: isGlobal ? '' : this.workspaceId,
+      category: data.category, // v1.5.0
     };
 
     // Store in Redis (workspace or global based on is_global flag)
@@ -82,6 +83,13 @@ export class MemoryStore {
       if (data.importance >= 8) {
         pipeline.zadd(RedisKeys.globalImportant(), data.importance, id);
       }
+
+      // Add to category index if specified (v1.5.0)
+      if (data.category) {
+        pipeline.set(RedisKeys.globalMemoryCategory(id), data.category);
+        pipeline.sadd(RedisKeys.globalCategory(data.category), id);
+        pipeline.zadd(RedisKeys.globalCategories(), timestamp, data.category);
+      }
     } else {
       pipeline.sadd(RedisKeys.memories(this.workspaceId), id);
       pipeline.zadd(RedisKeys.timeline(this.workspaceId), timestamp, id);
@@ -93,6 +101,13 @@ export class MemoryStore {
 
       if (data.importance >= 8) {
         pipeline.zadd(RedisKeys.important(this.workspaceId), data.importance, id);
+      }
+
+      // Add to category index if specified (v1.5.0)
+      if (data.category) {
+        pipeline.set(RedisKeys.memoryCategory(this.workspaceId, id), data.category);
+        pipeline.sadd(RedisKeys.category(this.workspaceId, data.category), id);
+        pipeline.zadd(RedisKeys.categories(this.workspaceId), timestamp, data.category);
       }
     }
 
@@ -293,6 +308,9 @@ export class MemoryStore {
       return null;
     }
 
+    // Create version before updating (v1.5.0)
+    await this.createVersion(existing, 'user', 'Memory updated');
+
     const pipeline = this.redis.pipeline();
 
     // Update content and regenerate embedding if content changed
@@ -424,7 +442,10 @@ export class MemoryStore {
     query: string,
     limit: number = 10,
     minImportance?: number,
-    contextTypes?: ContextType[]
+    contextTypes?: ContextType[],
+    category?: string,
+    fuzzy: boolean = false,
+    regex?: string
   ): Promise<Array<MemoryEntry & { similarity: number }>> {
     // Generate embedding for query
     const queryEmbedding = await generateEmbedding(query);
@@ -477,9 +498,34 @@ export class MemoryStore {
       filtered = memories.filter(m => m.importance >= minImportance);
     }
 
+    // Filter by category if specified (v1.5.0)
+    if (category) {
+      filtered = filtered.filter(m => m.category === category);
+    }
+
+    // Apply regex filter if specified (v1.5.0)
+    if (regex) {
+      try {
+        const regexPattern = new RegExp(regex, 'i');
+        filtered = filtered.filter(m => regexPattern.test(m.content));
+      } catch (error) {
+        // Invalid regex, skip filtering
+        console.error('Invalid regex pattern:', error);
+      }
+    }
+
     // Calculate similarities
     const withSimilarity = filtered.map(memory => {
-      const baseSimilarity = memory.embedding ? cosineSimilarity(queryEmbedding, memory.embedding) : 0;
+      let baseSimilarity = memory.embedding ? cosineSimilarity(queryEmbedding, memory.embedding) : 0;
+
+      // Fuzzy search boost (v1.5.0) - boost exact word matches
+      if (fuzzy) {
+        const queryWords = query.toLowerCase().split(/\s+/);
+        const contentWords = memory.content.toLowerCase().split(/\s+/);
+        const matchCount = queryWords.filter(qw => contentWords.some(cw => cw.includes(qw))).length;
+        const fuzzyBoost = (matchCount / queryWords.length) * 0.2; // Up to 20% boost
+        baseSimilarity = Math.min(1, baseSimilarity + fuzzyBoost);
+      }
 
       // In hybrid mode, weight global memories slightly lower (0.9x) to prefer local context
       const similarity = (mode === WorkspaceMode.HYBRID && memory.is_global)
@@ -681,6 +727,7 @@ export class MemoryStore {
       expires_at: memory.expires_at?.toString() || '',
       is_global: memory.is_global ? 'true' : 'false',
       workspace_id: memory.workspace_id || '',
+      category: memory.category || '', // v1.5.0
     };
   }
 
@@ -700,6 +747,7 @@ export class MemoryStore {
       expires_at: data.expires_at ? parseInt(data.expires_at, 10) : undefined,
       is_global: data.is_global === 'true',
       workspace_id: data.workspace_id || '',
+      category: data.category || undefined, // v1.5.0
     };
   }
 
@@ -1170,5 +1218,374 @@ export class MemoryStore {
         await this.buildGraph(relatedId, maxDepth, maxNodes, nodes, visited, currentDepth + 1);
       }
     }
+  }
+
+  // ============================================================================
+  // Memory Versioning & History (v1.5.0)
+  // ============================================================================
+
+  private async createVersion(
+    memory: MemoryEntry,
+    createdBy: 'user' | 'system' = 'user',
+    changeReason?: string
+  ): Promise<string> {
+    const versionId = ulid();
+    const version: import('../types.js').MemoryVersion = {
+      version_id: versionId,
+      memory_id: memory.id,
+      content: memory.content,
+      context_type: memory.context_type,
+      importance: memory.importance,
+      tags: memory.tags,
+      summary: memory.summary,
+      created_at: new Date().toISOString(),
+      created_by: createdBy,
+      change_reason: changeReason,
+    };
+
+    const isGlobal = memory.is_global;
+    const timestamp = Date.now();
+
+    // Store version and add to sorted set
+    const pipeline = this.redis.pipeline();
+
+    if (isGlobal) {
+      pipeline.hset(
+        RedisKeys.globalMemoryVersion(memory.id, versionId),
+        version as unknown as Record<string, string>
+      );
+      pipeline.zadd(RedisKeys.globalMemoryVersions(memory.id), timestamp, versionId);
+    } else {
+      pipeline.hset(
+        RedisKeys.memoryVersion(this.workspaceId, memory.id, versionId),
+        version as unknown as Record<string, string>
+      );
+      pipeline.zadd(RedisKeys.memoryVersions(this.workspaceId, memory.id), timestamp, versionId);
+    }
+
+    // Enforce version limit (keep 50 most recent)
+    const versionsKey = isGlobal
+      ? RedisKeys.globalMemoryVersions(memory.id)
+      : RedisKeys.memoryVersions(this.workspaceId, memory.id);
+
+    pipeline.zremrangebyrank(versionsKey, 0, -51); // Keep last 50
+
+    await pipeline.exec();
+
+    return versionId;
+  }
+
+  async getMemoryHistory(memoryId: string, limit: number = 50): Promise<import('../types.js').MemoryVersion[]> {
+    const memory = await this.getMemory(memoryId);
+    if (!memory) {
+      return [];
+    }
+
+    const isGlobal = memory.is_global;
+    const versionsKey = isGlobal
+      ? RedisKeys.globalMemoryVersions(memoryId)
+      : RedisKeys.memoryVersions(this.workspaceId, memoryId);
+
+    // Get version IDs (most recent first)
+    const versionIds = await this.redis.zrevrange(versionsKey, 0, limit - 1);
+
+    if (versionIds.length === 0) {
+      return [];
+    }
+
+    // Fetch all versions
+    const versions: import('../types.js').MemoryVersion[] = [];
+    for (const versionId of versionIds) {
+      const versionKey = isGlobal
+        ? RedisKeys.globalMemoryVersion(memoryId, versionId)
+        : RedisKeys.memoryVersion(this.workspaceId, memoryId, versionId);
+
+      const versionData = await this.redis.hgetall(versionKey);
+      if (versionData && Object.keys(versionData).length > 0) {
+        versions.push({
+          version_id: versionData.version_id,
+          memory_id: versionData.memory_id,
+          content: versionData.content,
+          context_type: versionData.context_type as import('../types.js').ContextType,
+          importance: parseInt(versionData.importance, 10),
+          tags: versionData.tags ? JSON.parse(versionData.tags) : [],
+          summary: versionData.summary,
+          created_at: versionData.created_at,
+          created_by: versionData.created_by as 'user' | 'system',
+          change_reason: versionData.change_reason,
+        });
+      }
+    }
+
+    return versions;
+  }
+
+  async rollbackMemory(
+    memoryId: string,
+    versionId: string,
+    preserveRelationships: boolean = true
+  ): Promise<MemoryEntry | null> {
+    const memory = await this.getMemory(memoryId);
+    if (!memory) {
+      throw new Error('Memory not found');
+    }
+
+    // Get the target version
+    const isGlobal = memory.is_global;
+    const versionKey = isGlobal
+      ? RedisKeys.globalMemoryVersion(memoryId, versionId)
+      : RedisKeys.memoryVersion(this.workspaceId, memoryId, versionId);
+
+    const versionData = await this.redis.hgetall(versionKey);
+    if (!versionData || Object.keys(versionData).length === 0) {
+      throw new Error('Version not found');
+    }
+
+    // Save current state as a version before rollback
+    await this.createVersion(memory, 'system', `Before rollback to version ${versionId}`);
+
+    // Prepare rollback updates
+    const updates = {
+      content: versionData.content,
+      context_type: versionData.context_type as import('../types.js').ContextType,
+      importance: parseInt(versionData.importance, 10),
+      tags: versionData.tags ? JSON.parse(versionData.tags) : [],
+      summary: versionData.summary,
+    };
+
+    // Update the memory
+    const rolledBackMemory = await this.updateMemory(memoryId, updates);
+
+    if (rolledBackMemory) {
+      // Create a new version recording the rollback
+      await this.createVersion(rolledBackMemory, 'system', `Rolled back to version ${versionId}`);
+    }
+
+    return rolledBackMemory;
+  }
+
+  // ============================================================================
+  // Memory Templates (v1.5.0)
+  // ============================================================================
+
+  async createTemplate(data: import('../types.js').CreateTemplate): Promise<import('../types.js').MemoryTemplate> {
+    const templateId = ulid();
+    const template: import('../types.js').MemoryTemplate = {
+      template_id: templateId,
+      name: data.name,
+      description: data.description,
+      context_type: data.context_type,
+      content_template: data.content_template,
+      default_tags: data.default_tags,
+      default_importance: data.default_importance,
+      is_builtin: false,
+      created_at: new Date().toISOString(),
+    };
+
+    const pipeline = this.redis.pipeline();
+    pipeline.hset(RedisKeys.template(this.workspaceId, templateId), template as unknown as Record<string, string>);
+    pipeline.sadd(RedisKeys.templates(this.workspaceId), templateId);
+    await pipeline.exec();
+
+    return template;
+  }
+
+  async getTemplate(templateId: string): Promise<import('../types.js').MemoryTemplate | null> {
+    // Check workspace templates first
+    let templateData = await this.redis.hgetall(RedisKeys.template(this.workspaceId, templateId));
+
+    // Check builtin templates if not found
+    if (!templateData || Object.keys(templateData).length === 0) {
+      templateData = await this.redis.hgetall(RedisKeys.builtinTemplate(templateId));
+    }
+
+    if (!templateData || Object.keys(templateData).length === 0) {
+      return null;
+    }
+
+    return {
+      template_id: templateData.template_id,
+      name: templateData.name,
+      description: templateData.description,
+      context_type: templateData.context_type as import('../types.js').ContextType,
+      content_template: templateData.content_template,
+      default_tags: templateData.default_tags ? JSON.parse(templateData.default_tags) : [],
+      default_importance: parseInt(templateData.default_importance, 10),
+      is_builtin: templateData.is_builtin === 'true',
+      created_at: templateData.created_at,
+    };
+  }
+
+  async getAllTemplates(): Promise<import('../types.js').MemoryTemplate[]> {
+    const workspaceIds = await this.redis.smembers(RedisKeys.templates(this.workspaceId));
+    const builtinIds = await this.redis.smembers(RedisKeys.builtinTemplates());
+
+    const allIds = [...new Set([...workspaceIds, ...builtinIds])];
+    const templates: import('../types.js').MemoryTemplate[] = [];
+
+    for (const id of allIds) {
+      const template = await this.getTemplate(id);
+      if (template) {
+        templates.push(template);
+      }
+    }
+
+    return templates;
+  }
+
+  async createFromTemplate(
+    templateId: string,
+    variables: Record<string, string>,
+    additionalTags?: string[],
+    customImportance?: number,
+    isGlobal: boolean = false
+  ): Promise<MemoryEntry> {
+    const template = await this.getTemplate(templateId);
+    if (!template) {
+      throw new Error('Template not found');
+    }
+
+    // Replace variables in content template
+    let content = template.content_template;
+    for (const [key, value] of Object.entries(variables)) {
+      content = content.replace(new RegExp(`{{${key}}}`, 'g'), value);
+    }
+
+    // Check for unreplaced variables
+    const unreplacedVars = content.match(/{{(\w+)}}/g);
+    if (unreplacedVars) {
+      throw new Error(`Missing variables: ${unreplacedVars.join(', ')}`);
+    }
+
+    // Create memory from template
+    const memoryData: import('../types.js').CreateMemory = {
+      content,
+      context_type: template.context_type,
+      tags: [...template.default_tags, ...(additionalTags || [])],
+      importance: customImportance !== undefined ? customImportance : template.default_importance,
+      is_global: isGlobal,
+    };
+
+    return this.createMemory(memoryData);
+  }
+
+  async deleteTemplate(templateId: string): Promise<boolean> {
+    const template = await this.getTemplate(templateId);
+    if (!template) {
+      return false;
+    }
+
+    if (template.is_builtin) {
+      throw new Error('Cannot delete builtin templates');
+    }
+
+    const pipeline = this.redis.pipeline();
+    pipeline.del(RedisKeys.template(this.workspaceId, templateId));
+    pipeline.srem(RedisKeys.templates(this.workspaceId), templateId);
+    await pipeline.exec();
+
+    return true;
+  }
+
+  // ============================================================================
+  // Memory Categories (v1.5.0)
+  // ============================================================================
+
+  async setMemoryCategory(memoryId: string, category: string): Promise<MemoryEntry | null> {
+    const memory = await this.getMemory(memoryId);
+    if (!memory) {
+      return null;
+    }
+
+    const isGlobal = memory.is_global;
+    const categoryKey = isGlobal
+      ? RedisKeys.globalMemoryCategory(memoryId)
+      : RedisKeys.memoryCategory(this.workspaceId, memoryId);
+    const categorySetKey = isGlobal
+      ? RedisKeys.globalCategory(category)
+      : RedisKeys.category(this.workspaceId, category);
+    const categoriesKey = isGlobal ? RedisKeys.globalCategories() : RedisKeys.categories(this.workspaceId);
+
+    // Remove from old category if exists
+    const oldCategory = await this.redis.get(categoryKey);
+    if (oldCategory) {
+      const oldCategorySetKey = isGlobal
+        ? RedisKeys.globalCategory(oldCategory)
+        : RedisKeys.category(this.workspaceId, oldCategory);
+      await this.redis.srem(oldCategorySetKey, memoryId);
+    }
+
+    const pipeline = this.redis.pipeline();
+
+    // Set new category
+    pipeline.set(categoryKey, category);
+    pipeline.sadd(categorySetKey, memoryId);
+    pipeline.zadd(categoriesKey, Date.now(), category); // Track last used
+
+    await pipeline.exec();
+
+    // Update memory object
+    memory.category = category;
+
+    // Also update the memory hash to include category
+    const memoryKey = isGlobal ? RedisKeys.globalMemory(memoryId) : RedisKeys.memory(this.workspaceId, memoryId);
+    await this.redis.hset(memoryKey, 'category', category);
+
+    return memory;
+  }
+
+  async getMemoriesByCategory(category: string): Promise<MemoryEntry[]> {
+    const mode = getWorkspaceMode();
+    const memoryIds: string[] = [];
+
+    if (mode === WorkspaceMode.ISOLATED || mode === WorkspaceMode.HYBRID) {
+      const workspaceIds = await this.redis.smembers(RedisKeys.category(this.workspaceId, category));
+      memoryIds.push(...workspaceIds);
+    }
+
+    if (mode === WorkspaceMode.GLOBAL || mode === WorkspaceMode.HYBRID) {
+      const globalIds = await this.redis.smembers(RedisKeys.globalCategory(category));
+      memoryIds.push(...globalIds);
+    }
+
+    return this.getMemories(memoryIds);
+  }
+
+  async getAllCategories(): Promise<import('../types.js').CategoryInfo[]> {
+    const mode = getWorkspaceMode();
+    const categoryNames: string[] = [];
+
+    if (mode === WorkspaceMode.ISOLATED || mode === WorkspaceMode.HYBRID) {
+      const workspaceCategories = await this.redis.zrange(RedisKeys.categories(this.workspaceId), 0, -1);
+      categoryNames.push(...workspaceCategories);
+    }
+
+    if (mode === WorkspaceMode.GLOBAL || mode === WorkspaceMode.HYBRID) {
+      const globalCategories = await this.redis.zrange(RedisKeys.globalCategories(), 0, -1);
+      categoryNames.push(...globalCategories);
+    }
+
+    // Deduplicate
+    const uniqueCategories = [...new Set(categoryNames)];
+
+    const categories: import('../types.js').CategoryInfo[] = [];
+    for (const category of uniqueCategories) {
+      const memories = await this.getMemoriesByCategory(category);
+      const lastUsed = await this.redis.zscore(
+        mode === WorkspaceMode.GLOBAL
+          ? RedisKeys.globalCategories()
+          : RedisKeys.categories(this.workspaceId),
+        category
+      );
+
+      categories.push({
+        category,
+        memory_count: memories.length,
+        created_at: new Date(parseInt(lastUsed || '0', 10)).toISOString(),
+        last_used: new Date(parseInt(lastUsed || '0', 10)).toISOString(),
+      });
+    }
+
+    return categories;
   }
 }

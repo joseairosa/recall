@@ -19,7 +19,7 @@ import { listPrompts, getPrompt } from './prompts/index.js';
 const server = new Server(
   {
     name: '@joseairosa/recall',
-    version: '1.4.0',
+    version: '1.5.0',
   },
   {
     capabilities: {

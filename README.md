@@ -324,6 +324,29 @@ Group related work:
 
 **What Claude does:** Uses `convert_to_workspace` to move the memory from global to current workspace.
 
+### Link Related Memories (v1.4+)
+
+**Create relationships between memories:**
+```
+"Link these two memories: pattern mem_abc123 is an example of implementation mem_xyz789"
+```
+
+**What Claude does:** Uses `link_memories` to create an `example_of` relationship between the memories.
+
+**Find related memories:**
+```
+"Show me all memories related to mem_abc123"
+```
+
+**What Claude does:** Uses `get_related_memories` to traverse the relationship graph and find connected memories.
+
+**Remove a relationship:**
+```
+"Unlink relationship rel_123abc"
+```
+
+**What Claude does:** Uses `unlink_memories` to remove the relationship while keeping both memories intact.
+
 ---
 
 ## Memory Types
@@ -345,7 +368,7 @@ Memories are categorized for better organization:
 
 ---
 
-## Available Tools (15)
+## Available Tools (19)
 
 Claude has access to these memory tools:
 
@@ -372,9 +395,15 @@ Claude has access to these memory tools:
 - **`convert_to_global`** - Convert workspace memory to global
 - **`convert_to_workspace`** - Convert global memory to workspace-specific
 
+### Memory Relationships (v1.4+)
+- **`link_memories`** - Create relationships between memories
+- **`get_related_memories`** - Traverse relationship graph
+- **`unlink_memories`** - Remove relationships
+- **`get_memory_graph`** - Get full memory graph structure
+
 ---
 
-## Available Resources (14)
+## Available Resources (17)
 
 Browse memories directly using MCP resources:
 
@@ -395,6 +424,11 @@ Browse memories directly using MCP resources:
 - **`memory://global/by-tag/{tag}`** - Global memories by tag
 - **`memory://global/important`** - Important global memories
 - **`memory://global/search?q=query`** - Search global memories
+
+### Relationship Resources (v1.4+)
+- **`memory://relationships`** - List all memory relationships
+- **`memory://memory/{id}/related`** - Get related memories
+- **`memory://graph/{id}`** - Get memory graph structure
 
 ---
 
@@ -962,7 +996,8 @@ Typical performance characteristics:
 
 ## Version History
 
-- **v1.3.0** (Current) - Global memories, cross-workspace sharing, workspace modes
+- **v1.4.0** (Current) - Memory relationships, knowledge graphs, link related memories
+- **v1.3.0** - Global memories, cross-workspace sharing, workspace modes
 - **v1.2.0** - TTL support, Export/Import, Consolidation, Analytics
 - **v1.1.0** - Smart context management (recall, analyze, summarize)
 - **v1.0.0** - Initial release with core memory operations

@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.0] - 2025-10-03
+
+### Added
+- **Memory Versioning & History** - Track changes over time
+  - Automatic versioning on memory updates (up to 50 versions per memory)
+  - Version tracking includes content, context_type, importance, tags, timestamp
+  - System-generated and user-generated versions with change reasons
+  - `MemoryVersion` schema with created_by field ('user' or 'system')
+  - Version history stored in Redis sorted sets by timestamp
+
+- **Version Tools** (2 new tools)
+  - `get_memory_history` - Retrieve version history for a memory
+  - `rollback_memory` - Rollback memory to a previous version (preserves relationships)
+
+- **Memory Templates** - Reusable memory patterns
+  - Template system with variable placeholders ({{variable}} syntax)
+  - Built-in and workspace-specific templates
+  - Support for default tags, importance, and context_type
+  - Template variable validation and replacement
+
+- **Template Tools** (3 new tools)
+  - `create_template` - Create new memory template with placeholders
+  - `create_from_template` - Instantiate memory from template
+  - `list_templates` - List all available templates (workspace + builtin)
+
+- **Advanced Search** - Enhanced search capabilities
+  - Fuzzy search with word-matching boost (up to 20% similarity increase)
+  - Regex pattern matching for content filtering
+  - Category filtering for organized search
+
+- **Memory Categories** - Organize memories by category
+  - Category field added to memory schema (optional)
+  - Category indexes for fast filtering
+  - Automatic category tracking with last-used timestamps
+
+- **Category Tools** (3 new tools)
+  - `set_memory_category` - Assign category to a memory
+  - `list_categories` - List all categories with memory counts
+  - `get_memories_by_category` - Retrieve all memories in a category
+
+### Enhanced
+- `search_memories` now supports:
+  - `category` parameter for filtering by category
+  - `fuzzy` boolean for fuzzy search
+  - `regex` parameter for pattern matching
+- `createMemory` and `updateMemory` support category field
+- All memory operations maintain backward compatibility
+
+### Technical
+- Added version keys to Redis: `memory:{id}:versions`, `memory:{id}:version:{versionId}`
+- Added template keys: `template:{id}`, `templates:all`, `builtin:templates:all`
+- Added category keys: `memory:{id}:category`, `category:{name}`, `categories:all`
+- Version limit enforced at 50 per memory (ZREMRANGEBYRANK for cleanup)
+- Template variable replacement with {{placeholder}} syntax
+- Fuzzy search uses word-level matching with configurable boost
+- Category indexes support both workspace and global scopes
+
+### Use Cases
+- Track evolution of code patterns and decisions over time
+- Rollback incorrect updates while preserving relationships
+- Create standardized memory templates for team workflows
+- Organize memories by project, feature, or domain with categories
+- Use advanced search filters to find specific patterns
+
+**Tools:** 27 total (6 core + 3 smart + 4 advanced + 2 global + 4 relationships + 2 versions + 3 templates + 3 categories)
+**Resources:** 17 total (unchanged from v1.4.0)
+**Prompts:** 1 (`workspace_context`)
+
+---
+
 ## [1.4.0] - 2025-10-03
 
 ### Added

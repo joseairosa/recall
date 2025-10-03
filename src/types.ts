@@ -31,6 +31,7 @@ export const MemoryEntrySchema = z.object({
   expires_at: z.number().optional().describe('Unix timestamp when memory expires'),
   is_global: z.boolean().default(false).describe('If true, memory is accessible across all workspaces'),
   workspace_id: z.string().describe('Workspace identifier (empty for global memories)'),
+  category: z.string().optional().describe('Category for organization (v1.5.0)'),
 });
 
 export type MemoryEntry = z.infer<typeof MemoryEntrySchema>;
@@ -45,6 +46,7 @@ export const CreateMemorySchema = z.object({
   session_id: z.string().optional().describe('Optional session ID'),
   ttl_seconds: z.number().min(60).optional().describe('Time-to-live in seconds (minimum 60s)'),
   is_global: z.boolean().default(false).describe('If true, memory is accessible across all workspaces'),
+  category: z.string().optional().describe('Category for organization (v1.5.0)'),
 });
 
 export type CreateMemory = z.infer<typeof CreateMemorySchema>;
@@ -63,6 +65,7 @@ export const UpdateMemorySchema = z.object({
   importance: z.number().min(1).max(10).optional(),
   summary: z.string().optional(),
   session_id: z.string().optional(),
+  category: z.string().optional().describe('Category for organization (v1.5.0)'),
 });
 
 // Delete memory schema
@@ -76,6 +79,9 @@ export const SearchMemorySchema = z.object({
   limit: z.number().min(1).max(100).default(10).describe('Number of results'),
   min_importance: z.number().min(1).max(10).optional().describe('Filter by minimum importance'),
   context_types: z.array(ContextType).optional().describe('Filter by context types'),
+  category: z.string().optional().describe('Filter by category (v1.5.0)'),
+  fuzzy: z.boolean().default(false).describe('Enable fuzzy search (v1.5.0)'),
+  regex: z.string().optional().describe('Regex pattern for advanced search (v1.5.0)'),
 });
 
 // Session organization schema
@@ -258,6 +264,27 @@ export const RedisKeys = {
   globalMemoryRelationships: (memoryId: string) => `global:memory:${memoryId}:relationships`,
   globalMemoryRelationshipsOut: (memoryId: string) => `global:memory:${memoryId}:relationships:out`,
   globalMemoryRelationshipsIn: (memoryId: string) => `global:memory:${memoryId}:relationships:in`,
+
+  // Version history keys (v1.5.0)
+  memoryVersions: (workspace: string, memoryId: string) => `ws:${workspace}:memory:${memoryId}:versions`,
+  memoryVersion: (workspace: string, memoryId: string, versionId: string) =>
+    `ws:${workspace}:memory:${memoryId}:version:${versionId}`,
+  globalMemoryVersions: (memoryId: string) => `global:memory:${memoryId}:versions`,
+  globalMemoryVersion: (memoryId: string, versionId: string) => `global:memory:${memoryId}:version:${versionId}`,
+
+  // Template keys (v1.5.0)
+  template: (workspace: string, id: string) => `ws:${workspace}:template:${id}`,
+  templates: (workspace: string) => `ws:${workspace}:templates:all`,
+  builtinTemplates: () => `builtin:templates:all`,
+  builtinTemplate: (id: string) => `builtin:template:${id}`,
+
+  // Category keys (v1.5.0)
+  memoryCategory: (workspace: string, memoryId: string) => `ws:${workspace}:memory:${memoryId}:category`,
+  category: (workspace: string, category: string) => `ws:${workspace}:category:${category}`,
+  categories: (workspace: string) => `ws:${workspace}:categories:all`,
+  globalMemoryCategory: (memoryId: string) => `global:memory:${memoryId}:category`,
+  globalCategory: (category: string) => `global:category:${category}`,
+  globalCategories: () => `global:categories:all`,
 } as const;
 
 // Helper to get the appropriate key based on is_global flag
@@ -363,4 +390,125 @@ export interface MemoryGraph {
   nodes: Record<string, MemoryGraphNode>;
   total_nodes: number;
   max_depth_reached: number;
+}
+
+// ============================================================================
+// Memory Versioning & History (v1.5.0)
+// ============================================================================
+
+// Memory version schema
+export const MemoryVersionSchema = z.object({
+  version_id: z.string().describe('Version identifier (ULID)'),
+  memory_id: z.string().describe('Memory this version belongs to'),
+  content: z.string().describe('Content at this version'),
+  context_type: ContextType,
+  importance: z.number().min(1).max(10),
+  tags: z.array(z.string()).default([]),
+  summary: z.string().optional(),
+  created_at: z.string().describe('ISO 8601 timestamp'),
+  created_by: z.enum(['user', 'system']).default('user').describe('Who created this version'),
+  change_reason: z.string().optional().describe('Reason for the change'),
+});
+
+export type MemoryVersion = z.infer<typeof MemoryVersionSchema>;
+
+// Get memory history schema
+export const GetMemoryHistorySchema = z.object({
+  memory_id: z.string().describe('Memory ID to get history for'),
+  limit: z.number().min(1).max(100).default(50).describe('Maximum versions to return'),
+});
+
+export type GetMemoryHistory = z.infer<typeof GetMemoryHistorySchema>;
+
+// Rollback memory schema
+export const RollbackMemorySchema = z.object({
+  memory_id: z.string().describe('Memory ID to rollback'),
+  version_id: z.string().describe('Version ID to rollback to'),
+  preserve_relationships: z.boolean().default(true).describe('Preserve current relationships after rollback'),
+});
+
+export type RollbackMemory = z.infer<typeof RollbackMemorySchema>;
+
+// Memory diff result
+export interface MemoryDiff {
+  version_from: MemoryVersion;
+  version_to: MemoryVersion;
+  content_diff: {
+    added: string[];
+    removed: string[];
+    unchanged: string[];
+  };
+  importance_change: number;
+  tags_added: string[];
+  tags_removed: string[];
+  context_type_changed: boolean;
+}
+
+// ============================================================================
+// Memory Templates (v1.5.0)
+// ============================================================================
+
+// Template schema
+export const MemoryTemplateSchema = z.object({
+  template_id: z.string().describe('Template identifier (ULID)'),
+  name: z.string().describe('Template name'),
+  description: z.string().optional().describe('Template description'),
+  context_type: ContextType,
+  content_template: z.string().describe('Template content with {{placeholders}}'),
+  default_tags: z.array(z.string()).default([]),
+  default_importance: z.number().min(1).max(10).default(5),
+  is_builtin: z.boolean().default(false).describe('Built-in template (cannot be deleted)'),
+  created_at: z.string().describe('ISO 8601 timestamp'),
+});
+
+export type MemoryTemplate = z.infer<typeof MemoryTemplateSchema>;
+
+// Create from template schema
+export const CreateFromTemplateSchema = z.object({
+  template_id: z.string().describe('Template ID to use'),
+  variables: z.record(z.string()).describe('Variables to fill in template (key-value pairs)'),
+  tags: z.array(z.string()).optional().describe('Additional tags (merged with template defaults)'),
+  importance: z.number().min(1).max(10).optional().describe('Override template importance'),
+  is_global: z.boolean().default(false).describe('Create as global memory'),
+});
+
+export type CreateFromTemplate = z.infer<typeof CreateFromTemplateSchema>;
+
+// Create template schema
+export const CreateTemplateSchema = z.object({
+  name: z.string().min(1).describe('Template name'),
+  description: z.string().optional().describe('Template description'),
+  context_type: ContextType.default('information'),
+  content_template: z.string().min(1).describe('Template content with {{placeholders}}'),
+  default_tags: z.array(z.string()).default([]),
+  default_importance: z.number().min(1).max(10).default(5),
+});
+
+export type CreateTemplate = z.infer<typeof CreateTemplateSchema>;
+
+// ============================================================================
+// Memory Categories (v1.5.0)
+// ============================================================================
+
+// Add category to memory schema (extends UpdateMemorySchema)
+export const SetMemoryCategorySchema = z.object({
+  memory_id: z.string().describe('Memory ID'),
+  category: z.string().describe('Category name'),
+});
+
+export type SetMemoryCategory = z.infer<typeof SetMemoryCategorySchema>;
+
+// List categories schema
+export const ListCategoriesSchema = z.object({
+  include_counts: z.boolean().default(true).describe('Include memory counts per category'),
+});
+
+export type ListCategories = z.infer<typeof ListCategoriesSchema>;
+
+// Category info
+export interface CategoryInfo {
+  category: string;
+  memory_count?: number;
+  created_at: string;
+  last_used: string;
 }

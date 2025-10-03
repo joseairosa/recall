@@ -1121,6 +1121,27 @@ npm run build
 npm run dev
 ```
 
+### Testing
+
+Comprehensive test suite available in [tests/](tests/). See [tests/README.md](tests/README.md) for details.
+
+**Quick test run:**
+```bash
+# Static checks (fast, no dependencies)
+./tests/test-v1.5.0-simple.sh
+
+# Runtime tests (requires Redis)
+ANTHROPIC_API_KEY="test-key" node tests/test-runtime.js
+```
+
+**Testing workflow for releases:**
+1. Static checks (file existence, types, build)
+2. Runtime tests (server startup, tool availability)
+3. Integration tests (full feature testing)
+4. Manual tests (Claude Desktop interaction)
+
+See complete workflow in [tests/README.md](tests/README.md#testing-workflow-for-new-releases).
+
 ### Project Structure
 ```
 /mem/
@@ -1137,13 +1158,23 @@ npm run dev
 │   ├── tools/
 │   │   ├── index.ts            # Core tools
 │   │   ├── context-tools.ts    # Smart context tools
-│   │   └── export-import-tools.ts    # Advanced tools
+│   │   ├── export-import-tools.ts    # Advanced tools
+│   │   ├── relationship-tools.ts     # Knowledge graphs (v1.4)
+│   │   ├── version-tools.ts         # Version history (v1.5)
+│   │   ├── template-tools.ts        # Memory templates (v1.5)
+│   │   └── category-tools.ts        # Categories (v1.5)
 │   ├── resources/
 │   │   ├── index.ts            # MCP resources
 │   │   └── analytics.ts        # Analytics resource
 │   └── prompts/
 │       ├── index.ts            # MCP prompts
 │       └── formatters.ts       # Context formatters
+├── tests/                       # Test suite
+│   ├── README.md               # Testing documentation
+│   ├── test-v1.5.0-simple.sh   # Static checks
+│   ├── test-runtime.js         # Runtime tests
+│   ├── test-v1.5.0.js          # Integration tests
+│   └── test-v1.5.0-manual.md   # Manual checklist
 └── dist/                        # Built output
 ```
 

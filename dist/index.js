@@ -63,7 +63,7 @@ async function checkRedisConnection() {
 
 // src/tools/index.ts
 import { z as z3 } from "zod";
-import { McpError as McpError2, ErrorCode as ErrorCode2 } from "@modelcontextprotocol/sdk/types.js";
+import { McpError as McpError3, ErrorCode as ErrorCode3 } from "@modelcontextprotocol/sdk/types.js";
 
 // src/redis/memory-store.ts
 import { ulid } from "ulid";
@@ -318,7 +318,19 @@ var RedisKeys = {
   globalByType: (type) => `global:memories:type:${type}`,
   globalByTag: (tag) => `global:memories:tag:${tag}`,
   globalTimeline: () => `global:memories:timeline`,
-  globalImportant: () => `global:memories:important`
+  globalImportant: () => `global:memories:important`,
+  // Relationship keys (v1.4.0)
+  relationship: (workspace, id) => `ws:${workspace}:relationship:${id}`,
+  relationships: (workspace) => `ws:${workspace}:relationships:all`,
+  memoryRelationships: (workspace, memoryId) => `ws:${workspace}:memory:${memoryId}:relationships`,
+  memoryRelationshipsOut: (workspace, memoryId) => `ws:${workspace}:memory:${memoryId}:relationships:out`,
+  memoryRelationshipsIn: (workspace, memoryId) => `ws:${workspace}:memory:${memoryId}:relationships:in`,
+  // Global relationship keys
+  globalRelationship: (id) => `global:relationship:${id}`,
+  globalRelationships: () => `global:relationships:all`,
+  globalMemoryRelationships: (memoryId) => `global:memory:${memoryId}:relationships`,
+  globalMemoryRelationshipsOut: (memoryId) => `global:memory:${memoryId}:relationships:out`,
+  globalMemoryRelationshipsIn: (memoryId) => `global:memory:${memoryId}:relationships:in`
 };
 var ConvertToGlobalSchema = z.object({
   memory_id: z.string().describe("ID of the memory to convert to global")
@@ -326,6 +338,44 @@ var ConvertToGlobalSchema = z.object({
 var ConvertToWorkspaceSchema = z.object({
   memory_id: z.string().describe("ID of the global memory to convert to workspace-specific"),
   workspace_id: z.string().optional().describe("Target workspace (default: current workspace)")
+});
+var RelationshipType = /* @__PURE__ */ ((RelationshipType2) => {
+  RelationshipType2["RELATES_TO"] = "relates_to";
+  RelationshipType2["PARENT_OF"] = "parent_of";
+  RelationshipType2["CHILD_OF"] = "child_of";
+  RelationshipType2["REFERENCES"] = "references";
+  RelationshipType2["SUPERSEDES"] = "supersedes";
+  RelationshipType2["IMPLEMENTS"] = "implements";
+  RelationshipType2["EXAMPLE_OF"] = "example_of";
+  return RelationshipType2;
+})(RelationshipType || {});
+var MemoryRelationshipSchema = z.object({
+  id: z.string().describe("Unique relationship identifier (ULID)"),
+  from_memory_id: z.string().describe("Source memory ID"),
+  to_memory_id: z.string().describe("Target memory ID"),
+  relationship_type: z.nativeEnum(RelationshipType).describe("Type of relationship"),
+  created_at: z.string().describe("ISO 8601 timestamp"),
+  metadata: z.record(z.unknown()).optional().describe("Optional metadata")
+});
+var LinkMemoriesSchema = z.object({
+  from_memory_id: z.string().describe("Source memory ID"),
+  to_memory_id: z.string().describe("Target memory ID"),
+  relationship_type: z.nativeEnum(RelationshipType).describe("Type of relationship"),
+  metadata: z.record(z.unknown()).optional().describe("Optional metadata")
+});
+var GetRelatedMemoriesSchema = z.object({
+  memory_id: z.string().describe("Memory ID to get relationships for"),
+  relationship_types: z.array(z.nativeEnum(RelationshipType)).optional().describe("Filter by relationship types"),
+  depth: z.number().min(1).max(5).default(1).describe("Traversal depth (1-5)"),
+  direction: z.enum(["outgoing", "incoming", "both"]).default("both").describe("Relationship direction")
+});
+var UnlinkMemoriesSchema = z.object({
+  relationship_id: z.string().describe("Relationship ID to remove")
+});
+var GetMemoryGraphSchema = z.object({
+  memory_id: z.string().describe("Root memory ID for graph"),
+  max_depth: z.number().min(1).max(3).default(2).describe("Maximum graph depth"),
+  max_nodes: z.number().min(1).max(100).default(50).describe("Maximum nodes to return")
 });
 
 // src/redis/memory-store.ts
@@ -927,6 +977,241 @@ ${contentParts.join("\n\n")}` : toKeep.content;
     }
     await pipeline.exec();
     return workspaceMemory;
+  }
+  // ============================================================================
+  // Memory Relationships (v1.4.0)
+  // ============================================================================
+  // Serialize relationship for Redis storage
+  serializeRelationship(relationship) {
+    return {
+      id: relationship.id,
+      from_memory_id: relationship.from_memory_id,
+      to_memory_id: relationship.to_memory_id,
+      relationship_type: relationship.relationship_type,
+      created_at: relationship.created_at,
+      metadata: relationship.metadata ? JSON.stringify(relationship.metadata) : ""
+    };
+  }
+  // Deserialize relationship from Redis
+  deserializeRelationship(data) {
+    return {
+      id: data.id,
+      from_memory_id: data.from_memory_id,
+      to_memory_id: data.to_memory_id,
+      relationship_type: data.relationship_type,
+      created_at: data.created_at,
+      metadata: data.metadata ? JSON.parse(data.metadata) : void 0
+    };
+  }
+  // Create a relationship between two memories
+  async createRelationship(fromMemoryId, toMemoryId, relationshipType, metadata) {
+    const fromMemory = await this.getMemory(fromMemoryId);
+    const toMemory = await this.getMemory(toMemoryId);
+    if (!fromMemory) {
+      throw new Error(`Source memory not found: ${fromMemoryId}`);
+    }
+    if (!toMemory) {
+      throw new Error(`Target memory not found: ${toMemoryId}`);
+    }
+    if (fromMemoryId === toMemoryId) {
+      throw new Error("Cannot create relationship to self");
+    }
+    const existing = await this.findRelationship(fromMemoryId, toMemoryId, relationshipType);
+    if (existing) {
+      return existing;
+    }
+    const id = ulid();
+    const relationship = {
+      id,
+      from_memory_id: fromMemoryId,
+      to_memory_id: toMemoryId,
+      relationship_type: relationshipType,
+      created_at: (/* @__PURE__ */ new Date()).toISOString(),
+      metadata
+    };
+    const isGlobal = fromMemory.is_global && toMemory.is_global;
+    const pipeline = this.redis.pipeline();
+    if (isGlobal) {
+      pipeline.hset(RedisKeys.globalRelationship(id), this.serializeRelationship(relationship));
+      pipeline.sadd(RedisKeys.globalRelationships(), id);
+      pipeline.sadd(RedisKeys.globalMemoryRelationships(fromMemoryId), id);
+      pipeline.sadd(RedisKeys.globalMemoryRelationshipsOut(fromMemoryId), id);
+      pipeline.sadd(RedisKeys.globalMemoryRelationshipsIn(toMemoryId), id);
+    } else {
+      pipeline.hset(RedisKeys.relationship(this.workspaceId, id), this.serializeRelationship(relationship));
+      pipeline.sadd(RedisKeys.relationships(this.workspaceId), id);
+      pipeline.sadd(RedisKeys.memoryRelationships(this.workspaceId, fromMemoryId), id);
+      pipeline.sadd(RedisKeys.memoryRelationshipsOut(this.workspaceId, fromMemoryId), id);
+      pipeline.sadd(RedisKeys.memoryRelationshipsIn(this.workspaceId, toMemoryId), id);
+    }
+    await pipeline.exec();
+    return relationship;
+  }
+  // Find existing relationship
+  async findRelationship(fromMemoryId, toMemoryId, relationshipType) {
+    const relationshipIds = await this.getMemoryRelationshipIds(fromMemoryId, "outgoing");
+    for (const relId of relationshipIds) {
+      const rel = await this.getRelationship(relId);
+      if (rel && rel.from_memory_id === fromMemoryId && rel.to_memory_id === toMemoryId && rel.relationship_type === relationshipType) {
+        return rel;
+      }
+    }
+    return null;
+  }
+  // Get a single relationship by ID
+  async getRelationship(relationshipId) {
+    const wsData = await this.redis.hgetall(RedisKeys.relationship(this.workspaceId, relationshipId));
+    if (wsData && Object.keys(wsData).length > 0) {
+      return this.deserializeRelationship(wsData);
+    }
+    const globalData = await this.redis.hgetall(RedisKeys.globalRelationship(relationshipId));
+    if (globalData && Object.keys(globalData).length > 0) {
+      return this.deserializeRelationship(globalData);
+    }
+    return null;
+  }
+  // Get relationship IDs for a memory
+  async getMemoryRelationshipIds(memoryId, direction = "both") {
+    const mode = getWorkspaceMode();
+    const ids = /* @__PURE__ */ new Set();
+    const addIds = async (key) => {
+      const keyIds = await this.redis.smembers(key);
+      keyIds.forEach((id) => ids.add(id));
+    };
+    if (mode === "isolated" /* ISOLATED */ || mode === "hybrid" /* HYBRID */) {
+      if (direction === "outgoing" || direction === "both") {
+        await addIds(RedisKeys.memoryRelationshipsOut(this.workspaceId, memoryId));
+      }
+      if (direction === "incoming" || direction === "both") {
+        await addIds(RedisKeys.memoryRelationshipsIn(this.workspaceId, memoryId));
+      }
+    }
+    if (mode === "global" /* GLOBAL */ || mode === "hybrid" /* HYBRID */) {
+      if (direction === "outgoing" || direction === "both") {
+        await addIds(RedisKeys.globalMemoryRelationshipsOut(memoryId));
+      }
+      if (direction === "incoming" || direction === "both") {
+        await addIds(RedisKeys.globalMemoryRelationshipsIn(memoryId));
+      }
+    }
+    return Array.from(ids);
+  }
+  // Get all relationships for a memory
+  async getMemoryRelationships(memoryId, direction = "both") {
+    const relationshipIds = await this.getMemoryRelationshipIds(memoryId, direction);
+    const relationships = [];
+    for (const relId of relationshipIds) {
+      const rel = await this.getRelationship(relId);
+      if (rel) {
+        relationships.push(rel);
+      }
+    }
+    return relationships;
+  }
+  // Get related memories with graph traversal
+  async getRelatedMemories(memoryId, options = {}) {
+    const { relationshipTypes, depth = 1, direction = "both" } = options;
+    const results = [];
+    const visited = /* @__PURE__ */ new Set();
+    await this.traverseGraph(memoryId, depth, visited, results, relationshipTypes, direction, 0);
+    return results;
+  }
+  // Traverse relationship graph
+  async traverseGraph(memoryId, maxDepth, visited, results, relationshipTypes, direction = "both", currentDepth = 0) {
+    if (currentDepth >= maxDepth || visited.has(memoryId)) {
+      return;
+    }
+    visited.add(memoryId);
+    const relationships = await this.getMemoryRelationships(memoryId, direction);
+    const filtered = relationshipTypes ? relationships.filter((r) => relationshipTypes.includes(r.relationship_type)) : relationships;
+    for (const relationship of filtered) {
+      const relatedMemoryId = relationship.from_memory_id === memoryId ? relationship.to_memory_id : relationship.from_memory_id;
+      if (!visited.has(relatedMemoryId)) {
+        const memory = await this.getMemory(relatedMemoryId);
+        if (memory) {
+          results.push({
+            memory,
+            relationship,
+            depth: currentDepth + 1
+          });
+          if (currentDepth + 1 < maxDepth) {
+            await this.traverseGraph(
+              relatedMemoryId,
+              maxDepth,
+              visited,
+              results,
+              relationshipTypes,
+              direction,
+              currentDepth + 1
+            );
+          }
+        }
+      }
+    }
+  }
+  // Delete a relationship
+  async deleteRelationship(relationshipId) {
+    const relationship = await this.getRelationship(relationshipId);
+    if (!relationship) {
+      return false;
+    }
+    const fromMemory = await this.getMemory(relationship.from_memory_id);
+    const isGlobal = fromMemory?.is_global || false;
+    const pipeline = this.redis.pipeline();
+    if (isGlobal) {
+      pipeline.del(RedisKeys.globalRelationship(relationshipId));
+      pipeline.srem(RedisKeys.globalRelationships(), relationshipId);
+      pipeline.srem(RedisKeys.globalMemoryRelationships(relationship.from_memory_id), relationshipId);
+      pipeline.srem(RedisKeys.globalMemoryRelationshipsOut(relationship.from_memory_id), relationshipId);
+      pipeline.srem(RedisKeys.globalMemoryRelationshipsIn(relationship.to_memory_id), relationshipId);
+    } else {
+      pipeline.del(RedisKeys.relationship(this.workspaceId, relationshipId));
+      pipeline.srem(RedisKeys.relationships(this.workspaceId), relationshipId);
+      pipeline.srem(RedisKeys.memoryRelationships(this.workspaceId, relationship.from_memory_id), relationshipId);
+      pipeline.srem(RedisKeys.memoryRelationshipsOut(this.workspaceId, relationship.from_memory_id), relationshipId);
+      pipeline.srem(RedisKeys.memoryRelationshipsIn(this.workspaceId, relationship.to_memory_id), relationshipId);
+    }
+    await pipeline.exec();
+    return true;
+  }
+  // Get full memory graph
+  async getMemoryGraph(rootMemoryId, maxDepth = 2, maxNodes = 50) {
+    const nodes = {};
+    const visited = /* @__PURE__ */ new Set();
+    let maxDepthReached = 0;
+    await this.buildGraph(rootMemoryId, maxDepth, maxNodes, nodes, visited, 0);
+    for (const node of Object.values(nodes)) {
+      maxDepthReached = Math.max(maxDepthReached, node.depth);
+    }
+    return {
+      root_memory_id: rootMemoryId,
+      nodes,
+      total_nodes: Object.keys(nodes).length,
+      max_depth_reached: maxDepthReached
+    };
+  }
+  // Build graph recursively
+  async buildGraph(memoryId, maxDepth, maxNodes, nodes, visited, currentDepth) {
+    if (currentDepth > maxDepth || visited.has(memoryId) || Object.keys(nodes).length >= maxNodes) {
+      return;
+    }
+    visited.add(memoryId);
+    const memory = await this.getMemory(memoryId);
+    if (!memory) {
+      return;
+    }
+    const relationships = await this.getMemoryRelationships(memoryId, "both");
+    nodes[memoryId] = {
+      memory,
+      relationships,
+      depth: currentDepth
+    };
+    for (const relationship of relationships) {
+      const relatedId = relationship.from_memory_id === memoryId ? relationship.to_memory_id : relationship.from_memory_id;
+      if (!visited.has(relatedId) && Object.keys(nodes).length < maxNodes) {
+        await this.buildGraph(relatedId, maxDepth, maxNodes, nodes, visited, currentDepth + 1);
+      }
+    }
   }
 };
 
@@ -1568,8 +1853,1459 @@ Merged Memory:
   };
 }
 
-// src/tools/index.ts
+// node_modules/zod-to-json-schema/dist/esm/Options.js
+var ignoreOverride = Symbol("Let zodToJsonSchema decide on which parser to use");
+var defaultOptions = {
+  name: void 0,
+  $refStrategy: "root",
+  basePath: ["#"],
+  effectStrategy: "input",
+  pipeStrategy: "all",
+  dateStrategy: "format:date-time",
+  mapStrategy: "entries",
+  removeAdditionalStrategy: "passthrough",
+  allowedAdditionalProperties: true,
+  rejectedAdditionalProperties: false,
+  definitionPath: "definitions",
+  target: "jsonSchema7",
+  strictUnions: false,
+  definitions: {},
+  errorMessages: false,
+  markdownDescription: false,
+  patternStrategy: "escape",
+  applyRegexFlags: false,
+  emailStrategy: "format:email",
+  base64Strategy: "contentEncoding:base64",
+  nameStrategy: "ref",
+  openAiAnyTypeName: "OpenAiAnyType"
+};
+var getDefaultOptions = (options) => typeof options === "string" ? {
+  ...defaultOptions,
+  name: options
+} : {
+  ...defaultOptions,
+  ...options
+};
+
+// node_modules/zod-to-json-schema/dist/esm/Refs.js
+var getRefs = (options) => {
+  const _options = getDefaultOptions(options);
+  const currentPath = _options.name !== void 0 ? [..._options.basePath, _options.definitionPath, _options.name] : _options.basePath;
+  return {
+    ..._options,
+    flags: { hasReferencedOpenAiAnyType: false },
+    currentPath,
+    propertyPath: void 0,
+    seen: new Map(Object.entries(_options.definitions).map(([name, def]) => [
+      def._def,
+      {
+        def: def._def,
+        path: [..._options.basePath, _options.definitionPath, name],
+        // Resolution of references will be forced even though seen, so it's ok that the schema is undefined here for now.
+        jsonSchema: void 0
+      }
+    ]))
+  };
+};
+
+// node_modules/zod-to-json-schema/dist/esm/errorMessages.js
+function addErrorMessage(res, key, errorMessage, refs) {
+  if (!refs?.errorMessages)
+    return;
+  if (errorMessage) {
+    res.errorMessage = {
+      ...res.errorMessage,
+      [key]: errorMessage
+    };
+  }
+}
+function setResponseValueAndErrors(res, key, value, errorMessage, refs) {
+  res[key] = value;
+  addErrorMessage(res, key, errorMessage, refs);
+}
+
+// node_modules/zod-to-json-schema/dist/esm/getRelativePath.js
+var getRelativePath = (pathA, pathB) => {
+  let i = 0;
+  for (; i < pathA.length && i < pathB.length; i++) {
+    if (pathA[i] !== pathB[i])
+      break;
+  }
+  return [(pathA.length - i).toString(), ...pathB.slice(i)].join("/");
+};
+
+// node_modules/zod-to-json-schema/dist/esm/selectParser.js
+import { ZodFirstPartyTypeKind as ZodFirstPartyTypeKind3 } from "zod";
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/any.js
+function parseAnyDef(refs) {
+  if (refs.target !== "openAi") {
+    return {};
+  }
+  const anyDefinitionPath = [
+    ...refs.basePath,
+    refs.definitionPath,
+    refs.openAiAnyTypeName
+  ];
+  refs.flags.hasReferencedOpenAiAnyType = true;
+  return {
+    $ref: refs.$refStrategy === "relative" ? getRelativePath(anyDefinitionPath, refs.currentPath) : anyDefinitionPath.join("/")
+  };
+}
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/array.js
+import { ZodFirstPartyTypeKind } from "zod";
+function parseArrayDef(def, refs) {
+  const res = {
+    type: "array"
+  };
+  if (def.type?._def && def.type?._def?.typeName !== ZodFirstPartyTypeKind.ZodAny) {
+    res.items = parseDef(def.type._def, {
+      ...refs,
+      currentPath: [...refs.currentPath, "items"]
+    });
+  }
+  if (def.minLength) {
+    setResponseValueAndErrors(res, "minItems", def.minLength.value, def.minLength.message, refs);
+  }
+  if (def.maxLength) {
+    setResponseValueAndErrors(res, "maxItems", def.maxLength.value, def.maxLength.message, refs);
+  }
+  if (def.exactLength) {
+    setResponseValueAndErrors(res, "minItems", def.exactLength.value, def.exactLength.message, refs);
+    setResponseValueAndErrors(res, "maxItems", def.exactLength.value, def.exactLength.message, refs);
+  }
+  return res;
+}
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/bigint.js
+function parseBigintDef(def, refs) {
+  const res = {
+    type: "integer",
+    format: "int64"
+  };
+  if (!def.checks)
+    return res;
+  for (const check of def.checks) {
+    switch (check.kind) {
+      case "min":
+        if (refs.target === "jsonSchema7") {
+          if (check.inclusive) {
+            setResponseValueAndErrors(res, "minimum", check.value, check.message, refs);
+          } else {
+            setResponseValueAndErrors(res, "exclusiveMinimum", check.value, check.message, refs);
+          }
+        } else {
+          if (!check.inclusive) {
+            res.exclusiveMinimum = true;
+          }
+          setResponseValueAndErrors(res, "minimum", check.value, check.message, refs);
+        }
+        break;
+      case "max":
+        if (refs.target === "jsonSchema7") {
+          if (check.inclusive) {
+            setResponseValueAndErrors(res, "maximum", check.value, check.message, refs);
+          } else {
+            setResponseValueAndErrors(res, "exclusiveMaximum", check.value, check.message, refs);
+          }
+        } else {
+          if (!check.inclusive) {
+            res.exclusiveMaximum = true;
+          }
+          setResponseValueAndErrors(res, "maximum", check.value, check.message, refs);
+        }
+        break;
+      case "multipleOf":
+        setResponseValueAndErrors(res, "multipleOf", check.value, check.message, refs);
+        break;
+    }
+  }
+  return res;
+}
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/boolean.js
+function parseBooleanDef() {
+  return {
+    type: "boolean"
+  };
+}
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/branded.js
+function parseBrandedDef(_def, refs) {
+  return parseDef(_def.type._def, refs);
+}
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/catch.js
+var parseCatchDef = (def, refs) => {
+  return parseDef(def.innerType._def, refs);
+};
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/date.js
+function parseDateDef(def, refs, overrideDateStrategy) {
+  const strategy = overrideDateStrategy ?? refs.dateStrategy;
+  if (Array.isArray(strategy)) {
+    return {
+      anyOf: strategy.map((item, i) => parseDateDef(def, refs, item))
+    };
+  }
+  switch (strategy) {
+    case "string":
+    case "format:date-time":
+      return {
+        type: "string",
+        format: "date-time"
+      };
+    case "format:date":
+      return {
+        type: "string",
+        format: "date"
+      };
+    case "integer":
+      return integerDateParser(def, refs);
+  }
+}
+var integerDateParser = (def, refs) => {
+  const res = {
+    type: "integer",
+    format: "unix-time"
+  };
+  if (refs.target === "openApi3") {
+    return res;
+  }
+  for (const check of def.checks) {
+    switch (check.kind) {
+      case "min":
+        setResponseValueAndErrors(
+          res,
+          "minimum",
+          check.value,
+          // This is in milliseconds
+          check.message,
+          refs
+        );
+        break;
+      case "max":
+        setResponseValueAndErrors(
+          res,
+          "maximum",
+          check.value,
+          // This is in milliseconds
+          check.message,
+          refs
+        );
+        break;
+    }
+  }
+  return res;
+};
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/default.js
+function parseDefaultDef(_def, refs) {
+  return {
+    ...parseDef(_def.innerType._def, refs),
+    default: _def.defaultValue()
+  };
+}
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/effects.js
+function parseEffectsDef(_def, refs) {
+  return refs.effectStrategy === "input" ? parseDef(_def.schema._def, refs) : parseAnyDef(refs);
+}
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/enum.js
+function parseEnumDef(def) {
+  return {
+    type: "string",
+    enum: Array.from(def.values)
+  };
+}
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/intersection.js
+var isJsonSchema7AllOfType = (type) => {
+  if ("type" in type && type.type === "string")
+    return false;
+  return "allOf" in type;
+};
+function parseIntersectionDef(def, refs) {
+  const allOf = [
+    parseDef(def.left._def, {
+      ...refs,
+      currentPath: [...refs.currentPath, "allOf", "0"]
+    }),
+    parseDef(def.right._def, {
+      ...refs,
+      currentPath: [...refs.currentPath, "allOf", "1"]
+    })
+  ].filter((x) => !!x);
+  let unevaluatedProperties = refs.target === "jsonSchema2019-09" ? { unevaluatedProperties: false } : void 0;
+  const mergedAllOf = [];
+  allOf.forEach((schema) => {
+    if (isJsonSchema7AllOfType(schema)) {
+      mergedAllOf.push(...schema.allOf);
+      if (schema.unevaluatedProperties === void 0) {
+        unevaluatedProperties = void 0;
+      }
+    } else {
+      let nestedSchema = schema;
+      if ("additionalProperties" in schema && schema.additionalProperties === false) {
+        const { additionalProperties, ...rest } = schema;
+        nestedSchema = rest;
+      } else {
+        unevaluatedProperties = void 0;
+      }
+      mergedAllOf.push(nestedSchema);
+    }
+  });
+  return mergedAllOf.length ? {
+    allOf: mergedAllOf,
+    ...unevaluatedProperties
+  } : void 0;
+}
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/literal.js
+function parseLiteralDef(def, refs) {
+  const parsedType = typeof def.value;
+  if (parsedType !== "bigint" && parsedType !== "number" && parsedType !== "boolean" && parsedType !== "string") {
+    return {
+      type: Array.isArray(def.value) ? "array" : "object"
+    };
+  }
+  if (refs.target === "openApi3") {
+    return {
+      type: parsedType === "bigint" ? "integer" : parsedType,
+      enum: [def.value]
+    };
+  }
+  return {
+    type: parsedType === "bigint" ? "integer" : parsedType,
+    const: def.value
+  };
+}
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/record.js
+import { ZodFirstPartyTypeKind as ZodFirstPartyTypeKind2 } from "zod";
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/string.js
+var emojiRegex = void 0;
+var zodPatterns = {
+  /**
+   * `c` was changed to `[cC]` to replicate /i flag
+   */
+  cuid: /^[cC][^\s-]{8,}$/,
+  cuid2: /^[0-9a-z]+$/,
+  ulid: /^[0-9A-HJKMNP-TV-Z]{26}$/,
+  /**
+   * `a-z` was added to replicate /i flag
+   */
+  email: /^(?!\.)(?!.*\.\.)([a-zA-Z0-9_'+\-\.]*)[a-zA-Z0-9_+-]@([a-zA-Z0-9][a-zA-Z0-9\-]*\.)+[a-zA-Z]{2,}$/,
+  /**
+   * Constructed a valid Unicode RegExp
+   *
+   * Lazily instantiate since this type of regex isn't supported
+   * in all envs (e.g. React Native).
+   *
+   * See:
+   * https://github.com/colinhacks/zod/issues/2433
+   * Fix in Zod:
+   * https://github.com/colinhacks/zod/commit/9340fd51e48576a75adc919bff65dbc4a5d4c99b
+   */
+  emoji: () => {
+    if (emojiRegex === void 0) {
+      emojiRegex = RegExp("^(\\p{Extended_Pictographic}|\\p{Emoji_Component})+$", "u");
+    }
+    return emojiRegex;
+  },
+  /**
+   * Unused
+   */
+  uuid: /^[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}$/,
+  /**
+   * Unused
+   */
+  ipv4: /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$/,
+  ipv4Cidr: /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\/(3[0-2]|[12]?[0-9])$/,
+  /**
+   * Unused
+   */
+  ipv6: /^(([a-f0-9]{1,4}:){7}|::([a-f0-9]{1,4}:){0,6}|([a-f0-9]{1,4}:){1}:([a-f0-9]{1,4}:){0,5}|([a-f0-9]{1,4}:){2}:([a-f0-9]{1,4}:){0,4}|([a-f0-9]{1,4}:){3}:([a-f0-9]{1,4}:){0,3}|([a-f0-9]{1,4}:){4}:([a-f0-9]{1,4}:){0,2}|([a-f0-9]{1,4}:){5}:([a-f0-9]{1,4}:){0,1})([a-f0-9]{1,4}|(((25[0-5])|(2[0-4][0-9])|(1[0-9]{2})|([0-9]{1,2}))\.){3}((25[0-5])|(2[0-4][0-9])|(1[0-9]{2})|([0-9]{1,2})))$/,
+  ipv6Cidr: /^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$/,
+  base64: /^([0-9a-zA-Z+/]{4})*(([0-9a-zA-Z+/]{2}==)|([0-9a-zA-Z+/]{3}=))?$/,
+  base64url: /^([0-9a-zA-Z-_]{4})*(([0-9a-zA-Z-_]{2}(==)?)|([0-9a-zA-Z-_]{3}(=)?))?$/,
+  nanoid: /^[a-zA-Z0-9_-]{21}$/,
+  jwt: /^[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]*$/
+};
+function parseStringDef(def, refs) {
+  const res = {
+    type: "string"
+  };
+  if (def.checks) {
+    for (const check of def.checks) {
+      switch (check.kind) {
+        case "min":
+          setResponseValueAndErrors(res, "minLength", typeof res.minLength === "number" ? Math.max(res.minLength, check.value) : check.value, check.message, refs);
+          break;
+        case "max":
+          setResponseValueAndErrors(res, "maxLength", typeof res.maxLength === "number" ? Math.min(res.maxLength, check.value) : check.value, check.message, refs);
+          break;
+        case "email":
+          switch (refs.emailStrategy) {
+            case "format:email":
+              addFormat(res, "email", check.message, refs);
+              break;
+            case "format:idn-email":
+              addFormat(res, "idn-email", check.message, refs);
+              break;
+            case "pattern:zod":
+              addPattern(res, zodPatterns.email, check.message, refs);
+              break;
+          }
+          break;
+        case "url":
+          addFormat(res, "uri", check.message, refs);
+          break;
+        case "uuid":
+          addFormat(res, "uuid", check.message, refs);
+          break;
+        case "regex":
+          addPattern(res, check.regex, check.message, refs);
+          break;
+        case "cuid":
+          addPattern(res, zodPatterns.cuid, check.message, refs);
+          break;
+        case "cuid2":
+          addPattern(res, zodPatterns.cuid2, check.message, refs);
+          break;
+        case "startsWith":
+          addPattern(res, RegExp(`^${escapeLiteralCheckValue(check.value, refs)}`), check.message, refs);
+          break;
+        case "endsWith":
+          addPattern(res, RegExp(`${escapeLiteralCheckValue(check.value, refs)}$`), check.message, refs);
+          break;
+        case "datetime":
+          addFormat(res, "date-time", check.message, refs);
+          break;
+        case "date":
+          addFormat(res, "date", check.message, refs);
+          break;
+        case "time":
+          addFormat(res, "time", check.message, refs);
+          break;
+        case "duration":
+          addFormat(res, "duration", check.message, refs);
+          break;
+        case "length":
+          setResponseValueAndErrors(res, "minLength", typeof res.minLength === "number" ? Math.max(res.minLength, check.value) : check.value, check.message, refs);
+          setResponseValueAndErrors(res, "maxLength", typeof res.maxLength === "number" ? Math.min(res.maxLength, check.value) : check.value, check.message, refs);
+          break;
+        case "includes": {
+          addPattern(res, RegExp(escapeLiteralCheckValue(check.value, refs)), check.message, refs);
+          break;
+        }
+        case "ip": {
+          if (check.version !== "v6") {
+            addFormat(res, "ipv4", check.message, refs);
+          }
+          if (check.version !== "v4") {
+            addFormat(res, "ipv6", check.message, refs);
+          }
+          break;
+        }
+        case "base64url":
+          addPattern(res, zodPatterns.base64url, check.message, refs);
+          break;
+        case "jwt":
+          addPattern(res, zodPatterns.jwt, check.message, refs);
+          break;
+        case "cidr": {
+          if (check.version !== "v6") {
+            addPattern(res, zodPatterns.ipv4Cidr, check.message, refs);
+          }
+          if (check.version !== "v4") {
+            addPattern(res, zodPatterns.ipv6Cidr, check.message, refs);
+          }
+          break;
+        }
+        case "emoji":
+          addPattern(res, zodPatterns.emoji(), check.message, refs);
+          break;
+        case "ulid": {
+          addPattern(res, zodPatterns.ulid, check.message, refs);
+          break;
+        }
+        case "base64": {
+          switch (refs.base64Strategy) {
+            case "format:binary": {
+              addFormat(res, "binary", check.message, refs);
+              break;
+            }
+            case "contentEncoding:base64": {
+              setResponseValueAndErrors(res, "contentEncoding", "base64", check.message, refs);
+              break;
+            }
+            case "pattern:zod": {
+              addPattern(res, zodPatterns.base64, check.message, refs);
+              break;
+            }
+          }
+          break;
+        }
+        case "nanoid": {
+          addPattern(res, zodPatterns.nanoid, check.message, refs);
+        }
+        case "toLowerCase":
+        case "toUpperCase":
+        case "trim":
+          break;
+        default:
+          /* @__PURE__ */ ((_) => {
+          })(check);
+      }
+    }
+  }
+  return res;
+}
+function escapeLiteralCheckValue(literal, refs) {
+  return refs.patternStrategy === "escape" ? escapeNonAlphaNumeric(literal) : literal;
+}
+var ALPHA_NUMERIC = new Set("ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvxyz0123456789");
+function escapeNonAlphaNumeric(source) {
+  let result = "";
+  for (let i = 0; i < source.length; i++) {
+    if (!ALPHA_NUMERIC.has(source[i])) {
+      result += "\\";
+    }
+    result += source[i];
+  }
+  return result;
+}
+function addFormat(schema, value, message, refs) {
+  if (schema.format || schema.anyOf?.some((x) => x.format)) {
+    if (!schema.anyOf) {
+      schema.anyOf = [];
+    }
+    if (schema.format) {
+      schema.anyOf.push({
+        format: schema.format,
+        ...schema.errorMessage && refs.errorMessages && {
+          errorMessage: { format: schema.errorMessage.format }
+        }
+      });
+      delete schema.format;
+      if (schema.errorMessage) {
+        delete schema.errorMessage.format;
+        if (Object.keys(schema.errorMessage).length === 0) {
+          delete schema.errorMessage;
+        }
+      }
+    }
+    schema.anyOf.push({
+      format: value,
+      ...message && refs.errorMessages && { errorMessage: { format: message } }
+    });
+  } else {
+    setResponseValueAndErrors(schema, "format", value, message, refs);
+  }
+}
+function addPattern(schema, regex, message, refs) {
+  if (schema.pattern || schema.allOf?.some((x) => x.pattern)) {
+    if (!schema.allOf) {
+      schema.allOf = [];
+    }
+    if (schema.pattern) {
+      schema.allOf.push({
+        pattern: schema.pattern,
+        ...schema.errorMessage && refs.errorMessages && {
+          errorMessage: { pattern: schema.errorMessage.pattern }
+        }
+      });
+      delete schema.pattern;
+      if (schema.errorMessage) {
+        delete schema.errorMessage.pattern;
+        if (Object.keys(schema.errorMessage).length === 0) {
+          delete schema.errorMessage;
+        }
+      }
+    }
+    schema.allOf.push({
+      pattern: stringifyRegExpWithFlags(regex, refs),
+      ...message && refs.errorMessages && { errorMessage: { pattern: message } }
+    });
+  } else {
+    setResponseValueAndErrors(schema, "pattern", stringifyRegExpWithFlags(regex, refs), message, refs);
+  }
+}
+function stringifyRegExpWithFlags(regex, refs) {
+  if (!refs.applyRegexFlags || !regex.flags) {
+    return regex.source;
+  }
+  const flags = {
+    i: regex.flags.includes("i"),
+    m: regex.flags.includes("m"),
+    s: regex.flags.includes("s")
+    // `.` matches newlines
+  };
+  const source = flags.i ? regex.source.toLowerCase() : regex.source;
+  let pattern = "";
+  let isEscaped = false;
+  let inCharGroup = false;
+  let inCharRange = false;
+  for (let i = 0; i < source.length; i++) {
+    if (isEscaped) {
+      pattern += source[i];
+      isEscaped = false;
+      continue;
+    }
+    if (flags.i) {
+      if (inCharGroup) {
+        if (source[i].match(/[a-z]/)) {
+          if (inCharRange) {
+            pattern += source[i];
+            pattern += `${source[i - 2]}-${source[i]}`.toUpperCase();
+            inCharRange = false;
+          } else if (source[i + 1] === "-" && source[i + 2]?.match(/[a-z]/)) {
+            pattern += source[i];
+            inCharRange = true;
+          } else {
+            pattern += `${source[i]}${source[i].toUpperCase()}`;
+          }
+          continue;
+        }
+      } else if (source[i].match(/[a-z]/)) {
+        pattern += `[${source[i]}${source[i].toUpperCase()}]`;
+        continue;
+      }
+    }
+    if (flags.m) {
+      if (source[i] === "^") {
+        pattern += `(^|(?<=[\r
+]))`;
+        continue;
+      } else if (source[i] === "$") {
+        pattern += `($|(?=[\r
+]))`;
+        continue;
+      }
+    }
+    if (flags.s && source[i] === ".") {
+      pattern += inCharGroup ? `${source[i]}\r
+` : `[${source[i]}\r
+]`;
+      continue;
+    }
+    pattern += source[i];
+    if (source[i] === "\\") {
+      isEscaped = true;
+    } else if (inCharGroup && source[i] === "]") {
+      inCharGroup = false;
+    } else if (!inCharGroup && source[i] === "[") {
+      inCharGroup = true;
+    }
+  }
+  try {
+    new RegExp(pattern);
+  } catch {
+    console.warn(`Could not convert regex pattern at ${refs.currentPath.join("/")} to a flag-independent form! Falling back to the flag-ignorant source`);
+    return regex.source;
+  }
+  return pattern;
+}
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/record.js
+function parseRecordDef(def, refs) {
+  if (refs.target === "openAi") {
+    console.warn("Warning: OpenAI may not support records in schemas! Try an array of key-value pairs instead.");
+  }
+  if (refs.target === "openApi3" && def.keyType?._def.typeName === ZodFirstPartyTypeKind2.ZodEnum) {
+    return {
+      type: "object",
+      required: def.keyType._def.values,
+      properties: def.keyType._def.values.reduce((acc, key) => ({
+        ...acc,
+        [key]: parseDef(def.valueType._def, {
+          ...refs,
+          currentPath: [...refs.currentPath, "properties", key]
+        }) ?? parseAnyDef(refs)
+      }), {}),
+      additionalProperties: refs.rejectedAdditionalProperties
+    };
+  }
+  const schema = {
+    type: "object",
+    additionalProperties: parseDef(def.valueType._def, {
+      ...refs,
+      currentPath: [...refs.currentPath, "additionalProperties"]
+    }) ?? refs.allowedAdditionalProperties
+  };
+  if (refs.target === "openApi3") {
+    return schema;
+  }
+  if (def.keyType?._def.typeName === ZodFirstPartyTypeKind2.ZodString && def.keyType._def.checks?.length) {
+    const { type, ...keyType } = parseStringDef(def.keyType._def, refs);
+    return {
+      ...schema,
+      propertyNames: keyType
+    };
+  } else if (def.keyType?._def.typeName === ZodFirstPartyTypeKind2.ZodEnum) {
+    return {
+      ...schema,
+      propertyNames: {
+        enum: def.keyType._def.values
+      }
+    };
+  } else if (def.keyType?._def.typeName === ZodFirstPartyTypeKind2.ZodBranded && def.keyType._def.type._def.typeName === ZodFirstPartyTypeKind2.ZodString && def.keyType._def.type._def.checks?.length) {
+    const { type, ...keyType } = parseBrandedDef(def.keyType._def, refs);
+    return {
+      ...schema,
+      propertyNames: keyType
+    };
+  }
+  return schema;
+}
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/map.js
+function parseMapDef(def, refs) {
+  if (refs.mapStrategy === "record") {
+    return parseRecordDef(def, refs);
+  }
+  const keys = parseDef(def.keyType._def, {
+    ...refs,
+    currentPath: [...refs.currentPath, "items", "items", "0"]
+  }) || parseAnyDef(refs);
+  const values = parseDef(def.valueType._def, {
+    ...refs,
+    currentPath: [...refs.currentPath, "items", "items", "1"]
+  }) || parseAnyDef(refs);
+  return {
+    type: "array",
+    maxItems: 125,
+    items: {
+      type: "array",
+      items: [keys, values],
+      minItems: 2,
+      maxItems: 2
+    }
+  };
+}
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/nativeEnum.js
+function parseNativeEnumDef(def) {
+  const object = def.values;
+  const actualKeys = Object.keys(def.values).filter((key) => {
+    return typeof object[object[key]] !== "number";
+  });
+  const actualValues = actualKeys.map((key) => object[key]);
+  const parsedTypes = Array.from(new Set(actualValues.map((values) => typeof values)));
+  return {
+    type: parsedTypes.length === 1 ? parsedTypes[0] === "string" ? "string" : "number" : ["string", "number"],
+    enum: actualValues
+  };
+}
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/never.js
+function parseNeverDef(refs) {
+  return refs.target === "openAi" ? void 0 : {
+    not: parseAnyDef({
+      ...refs,
+      currentPath: [...refs.currentPath, "not"]
+    })
+  };
+}
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/null.js
+function parseNullDef(refs) {
+  return refs.target === "openApi3" ? {
+    enum: ["null"],
+    nullable: true
+  } : {
+    type: "null"
+  };
+}
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/union.js
+var primitiveMappings = {
+  ZodString: "string",
+  ZodNumber: "number",
+  ZodBigInt: "integer",
+  ZodBoolean: "boolean",
+  ZodNull: "null"
+};
+function parseUnionDef(def, refs) {
+  if (refs.target === "openApi3")
+    return asAnyOf(def, refs);
+  const options = def.options instanceof Map ? Array.from(def.options.values()) : def.options;
+  if (options.every((x) => x._def.typeName in primitiveMappings && (!x._def.checks || !x._def.checks.length))) {
+    const types = options.reduce((types2, x) => {
+      const type = primitiveMappings[x._def.typeName];
+      return type && !types2.includes(type) ? [...types2, type] : types2;
+    }, []);
+    return {
+      type: types.length > 1 ? types : types[0]
+    };
+  } else if (options.every((x) => x._def.typeName === "ZodLiteral" && !x.description)) {
+    const types = options.reduce((acc, x) => {
+      const type = typeof x._def.value;
+      switch (type) {
+        case "string":
+        case "number":
+        case "boolean":
+          return [...acc, type];
+        case "bigint":
+          return [...acc, "integer"];
+        case "object":
+          if (x._def.value === null)
+            return [...acc, "null"];
+        case "symbol":
+        case "undefined":
+        case "function":
+        default:
+          return acc;
+      }
+    }, []);
+    if (types.length === options.length) {
+      const uniqueTypes = types.filter((x, i, a) => a.indexOf(x) === i);
+      return {
+        type: uniqueTypes.length > 1 ? uniqueTypes : uniqueTypes[0],
+        enum: options.reduce((acc, x) => {
+          return acc.includes(x._def.value) ? acc : [...acc, x._def.value];
+        }, [])
+      };
+    }
+  } else if (options.every((x) => x._def.typeName === "ZodEnum")) {
+    return {
+      type: "string",
+      enum: options.reduce((acc, x) => [
+        ...acc,
+        ...x._def.values.filter((x2) => !acc.includes(x2))
+      ], [])
+    };
+  }
+  return asAnyOf(def, refs);
+}
+var asAnyOf = (def, refs) => {
+  const anyOf = (def.options instanceof Map ? Array.from(def.options.values()) : def.options).map((x, i) => parseDef(x._def, {
+    ...refs,
+    currentPath: [...refs.currentPath, "anyOf", `${i}`]
+  })).filter((x) => !!x && (!refs.strictUnions || typeof x === "object" && Object.keys(x).length > 0));
+  return anyOf.length ? { anyOf } : void 0;
+};
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/nullable.js
+function parseNullableDef(def, refs) {
+  if (["ZodString", "ZodNumber", "ZodBigInt", "ZodBoolean", "ZodNull"].includes(def.innerType._def.typeName) && (!def.innerType._def.checks || !def.innerType._def.checks.length)) {
+    if (refs.target === "openApi3") {
+      return {
+        type: primitiveMappings[def.innerType._def.typeName],
+        nullable: true
+      };
+    }
+    return {
+      type: [
+        primitiveMappings[def.innerType._def.typeName],
+        "null"
+      ]
+    };
+  }
+  if (refs.target === "openApi3") {
+    const base2 = parseDef(def.innerType._def, {
+      ...refs,
+      currentPath: [...refs.currentPath]
+    });
+    if (base2 && "$ref" in base2)
+      return { allOf: [base2], nullable: true };
+    return base2 && { ...base2, nullable: true };
+  }
+  const base = parseDef(def.innerType._def, {
+    ...refs,
+    currentPath: [...refs.currentPath, "anyOf", "0"]
+  });
+  return base && { anyOf: [base, { type: "null" }] };
+}
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/number.js
+function parseNumberDef(def, refs) {
+  const res = {
+    type: "number"
+  };
+  if (!def.checks)
+    return res;
+  for (const check of def.checks) {
+    switch (check.kind) {
+      case "int":
+        res.type = "integer";
+        addErrorMessage(res, "type", check.message, refs);
+        break;
+      case "min":
+        if (refs.target === "jsonSchema7") {
+          if (check.inclusive) {
+            setResponseValueAndErrors(res, "minimum", check.value, check.message, refs);
+          } else {
+            setResponseValueAndErrors(res, "exclusiveMinimum", check.value, check.message, refs);
+          }
+        } else {
+          if (!check.inclusive) {
+            res.exclusiveMinimum = true;
+          }
+          setResponseValueAndErrors(res, "minimum", check.value, check.message, refs);
+        }
+        break;
+      case "max":
+        if (refs.target === "jsonSchema7") {
+          if (check.inclusive) {
+            setResponseValueAndErrors(res, "maximum", check.value, check.message, refs);
+          } else {
+            setResponseValueAndErrors(res, "exclusiveMaximum", check.value, check.message, refs);
+          }
+        } else {
+          if (!check.inclusive) {
+            res.exclusiveMaximum = true;
+          }
+          setResponseValueAndErrors(res, "maximum", check.value, check.message, refs);
+        }
+        break;
+      case "multipleOf":
+        setResponseValueAndErrors(res, "multipleOf", check.value, check.message, refs);
+        break;
+    }
+  }
+  return res;
+}
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/object.js
+function parseObjectDef(def, refs) {
+  const forceOptionalIntoNullable = refs.target === "openAi";
+  const result = {
+    type: "object",
+    properties: {}
+  };
+  const required = [];
+  const shape = def.shape();
+  for (const propName in shape) {
+    let propDef = shape[propName];
+    if (propDef === void 0 || propDef._def === void 0) {
+      continue;
+    }
+    let propOptional = safeIsOptional(propDef);
+    if (propOptional && forceOptionalIntoNullable) {
+      if (propDef._def.typeName === "ZodOptional") {
+        propDef = propDef._def.innerType;
+      }
+      if (!propDef.isNullable()) {
+        propDef = propDef.nullable();
+      }
+      propOptional = false;
+    }
+    const parsedDef = parseDef(propDef._def, {
+      ...refs,
+      currentPath: [...refs.currentPath, "properties", propName],
+      propertyPath: [...refs.currentPath, "properties", propName]
+    });
+    if (parsedDef === void 0) {
+      continue;
+    }
+    result.properties[propName] = parsedDef;
+    if (!propOptional) {
+      required.push(propName);
+    }
+  }
+  if (required.length) {
+    result.required = required;
+  }
+  const additionalProperties = decideAdditionalProperties(def, refs);
+  if (additionalProperties !== void 0) {
+    result.additionalProperties = additionalProperties;
+  }
+  return result;
+}
+function decideAdditionalProperties(def, refs) {
+  if (def.catchall._def.typeName !== "ZodNever") {
+    return parseDef(def.catchall._def, {
+      ...refs,
+      currentPath: [...refs.currentPath, "additionalProperties"]
+    });
+  }
+  switch (def.unknownKeys) {
+    case "passthrough":
+      return refs.allowedAdditionalProperties;
+    case "strict":
+      return refs.rejectedAdditionalProperties;
+    case "strip":
+      return refs.removeAdditionalStrategy === "strict" ? refs.allowedAdditionalProperties : refs.rejectedAdditionalProperties;
+  }
+}
+function safeIsOptional(schema) {
+  try {
+    return schema.isOptional();
+  } catch {
+    return true;
+  }
+}
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/optional.js
+var parseOptionalDef = (def, refs) => {
+  if (refs.currentPath.toString() === refs.propertyPath?.toString()) {
+    return parseDef(def.innerType._def, refs);
+  }
+  const innerSchema = parseDef(def.innerType._def, {
+    ...refs,
+    currentPath: [...refs.currentPath, "anyOf", "1"]
+  });
+  return innerSchema ? {
+    anyOf: [
+      {
+        not: parseAnyDef(refs)
+      },
+      innerSchema
+    ]
+  } : parseAnyDef(refs);
+};
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/pipeline.js
+var parsePipelineDef = (def, refs) => {
+  if (refs.pipeStrategy === "input") {
+    return parseDef(def.in._def, refs);
+  } else if (refs.pipeStrategy === "output") {
+    return parseDef(def.out._def, refs);
+  }
+  const a = parseDef(def.in._def, {
+    ...refs,
+    currentPath: [...refs.currentPath, "allOf", "0"]
+  });
+  const b = parseDef(def.out._def, {
+    ...refs,
+    currentPath: [...refs.currentPath, "allOf", a ? "1" : "0"]
+  });
+  return {
+    allOf: [a, b].filter((x) => x !== void 0)
+  };
+};
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/promise.js
+function parsePromiseDef(def, refs) {
+  return parseDef(def.type._def, refs);
+}
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/set.js
+function parseSetDef(def, refs) {
+  const items = parseDef(def.valueType._def, {
+    ...refs,
+    currentPath: [...refs.currentPath, "items"]
+  });
+  const schema = {
+    type: "array",
+    uniqueItems: true,
+    items
+  };
+  if (def.minSize) {
+    setResponseValueAndErrors(schema, "minItems", def.minSize.value, def.minSize.message, refs);
+  }
+  if (def.maxSize) {
+    setResponseValueAndErrors(schema, "maxItems", def.maxSize.value, def.maxSize.message, refs);
+  }
+  return schema;
+}
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/tuple.js
+function parseTupleDef(def, refs) {
+  if (def.rest) {
+    return {
+      type: "array",
+      minItems: def.items.length,
+      items: def.items.map((x, i) => parseDef(x._def, {
+        ...refs,
+        currentPath: [...refs.currentPath, "items", `${i}`]
+      })).reduce((acc, x) => x === void 0 ? acc : [...acc, x], []),
+      additionalItems: parseDef(def.rest._def, {
+        ...refs,
+        currentPath: [...refs.currentPath, "additionalItems"]
+      })
+    };
+  } else {
+    return {
+      type: "array",
+      minItems: def.items.length,
+      maxItems: def.items.length,
+      items: def.items.map((x, i) => parseDef(x._def, {
+        ...refs,
+        currentPath: [...refs.currentPath, "items", `${i}`]
+      })).reduce((acc, x) => x === void 0 ? acc : [...acc, x], [])
+    };
+  }
+}
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/undefined.js
+function parseUndefinedDef(refs) {
+  return {
+    not: parseAnyDef(refs)
+  };
+}
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/unknown.js
+function parseUnknownDef(refs) {
+  return parseAnyDef(refs);
+}
+
+// node_modules/zod-to-json-schema/dist/esm/parsers/readonly.js
+var parseReadonlyDef = (def, refs) => {
+  return parseDef(def.innerType._def, refs);
+};
+
+// node_modules/zod-to-json-schema/dist/esm/selectParser.js
+var selectParser = (def, typeName, refs) => {
+  switch (typeName) {
+    case ZodFirstPartyTypeKind3.ZodString:
+      return parseStringDef(def, refs);
+    case ZodFirstPartyTypeKind3.ZodNumber:
+      return parseNumberDef(def, refs);
+    case ZodFirstPartyTypeKind3.ZodObject:
+      return parseObjectDef(def, refs);
+    case ZodFirstPartyTypeKind3.ZodBigInt:
+      return parseBigintDef(def, refs);
+    case ZodFirstPartyTypeKind3.ZodBoolean:
+      return parseBooleanDef();
+    case ZodFirstPartyTypeKind3.ZodDate:
+      return parseDateDef(def, refs);
+    case ZodFirstPartyTypeKind3.ZodUndefined:
+      return parseUndefinedDef(refs);
+    case ZodFirstPartyTypeKind3.ZodNull:
+      return parseNullDef(refs);
+    case ZodFirstPartyTypeKind3.ZodArray:
+      return parseArrayDef(def, refs);
+    case ZodFirstPartyTypeKind3.ZodUnion:
+    case ZodFirstPartyTypeKind3.ZodDiscriminatedUnion:
+      return parseUnionDef(def, refs);
+    case ZodFirstPartyTypeKind3.ZodIntersection:
+      return parseIntersectionDef(def, refs);
+    case ZodFirstPartyTypeKind3.ZodTuple:
+      return parseTupleDef(def, refs);
+    case ZodFirstPartyTypeKind3.ZodRecord:
+      return parseRecordDef(def, refs);
+    case ZodFirstPartyTypeKind3.ZodLiteral:
+      return parseLiteralDef(def, refs);
+    case ZodFirstPartyTypeKind3.ZodEnum:
+      return parseEnumDef(def);
+    case ZodFirstPartyTypeKind3.ZodNativeEnum:
+      return parseNativeEnumDef(def);
+    case ZodFirstPartyTypeKind3.ZodNullable:
+      return parseNullableDef(def, refs);
+    case ZodFirstPartyTypeKind3.ZodOptional:
+      return parseOptionalDef(def, refs);
+    case ZodFirstPartyTypeKind3.ZodMap:
+      return parseMapDef(def, refs);
+    case ZodFirstPartyTypeKind3.ZodSet:
+      return parseSetDef(def, refs);
+    case ZodFirstPartyTypeKind3.ZodLazy:
+      return () => def.getter()._def;
+    case ZodFirstPartyTypeKind3.ZodPromise:
+      return parsePromiseDef(def, refs);
+    case ZodFirstPartyTypeKind3.ZodNaN:
+    case ZodFirstPartyTypeKind3.ZodNever:
+      return parseNeverDef(refs);
+    case ZodFirstPartyTypeKind3.ZodEffects:
+      return parseEffectsDef(def, refs);
+    case ZodFirstPartyTypeKind3.ZodAny:
+      return parseAnyDef(refs);
+    case ZodFirstPartyTypeKind3.ZodUnknown:
+      return parseUnknownDef(refs);
+    case ZodFirstPartyTypeKind3.ZodDefault:
+      return parseDefaultDef(def, refs);
+    case ZodFirstPartyTypeKind3.ZodBranded:
+      return parseBrandedDef(def, refs);
+    case ZodFirstPartyTypeKind3.ZodReadonly:
+      return parseReadonlyDef(def, refs);
+    case ZodFirstPartyTypeKind3.ZodCatch:
+      return parseCatchDef(def, refs);
+    case ZodFirstPartyTypeKind3.ZodPipeline:
+      return parsePipelineDef(def, refs);
+    case ZodFirstPartyTypeKind3.ZodFunction:
+    case ZodFirstPartyTypeKind3.ZodVoid:
+    case ZodFirstPartyTypeKind3.ZodSymbol:
+      return void 0;
+    default:
+      return /* @__PURE__ */ ((_) => void 0)(typeName);
+  }
+};
+
+// node_modules/zod-to-json-schema/dist/esm/parseDef.js
+function parseDef(def, refs, forceResolution = false) {
+  const seenItem = refs.seen.get(def);
+  if (refs.override) {
+    const overrideResult = refs.override?.(def, refs, seenItem, forceResolution);
+    if (overrideResult !== ignoreOverride) {
+      return overrideResult;
+    }
+  }
+  if (seenItem && !forceResolution) {
+    const seenSchema = get$ref(seenItem, refs);
+    if (seenSchema !== void 0) {
+      return seenSchema;
+    }
+  }
+  const newItem = { def, path: refs.currentPath, jsonSchema: void 0 };
+  refs.seen.set(def, newItem);
+  const jsonSchemaOrGetter = selectParser(def, def.typeName, refs);
+  const jsonSchema = typeof jsonSchemaOrGetter === "function" ? parseDef(jsonSchemaOrGetter(), refs) : jsonSchemaOrGetter;
+  if (jsonSchema) {
+    addMeta(def, refs, jsonSchema);
+  }
+  if (refs.postProcess) {
+    const postProcessResult = refs.postProcess(jsonSchema, def, refs);
+    newItem.jsonSchema = jsonSchema;
+    return postProcessResult;
+  }
+  newItem.jsonSchema = jsonSchema;
+  return jsonSchema;
+}
+var get$ref = (item, refs) => {
+  switch (refs.$refStrategy) {
+    case "root":
+      return { $ref: item.path.join("/") };
+    case "relative":
+      return { $ref: getRelativePath(refs.currentPath, item.path) };
+    case "none":
+    case "seen": {
+      if (item.path.length < refs.currentPath.length && item.path.every((value, index) => refs.currentPath[index] === value)) {
+        console.warn(`Recursive reference detected at ${refs.currentPath.join("/")}! Defaulting to any`);
+        return parseAnyDef(refs);
+      }
+      return refs.$refStrategy === "seen" ? parseAnyDef(refs) : void 0;
+    }
+  }
+};
+var addMeta = (def, refs, jsonSchema) => {
+  if (def.description) {
+    jsonSchema.description = def.description;
+    if (refs.markdownDescription) {
+      jsonSchema.markdownDescription = def.description;
+    }
+  }
+  return jsonSchema;
+};
+
+// node_modules/zod-to-json-schema/dist/esm/zodToJsonSchema.js
+var zodToJsonSchema2 = (schema, options) => {
+  const refs = getRefs(options);
+  let definitions = typeof options === "object" && options.definitions ? Object.entries(options.definitions).reduce((acc, [name2, schema2]) => ({
+    ...acc,
+    [name2]: parseDef(schema2._def, {
+      ...refs,
+      currentPath: [...refs.basePath, refs.definitionPath, name2]
+    }, true) ?? parseAnyDef(refs)
+  }), {}) : void 0;
+  const name = typeof options === "string" ? options : options?.nameStrategy === "title" ? void 0 : options?.name;
+  const main2 = parseDef(schema._def, name === void 0 ? refs : {
+    ...refs,
+    currentPath: [...refs.basePath, refs.definitionPath, name]
+  }, false) ?? parseAnyDef(refs);
+  const title = typeof options === "object" && options.name !== void 0 && options.nameStrategy === "title" ? options.name : void 0;
+  if (title !== void 0) {
+    main2.title = title;
+  }
+  if (refs.flags.hasReferencedOpenAiAnyType) {
+    if (!definitions) {
+      definitions = {};
+    }
+    if (!definitions[refs.openAiAnyTypeName]) {
+      definitions[refs.openAiAnyTypeName] = {
+        // Skipping "object" as no properties can be defined and additionalProperties must be "false"
+        type: ["string", "number", "integer", "boolean", "array", "null"],
+        items: {
+          $ref: refs.$refStrategy === "relative" ? "1" : [
+            ...refs.basePath,
+            refs.definitionPath,
+            refs.openAiAnyTypeName
+          ].join("/")
+        }
+      };
+    }
+  }
+  const combined = name === void 0 ? definitions ? {
+    ...main2,
+    [refs.definitionPath]: definitions
+  } : main2 : {
+    $ref: [
+      ...refs.$refStrategy === "relative" ? [] : refs.basePath,
+      refs.definitionPath,
+      name
+    ].join("/"),
+    [refs.definitionPath]: {
+      ...definitions,
+      [name]: main2
+    }
+  };
+  if (refs.target === "jsonSchema7") {
+    combined.$schema = "http://json-schema.org/draft-07/schema#";
+  } else if (refs.target === "jsonSchema2019-09" || refs.target === "openAi") {
+    combined.$schema = "https://json-schema.org/draft/2019-09/schema#";
+  }
+  if (refs.target === "openAi" && ("anyOf" in combined || "oneOf" in combined || "allOf" in combined || "type" in combined && Array.isArray(combined.type))) {
+    console.warn("Warning: OpenAI may not support schemas with unions as roots! Try wrapping it in an object property.");
+  }
+  return combined;
+};
+
+// src/tools/relationship-tools.ts
+import { ErrorCode as ErrorCode2, McpError as McpError2 } from "@modelcontextprotocol/sdk/types.js";
 var memoryStore2 = new MemoryStore();
+var relationshipTools = {
+  link_memories: {
+    description: "Create a relationship between two memories",
+    inputSchema: zodToJsonSchema2(LinkMemoriesSchema),
+    handler: async (args) => {
+      try {
+        const relationship = await memoryStore2.createRelationship(
+          args.from_memory_id,
+          args.to_memory_id,
+          args.relationship_type,
+          args.metadata
+        );
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              success: true,
+              relationship_id: relationship.id,
+              from_memory_id: relationship.from_memory_id,
+              to_memory_id: relationship.to_memory_id,
+              relationship_type: relationship.relationship_type,
+              created_at: relationship.created_at,
+              message: `Successfully linked memories with ${relationship.relationship_type} relationship`
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        if (error instanceof McpError2) throw error;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        throw new McpError2(ErrorCode2.InternalError, `Failed to link memories: ${errorMessage}`);
+      }
+    }
+  },
+  get_related_memories: {
+    description: "Get memories related to a given memory with graph traversal",
+    inputSchema: zodToJsonSchema2(GetRelatedMemoriesSchema),
+    handler: async (args) => {
+      try {
+        const results = await memoryStore2.getRelatedMemories(args.memory_id, {
+          relationshipTypes: args.relationship_types,
+          depth: args.depth,
+          direction: args.direction
+        });
+        const formatted = results.map((result) => ({
+          memory_id: result.memory.id,
+          content: result.memory.content,
+          summary: result.memory.summary,
+          context_type: result.memory.context_type,
+          importance: result.memory.importance,
+          tags: result.memory.tags,
+          is_global: result.memory.is_global,
+          relationship: {
+            id: result.relationship.id,
+            type: result.relationship.relationship_type,
+            from: result.relationship.from_memory_id,
+            to: result.relationship.to_memory_id
+          },
+          depth: result.depth
+        }));
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              success: true,
+              root_memory_id: args.memory_id,
+              total_related: results.length,
+              max_depth: args.depth,
+              direction: args.direction,
+              related_memories: formatted
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        if (error instanceof McpError2) throw error;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        throw new McpError2(ErrorCode2.InternalError, `Failed to get related memories: ${errorMessage}`);
+      }
+    }
+  },
+  unlink_memories: {
+    description: "Remove a relationship between memories",
+    inputSchema: zodToJsonSchema2(UnlinkMemoriesSchema),
+    handler: async (args) => {
+      try {
+        const deleted = await memoryStore2.deleteRelationship(args.relationship_id);
+        if (!deleted) {
+          throw new McpError2(ErrorCode2.InvalidRequest, `Relationship not found: ${args.relationship_id}`);
+        }
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              success: true,
+              relationship_id: args.relationship_id,
+              message: "Relationship removed successfully"
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        if (error instanceof McpError2) throw error;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        throw new McpError2(ErrorCode2.InternalError, `Failed to unlink memories: ${errorMessage}`);
+      }
+    }
+  },
+  get_memory_graph: {
+    description: "Get a graph of related memories starting from a root memory",
+    inputSchema: zodToJsonSchema2(GetMemoryGraphSchema),
+    handler: async (args) => {
+      try {
+        const graph = await memoryStore2.getMemoryGraph(
+          args.memory_id,
+          args.max_depth,
+          args.max_nodes
+        );
+        const formattedNodes = Object.fromEntries(
+          Object.entries(graph.nodes).map(([memoryId, node]) => [
+            memoryId,
+            {
+              memory_id: node.memory.id,
+              content: node.memory.content,
+              summary: node.memory.summary,
+              context_type: node.memory.context_type,
+              importance: node.memory.importance,
+              tags: node.memory.tags,
+              is_global: node.memory.is_global,
+              depth: node.depth,
+              relationships: node.relationships.map((rel) => ({
+                id: rel.id,
+                type: rel.relationship_type,
+                from: rel.from_memory_id,
+                to: rel.to_memory_id
+              }))
+            }
+          ])
+        );
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              success: true,
+              root_memory_id: graph.root_memory_id,
+              total_nodes: graph.total_nodes,
+              max_depth_reached: graph.max_depth_reached,
+              nodes: formattedNodes
+            }, null, 2)
+          }]
+        };
+      } catch (error) {
+        if (error instanceof McpError2) throw error;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        throw new McpError2(ErrorCode2.InternalError, `Failed to get memory graph: ${errorMessage}`);
+      }
+    }
+  }
+};
+
+// src/tools/index.ts
+var memoryStore3 = new MemoryStore();
 var tools = {
   // Context management tools
   recall_relevant_context,
@@ -1578,13 +3314,13 @@ var tools = {
   // Export/Import tools
   export_memories: {
     description: "Export memories to JSON format with optional filtering",
-    inputSchema: zodToJsonSchema2(ExportMemoriesSchema),
+    inputSchema: zodToJsonSchema3(ExportMemoriesSchema),
     handler: async (args) => {
       try {
         return await exportMemories(args);
       } catch (error) {
-        throw new McpError2(
-          ErrorCode2.InternalError,
+        throw new McpError3(
+          ErrorCode3.InternalError,
           `Failed to export memories: ${error instanceof Error ? error.message : String(error)}`
         );
       }
@@ -1592,13 +3328,13 @@ var tools = {
   },
   import_memories: {
     description: "Import memories from JSON export data",
-    inputSchema: zodToJsonSchema2(ImportMemoriesSchema),
+    inputSchema: zodToJsonSchema3(ImportMemoriesSchema),
     handler: async (args) => {
       try {
         return await importMemories(args);
       } catch (error) {
-        throw new McpError2(
-          ErrorCode2.InternalError,
+        throw new McpError3(
+          ErrorCode3.InternalError,
           `Failed to import memories: ${error instanceof Error ? error.message : String(error)}`
         );
       }
@@ -1606,13 +3342,13 @@ var tools = {
   },
   find_duplicates: {
     description: "Find and optionally merge duplicate memories based on similarity",
-    inputSchema: zodToJsonSchema2(FindDuplicatesSchema),
+    inputSchema: zodToJsonSchema3(FindDuplicatesSchema),
     handler: async (args) => {
       try {
         return await findDuplicates(args);
       } catch (error) {
-        throw new McpError2(
-          ErrorCode2.InternalError,
+        throw new McpError3(
+          ErrorCode3.InternalError,
           `Failed to find duplicates: ${error instanceof Error ? error.message : String(error)}`
         );
       }
@@ -1620,13 +3356,13 @@ var tools = {
   },
   consolidate_memories: {
     description: "Manually consolidate multiple memories into one",
-    inputSchema: zodToJsonSchema2(ConsolidateMemoriesSchema),
+    inputSchema: zodToJsonSchema3(ConsolidateMemoriesSchema),
     handler: async (args) => {
       try {
         return await consolidateMemories(args);
       } catch (error) {
-        throw new McpError2(
-          ErrorCode2.InternalError,
+        throw new McpError3(
+          ErrorCode3.InternalError,
           `Failed to consolidate memories: ${error instanceof Error ? error.message : String(error)}`
         );
       }
@@ -1635,10 +3371,10 @@ var tools = {
   // Original memory tools
   store_memory: {
     description: "Store a new memory/context entry for long-term persistence",
-    inputSchema: zodToJsonSchema2(CreateMemorySchema),
+    inputSchema: zodToJsonSchema3(CreateMemorySchema),
     handler: async (args) => {
       try {
-        const memory = await memoryStore2.createMemory(args);
+        const memory = await memoryStore3.createMemory(args);
         return {
           content: [
             {
@@ -1653,8 +3389,8 @@ var tools = {
           ]
         };
       } catch (error) {
-        throw new McpError2(
-          ErrorCode2.InternalError,
+        throw new McpError3(
+          ErrorCode3.InternalError,
           `Failed to store memory: ${error instanceof Error ? error.message : String(error)}`
         );
       }
@@ -1662,10 +3398,10 @@ var tools = {
   },
   store_batch_memories: {
     description: "Store multiple memories in a batch operation",
-    inputSchema: zodToJsonSchema2(BatchCreateMemoriesSchema),
+    inputSchema: zodToJsonSchema3(BatchCreateMemoriesSchema),
     handler: async (args) => {
       try {
-        const memories = await memoryStore2.createMemories(args.memories);
+        const memories = await memoryStore3.createMemories(args.memories);
         return {
           content: [
             {
@@ -1679,8 +3415,8 @@ var tools = {
           ]
         };
       } catch (error) {
-        throw new McpError2(
-          ErrorCode2.InternalError,
+        throw new McpError3(
+          ErrorCode3.InternalError,
           `Failed to store memories: ${error instanceof Error ? error.message : String(error)}`
         );
       }
@@ -1688,13 +3424,13 @@ var tools = {
   },
   update_memory: {
     description: "Update an existing memory entry",
-    inputSchema: zodToJsonSchema2(UpdateMemorySchema),
+    inputSchema: zodToJsonSchema3(UpdateMemorySchema),
     handler: async (args) => {
       try {
         const { memory_id, ...updates } = args;
-        const memory = await memoryStore2.updateMemory(memory_id, updates);
+        const memory = await memoryStore3.updateMemory(memory_id, updates);
         if (!memory) {
-          throw new McpError2(ErrorCode2.InvalidRequest, `Memory ${memory_id} not found`);
+          throw new McpError3(ErrorCode3.InvalidRequest, `Memory ${memory_id} not found`);
         }
         return {
           content: [
@@ -1709,9 +3445,9 @@ var tools = {
           ]
         };
       } catch (error) {
-        if (error instanceof McpError2) throw error;
-        throw new McpError2(
-          ErrorCode2.InternalError,
+        if (error instanceof McpError3) throw error;
+        throw new McpError3(
+          ErrorCode3.InternalError,
           `Failed to update memory: ${error instanceof Error ? error.message : String(error)}`
         );
       }
@@ -1719,12 +3455,12 @@ var tools = {
   },
   delete_memory: {
     description: "Delete a memory entry",
-    inputSchema: zodToJsonSchema2(DeleteMemorySchema),
+    inputSchema: zodToJsonSchema3(DeleteMemorySchema),
     handler: async (args) => {
       try {
-        const success = await memoryStore2.deleteMemory(args.memory_id);
+        const success = await memoryStore3.deleteMemory(args.memory_id);
         if (!success) {
-          throw new McpError2(ErrorCode2.InvalidRequest, `Memory ${args.memory_id} not found`);
+          throw new McpError3(ErrorCode3.InvalidRequest, `Memory ${args.memory_id} not found`);
         }
         return {
           content: [
@@ -1739,9 +3475,9 @@ var tools = {
           ]
         };
       } catch (error) {
-        if (error instanceof McpError2) throw error;
-        throw new McpError2(
-          ErrorCode2.InternalError,
+        if (error instanceof McpError3) throw error;
+        throw new McpError3(
+          ErrorCode3.InternalError,
           `Failed to delete memory: ${error instanceof Error ? error.message : String(error)}`
         );
       }
@@ -1749,10 +3485,10 @@ var tools = {
   },
   search_memories: {
     description: "Search memories using semantic similarity",
-    inputSchema: zodToJsonSchema2(SearchMemorySchema),
+    inputSchema: zodToJsonSchema3(SearchMemorySchema),
     handler: async (args) => {
       try {
-        const results = await memoryStore2.searchMemories(
+        const results = await memoryStore3.searchMemories(
           args.query,
           args.limit,
           args.min_importance,
@@ -1780,8 +3516,8 @@ var tools = {
           ]
         };
       } catch (error) {
-        throw new McpError2(
-          ErrorCode2.InternalError,
+        throw new McpError3(
+          ErrorCode3.InternalError,
           `Failed to search memories: ${error instanceof Error ? error.message : String(error)}`
         );
       }
@@ -1789,10 +3525,10 @@ var tools = {
   },
   organize_session: {
     description: "Create a session snapshot grouping related memories",
-    inputSchema: zodToJsonSchema2(OrganizeSessionSchema),
+    inputSchema: zodToJsonSchema3(OrganizeSessionSchema),
     handler: async (args) => {
       try {
-        const session = await memoryStore2.createSession(
+        const session = await memoryStore3.createSession(
           args.session_name,
           args.memory_ids,
           args.summary
@@ -1812,8 +3548,8 @@ var tools = {
           ]
         };
       } catch (error) {
-        throw new McpError2(
-          ErrorCode2.InternalError,
+        throw new McpError3(
+          ErrorCode3.InternalError,
           `Failed to organize session: ${error instanceof Error ? error.message : String(error)}`
         );
       }
@@ -1822,13 +3558,13 @@ var tools = {
   // Global memory conversion tools
   convert_to_global: {
     description: "Convert a workspace-specific memory to global (accessible across all workspaces)",
-    inputSchema: zodToJsonSchema2(ConvertToGlobalSchema),
+    inputSchema: zodToJsonSchema3(ConvertToGlobalSchema),
     handler: async (args) => {
       try {
-        const result = await memoryStore2.convertToGlobal(args.memory_id);
+        const result = await memoryStore3.convertToGlobal(args.memory_id);
         if (!result) {
-          throw new McpError2(
-            ErrorCode2.InvalidRequest,
+          throw new McpError3(
+            ErrorCode3.InvalidRequest,
             `Memory not found: ${args.memory_id}`
           );
         }
@@ -1847,9 +3583,9 @@ var tools = {
           ]
         };
       } catch (error) {
-        if (error instanceof McpError2) throw error;
-        throw new McpError2(
-          ErrorCode2.InternalError,
+        if (error instanceof McpError3) throw error;
+        throw new McpError3(
+          ErrorCode3.InternalError,
           `Failed to convert memory to global: ${error instanceof Error ? error.message : String(error)}`
         );
       }
@@ -1857,16 +3593,16 @@ var tools = {
   },
   convert_to_workspace: {
     description: "Convert a global memory to workspace-specific",
-    inputSchema: zodToJsonSchema2(ConvertToWorkspaceSchema),
+    inputSchema: zodToJsonSchema3(ConvertToWorkspaceSchema),
     handler: async (args) => {
       try {
-        const result = await memoryStore2.convertToWorkspace(
+        const result = await memoryStore3.convertToWorkspace(
           args.memory_id,
           args.workspace_id
         );
         if (!result) {
-          throw new McpError2(
-            ErrorCode2.InvalidRequest,
+          throw new McpError3(
+            ErrorCode3.InvalidRequest,
             `Memory not found: ${args.memory_id}`
           );
         }
@@ -1886,16 +3622,18 @@ var tools = {
           ]
         };
       } catch (error) {
-        if (error instanceof McpError2) throw error;
-        throw new McpError2(
-          ErrorCode2.InternalError,
+        if (error instanceof McpError3) throw error;
+        throw new McpError3(
+          ErrorCode3.InternalError,
           `Failed to convert memory to workspace: ${error instanceof Error ? error.message : String(error)}`
         );
       }
     }
-  }
+  },
+  // Relationship tools (v1.4.0)
+  ...relationshipTools
 };
-function zodToJsonSchema2(schema) {
+function zodToJsonSchema3(schema) {
   if (schema instanceof z3.ZodObject) {
     const shape = schema._def.shape();
     const properties = {};
@@ -1955,13 +3693,13 @@ function zodToJsonSchemaInner2(schema) {
     return inner;
   }
   if (schema instanceof z3.ZodObject) {
-    return zodToJsonSchema2(schema);
+    return zodToJsonSchema3(schema);
   }
   return { type: "string" };
 }
 
 // src/resources/index.ts
-import { McpError as McpError3, ErrorCode as ErrorCode3 } from "@modelcontextprotocol/sdk/types.js";
+import { McpError as McpError4, ErrorCode as ErrorCode4 } from "@modelcontextprotocol/sdk/types.js";
 
 // src/resources/analytics.ts
 async function getAnalytics(workspacePath) {
@@ -2079,7 +3817,7 @@ function formatAnalytics(data) {
 }
 
 // src/resources/index.ts
-var memoryStore3 = new MemoryStore();
+var memoryStore4 = new MemoryStore();
 var redis = getRedisClient();
 var resources = {
   "memory://recent": {
@@ -2088,7 +3826,7 @@ var resources = {
     mimeType: "application/json",
     handler: async (uri) => {
       const limit = parseInt(uri.searchParams.get("limit") || "50", 10);
-      const memories = await memoryStore3.getRecentMemories(limit);
+      const memories = await memoryStore4.getRecentMemories(limit);
       return {
         contents: [
           {
@@ -2123,7 +3861,7 @@ var resources = {
     handler: async (uri, params) => {
       const type = params.type;
       const limit = uri.searchParams.get("limit") ? parseInt(uri.searchParams.get("limit"), 10) : void 0;
-      const memories = await memoryStore3.getMemoriesByType(type, limit);
+      const memories = await memoryStore4.getMemoriesByType(type, limit);
       return {
         contents: [
           {
@@ -2157,7 +3895,7 @@ var resources = {
     handler: async (uri, params) => {
       const { tag } = params;
       const limit = uri.searchParams.get("limit") ? parseInt(uri.searchParams.get("limit"), 10) : void 0;
-      const memories = await memoryStore3.getMemoriesByTag(tag, limit);
+      const memories = await memoryStore4.getMemoriesByTag(tag, limit);
       return {
         contents: [
           {
@@ -2192,7 +3930,7 @@ var resources = {
     handler: async (uri) => {
       const minImportance = parseInt(uri.searchParams.get("min") || "8", 10);
       const limit = uri.searchParams.get("limit") ? parseInt(uri.searchParams.get("limit"), 10) : void 0;
-      const memories = await memoryStore3.getImportantMemories(minImportance, limit);
+      const memories = await memoryStore4.getImportantMemories(minImportance, limit);
       return {
         contents: [
           {
@@ -2226,11 +3964,11 @@ var resources = {
     mimeType: "application/json",
     handler: async (uri, params) => {
       const { session_id } = params;
-      const session = await memoryStore3.getSession(session_id);
+      const session = await memoryStore4.getSession(session_id);
       if (!session) {
-        throw new McpError3(ErrorCode3.InvalidRequest, `Session ${session_id} not found`);
+        throw new McpError4(ErrorCode4.InvalidRequest, `Session ${session_id} not found`);
       }
-      const memories = await memoryStore3.getSessionMemories(session_id);
+      const memories = await memoryStore4.getSessionMemories(session_id);
       return {
         contents: [
           {
@@ -2266,7 +4004,7 @@ var resources = {
     description: "Get list of all sessions",
     mimeType: "application/json",
     handler: async (uri) => {
-      const sessions = await memoryStore3.getAllSessions();
+      const sessions = await memoryStore4.getAllSessions();
       return {
         contents: [
           {
@@ -2296,7 +4034,7 @@ var resources = {
     description: "Get overall summary statistics of stored memories",
     mimeType: "application/json",
     handler: async (uri) => {
-      const stats = await memoryStore3.getSummaryStats();
+      const stats = await memoryStore4.getSummaryStats();
       return {
         contents: [
           {
@@ -2315,11 +4053,11 @@ var resources = {
     handler: async (uri) => {
       const query = uri.searchParams.get("q");
       if (!query) {
-        throw new McpError3(ErrorCode3.InvalidRequest, 'Query parameter "q" is required');
+        throw new McpError4(ErrorCode4.InvalidRequest, 'Query parameter "q" is required');
       }
       const limit = parseInt(uri.searchParams.get("limit") || "10", 10);
       const minImportance = uri.searchParams.get("min_importance") ? parseInt(uri.searchParams.get("min_importance"), 10) : void 0;
-      const results = await memoryStore3.searchMemories(query, limit, minImportance);
+      const results = await memoryStore4.searchMemories(query, limit, minImportance);
       return {
         contents: [
           {
@@ -2373,14 +4111,14 @@ var resources = {
     handler: async (uri) => {
       const mode = getWorkspaceMode();
       if (mode === "isolated" /* ISOLATED */) {
-        throw new McpError3(
-          ErrorCode3.InvalidRequest,
+        throw new McpError4(
+          ErrorCode4.InvalidRequest,
           "Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories."
         );
       }
       const limit = parseInt(uri.searchParams.get("limit") || "50", 10);
       const ids = await redis.zrevrange(RedisKeys.globalTimeline(), 0, limit - 1);
-      const memories = await memoryStore3.getMemories(ids);
+      const memories = await memoryStore4.getMemories(ids);
       return {
         contents: [
           {
@@ -2416,15 +4154,15 @@ var resources = {
     handler: async (uri, params) => {
       const mode = getWorkspaceMode();
       if (mode === "isolated" /* ISOLATED */) {
-        throw new McpError3(
-          ErrorCode3.InvalidRequest,
+        throw new McpError4(
+          ErrorCode4.InvalidRequest,
           "Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories."
         );
       }
       const type = params.type;
       const limit = uri.searchParams.get("limit") ? parseInt(uri.searchParams.get("limit"), 10) : void 0;
       const ids = await redis.smembers(RedisKeys.globalByType(type));
-      const allMemories = await memoryStore3.getMemories(ids);
+      const allMemories = await memoryStore4.getMemories(ids);
       allMemories.sort((a, b) => b.timestamp - a.timestamp);
       const memories = limit ? allMemories.slice(0, limit) : allMemories;
       return {
@@ -2462,15 +4200,15 @@ var resources = {
     handler: async (uri, params) => {
       const mode = getWorkspaceMode();
       if (mode === "isolated" /* ISOLATED */) {
-        throw new McpError3(
-          ErrorCode3.InvalidRequest,
+        throw new McpError4(
+          ErrorCode4.InvalidRequest,
           "Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories."
         );
       }
       const { tag } = params;
       const limit = uri.searchParams.get("limit") ? parseInt(uri.searchParams.get("limit"), 10) : void 0;
       const ids = await redis.smembers(RedisKeys.globalByTag(tag));
-      const allMemories = await memoryStore3.getMemories(ids);
+      const allMemories = await memoryStore4.getMemories(ids);
       allMemories.sort((a, b) => b.timestamp - a.timestamp);
       const memories = limit ? allMemories.slice(0, limit) : allMemories;
       return {
@@ -2509,8 +4247,8 @@ var resources = {
     handler: async (uri) => {
       const mode = getWorkspaceMode();
       if (mode === "isolated" /* ISOLATED */) {
-        throw new McpError3(
-          ErrorCode3.InvalidRequest,
+        throw new McpError4(
+          ErrorCode4.InvalidRequest,
           "Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories."
         );
       }
@@ -2524,7 +4262,7 @@ var resources = {
         0,
         limit || 100
       );
-      const memories = await memoryStore3.getMemories(results);
+      const memories = await memoryStore4.getMemories(results);
       return {
         contents: [
           {
@@ -2561,20 +4299,20 @@ var resources = {
     handler: async (uri) => {
       const mode = getWorkspaceMode();
       if (mode === "isolated" /* ISOLATED */) {
-        throw new McpError3(
-          ErrorCode3.InvalidRequest,
+        throw new McpError4(
+          ErrorCode4.InvalidRequest,
           "Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories."
         );
       }
       const query = uri.searchParams.get("q");
       if (!query) {
-        throw new McpError3(ErrorCode3.InvalidRequest, 'Query parameter "q" is required');
+        throw new McpError4(ErrorCode4.InvalidRequest, 'Query parameter "q" is required');
       }
       const limit = parseInt(uri.searchParams.get("limit") || "10", 10);
       const originalMode = process.env.WORKSPACE_MODE;
       process.env.WORKSPACE_MODE = "global";
       try {
-        const results = await memoryStore3.searchMemories(query, limit);
+        const results = await memoryStore4.searchMemories(query, limit);
         return {
           contents: [
             {
@@ -2610,6 +4348,163 @@ var resources = {
           delete process.env.WORKSPACE_MODE;
         }
       }
+    }
+  },
+  // ============================================================================
+  // Relationship Resources (v1.4.0)
+  // ============================================================================
+  "memory://relationships": {
+    name: "All Memory Relationships",
+    description: "List all memory relationships in the current workspace",
+    mimeType: "application/json",
+    handler: async (uri) => {
+      const limit = parseInt(uri.searchParams.get("limit") || "100", 10);
+      const mode = getWorkspaceMode();
+      let relationshipIds = [];
+      if (mode === "isolated" /* ISOLATED */ || mode === "hybrid" /* HYBRID */) {
+        const workspaceIds = await redis.smembers(RedisKeys.relationships(memoryStore4["workspaceId"]));
+        relationshipIds.push(...workspaceIds);
+      }
+      if (mode === "global" /* GLOBAL */ || mode === "hybrid" /* HYBRID */) {
+        const globalIds = await redis.smembers(RedisKeys.globalRelationships());
+        relationshipIds.push(...globalIds);
+      }
+      relationshipIds = relationshipIds.slice(0, limit);
+      const relationships = await Promise.all(
+        relationshipIds.map(async (id) => {
+          const rel = await memoryStore4.getRelationship(id);
+          return rel;
+        })
+      );
+      const validRelationships = relationships.filter((r) => r !== null);
+      return {
+        contents: [
+          {
+            uri: uri.toString(),
+            mimeType: "application/json",
+            text: JSON.stringify(
+              {
+                count: validRelationships.length,
+                workspace_mode: mode,
+                relationships: validRelationships.map((r) => ({
+                  id: r.id,
+                  from_memory_id: r.from_memory_id,
+                  to_memory_id: r.to_memory_id,
+                  relationship_type: r.relationship_type,
+                  created_at: r.created_at,
+                  metadata: r.metadata
+                }))
+              },
+              null,
+              2
+            )
+          }
+        ]
+      };
+    }
+  },
+  "memory://memory/{id}/related": {
+    name: "Related Memories",
+    description: "Get memories related to a specific memory",
+    mimeType: "application/json",
+    handler: async (uri) => {
+      const memoryId = uri.pathname.split("/")[2];
+      if (!memoryId) {
+        throw new McpError4(ErrorCode4.InvalidRequest, "Memory ID is required");
+      }
+      const depth = parseInt(uri.searchParams.get("depth") || "1", 10);
+      const direction = uri.searchParams.get("direction") || "both";
+      const results = await memoryStore4.getRelatedMemories(memoryId, {
+        depth,
+        direction
+      });
+      return {
+        contents: [
+          {
+            uri: uri.toString(),
+            mimeType: "application/json",
+            text: JSON.stringify(
+              {
+                root_memory_id: memoryId,
+                total_related: results.length,
+                depth,
+                direction,
+                related_memories: results.map((r) => ({
+                  memory_id: r.memory.id,
+                  content: r.memory.content,
+                  summary: r.memory.summary,
+                  context_type: r.memory.context_type,
+                  importance: r.memory.importance,
+                  tags: r.memory.tags,
+                  is_global: r.memory.is_global,
+                  relationship: {
+                    id: r.relationship.id,
+                    type: r.relationship.relationship_type,
+                    from: r.relationship.from_memory_id,
+                    to: r.relationship.to_memory_id
+                  },
+                  depth: r.depth
+                }))
+              },
+              null,
+              2
+            )
+          }
+        ]
+      };
+    }
+  },
+  "memory://graph/{id}": {
+    name: "Memory Graph",
+    description: "Get a graph of related memories starting from a root memory",
+    mimeType: "application/json",
+    handler: async (uri) => {
+      const memoryId = uri.pathname.split("/")[2];
+      if (!memoryId) {
+        throw new McpError4(ErrorCode4.InvalidRequest, "Memory ID is required");
+      }
+      const maxDepth = parseInt(uri.searchParams.get("depth") || "2", 10);
+      const maxNodes = parseInt(uri.searchParams.get("max_nodes") || "50", 10);
+      const graph = await memoryStore4.getMemoryGraph(memoryId, maxDepth, maxNodes);
+      const formattedNodes = Object.fromEntries(
+        Object.entries(graph.nodes).map(([nodeId, node]) => [
+          nodeId,
+          {
+            memory_id: node.memory.id,
+            content: node.memory.content,
+            summary: node.memory.summary,
+            context_type: node.memory.context_type,
+            importance: node.memory.importance,
+            tags: node.memory.tags,
+            is_global: node.memory.is_global,
+            depth: node.depth,
+            relationships: node.relationships.map((rel) => ({
+              id: rel.id,
+              type: rel.relationship_type,
+              from: rel.from_memory_id,
+              to: rel.to_memory_id
+            }))
+          }
+        ])
+      );
+      return {
+        contents: [
+          {
+            uri: uri.toString(),
+            mimeType: "application/json",
+            text: JSON.stringify(
+              {
+                root_memory_id: graph.root_memory_id,
+                total_nodes: graph.total_nodes,
+                max_depth_reached: graph.max_depth_reached,
+                nodes: formattedNodes
+              },
+              null,
+              2
+            )
+          }
+        ]
+      };
     }
   }
 };
@@ -2680,20 +4575,20 @@ function getAgeString(timestamp) {
 }
 
 // src/prompts/index.ts
-var memoryStore4 = new MemoryStore();
+var memoryStore5 = new MemoryStore();
 var prompts = {
   workspace_context: {
     name: "workspace_context",
     description: "Critical workspace context: directives, decisions, and code patterns",
     arguments: [],
     handler: async () => {
-      const directives = await memoryStore4.getMemoriesByType("directive");
-      const decisions = await memoryStore4.getMemoriesByType("decision");
-      const patterns = await memoryStore4.getMemoriesByType("code_pattern");
+      const directives = await memoryStore5.getMemoriesByType("directive");
+      const decisions = await memoryStore5.getMemoriesByType("decision");
+      const patterns = await memoryStore5.getMemoriesByType("code_pattern");
       const importantDirectives = directives.filter((d) => d.importance >= 8);
       const importantDecisions = decisions.filter((d) => d.importance >= 7);
       const importantPatterns = patterns.filter((p) => p.importance >= 7);
-      const stats = await memoryStore4.getSummaryStats();
+      const stats = await memoryStore5.getSummaryStats();
       const workspacePath = stats.workspace_path;
       const contextText = formatWorkspaceContext(
         workspacePath,
@@ -2735,7 +4630,7 @@ async function getPrompt(name) {
 var server = new Server(
   {
     name: "@joseairosa/recall",
-    version: "1.3.0"
+    version: "1.4.0"
   },
   {
     capabilities: {

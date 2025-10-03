@@ -191,6 +191,61 @@ Then in a new conversation:
 
 ---
 
+## Upgrading
+
+### Automatic Updates (Recommended)
+
+If you use **`npx -y @joseairosa/recall`** in your config, you **automatically get the latest version** on every Claude restart. No action needed! 🎉
+
+```json
+{
+  "mcpServers": {
+    "recall": {
+      "command": "npx",
+      "args": ["-y", "@joseairosa/recall"]  // ← Always fetches latest
+    }
+  }
+}
+```
+
+### Manual Updates
+
+**If using global installation:**
+
+```bash
+# Update to latest version
+npm update -g @joseairosa/recall
+
+# Or install specific version
+npm install -g @joseairosa/recall@1.3.0
+
+# Check installed version
+npm list -g @joseairosa/recall
+```
+
+**If using from source:**
+
+```bash
+cd recall
+git pull origin main
+npm install
+npm run build
+```
+
+**After updating:**
+1. Restart Claude Code or Claude Desktop
+2. Verify new version: Ask Claude "What Recall version are you using?"
+3. Check CHANGELOG.md for new features and breaking changes
+
+### Version-Specific Upgrades
+
+**Upgrading to v1.3.0:**
+- No breaking changes, fully backward compatible
+- To use global memories: Add `WORKSPACE_MODE=hybrid` to your config
+- See [Migration Guide](#migrating-from-v121-to-v130) below
+
+---
+
 ## How to Use
 
 ### Store Important Information
@@ -207,6 +262,17 @@ Claude can automatically extract and store memories, or you can be explicit:
 ```
 
 **What Claude does:** Uses the `store_memory` tool to save this information with appropriate context type and importance.
+
+**Store globally (v1.3+):**
+```
+"Remember globally: I prefer TypeScript strict mode for all projects"
+```
+
+```
+"Store this as a global preference: Always use ULIDs for database IDs"
+```
+
+**What Claude does:** Uses `store_memory` with `is_global: true` to make it accessible across all workspaces (requires `WORKSPACE_MODE=hybrid` or `global`).
 
 ### Recall Context
 
@@ -242,6 +308,22 @@ Group related work:
 
 **What Claude does:** Uses `summarize_session` to create a session snapshot with all relevant memories.
 
+### Convert Memories (v1.3+)
+
+**Promote workspace memory to global:**
+```
+"Convert this memory to global: mem_abc123"
+```
+
+**What Claude does:** Uses `convert_to_global` to move the memory from workspace-specific to globally accessible.
+
+**Convert back to workspace:**
+```
+"Convert this global memory to workspace-specific: mem_xyz789"
+```
+
+**What Claude does:** Uses `convert_to_workspace` to move the memory from global to current workspace.
+
 ---
 
 ## Memory Types
@@ -263,7 +345,7 @@ Memories are categorized for better organization:
 
 ---
 
-## Available Tools (13)
+## Available Tools (15)
 
 Claude has access to these memory tools:
 
@@ -286,12 +368,17 @@ Claude has access to these memory tools:
 - **`find_duplicates`** - Detect similar memories
 - **`consolidate_memories`** - Merge multiple memories
 
+### Global Memories (v1.3+)
+- **`convert_to_global`** - Convert workspace memory to global
+- **`convert_to_workspace`** - Convert global memory to workspace-specific
+
 ---
 
-## Available Resources (9)
+## Available Resources (14)
 
 Browse memories directly using MCP resources:
 
+### Workspace Resources
 - **`memory://recent`** - Recent memories (default 50)
 - **`memory://by-type/{type}`** - Filter by context type
 - **`memory://by-tag/{tag}`** - Filter by tag
@@ -301,6 +388,13 @@ Browse memories directly using MCP resources:
 - **`memory://summary`** - Statistics overview
 - **`memory://search?q=query`** - Semantic search
 - **`memory://analytics`** - Usage analytics dashboard (v1.2+)
+
+### Global Resources (v1.3+)
+- **`memory://global/recent`** - Recent global memories (cross-workspace)
+- **`memory://global/by-type/{type}`** - Global memories by context type
+- **`memory://global/by-tag/{tag}`** - Global memories by tag
+- **`memory://global/important`** - Important global memories
+- **`memory://global/search?q=query`** - Search global memories
 
 ---
 
@@ -383,9 +477,44 @@ Developer B: "What's our API rate limit?"
 
 See [WORKSPACE_MODES.md](WORKSPACE_MODES.md) for future plans on enhanced organizational memory features.
 
-### Future: Global Memories
+### Global Memories (v1.3+)
 
-Coming in v1.3.0: Support for **global memories** that work across all workspaces (e.g., personal preferences, team conventions). See [WORKSPACE_MODES.md](WORKSPACE_MODES.md) for details.
+**Cross-workspace memory sharing** enables memories that work across all workspaces. Perfect for:
+- Personal preferences and coding standards
+- Team conventions and organizational knowledge
+- Shared patterns and solutions
+
+**Workspace Modes:**
+- **`isolated`** (default) - Workspace-only memories, no cross-workspace access
+- **`global`** - All memories shared globally, no workspace isolation
+- **`hybrid`** - Both workspace-specific AND global memories (best of both worlds)
+
+**Configure workspace mode:**
+```json
+{
+  "env": {
+    "WORKSPACE_MODE": "hybrid"
+  }
+}
+```
+
+**Create global memories:**
+```
+"Remember globally: I prefer TypeScript strict mode for all projects"
+```
+Claude stores with `is_global: true`, accessible across all workspaces.
+
+**Convert existing memories:**
+```
+"Convert this memory to global: [memory_id]"
+```
+
+**Browse global memories:**
+- Use `memory://global/recent` resource
+- Use `memory://global/search?q=query` for semantic search
+- Global resources only work in `global` or `hybrid` modes
+
+See [WORKSPACE_MODES.md](WORKSPACE_MODES.md) for detailed documentation.
 
 ---
 
@@ -510,6 +639,34 @@ Claude: [Retrieves session memories]
          - Updated middleware for new auth flow"
 ```
 
+### Example 4: Global Memories (v1.3+)
+```
+# In project A (with WORKSPACE_MODE=hybrid)
+You: "Remember globally: I prefer async/await over .then() in all projects"
+
+Claude: [Stores with is_global: true]
+        ✓ Stored globally: async/await preference (importance: 9)
+
+# Switch to project B
+You: "What are my coding preferences?"
+
+Claude: [Retrieves global memories]
+        "Your global coding preferences include:
+         - Prefer async/await over .then() in all projects"
+
+# Project-specific memory
+You: "Remember for this project only: Use MongoDB with Mongoose"
+
+Claude: [Stores with is_global: false]
+        ✓ Stored: MongoDB with Mongoose (workspace-only, importance: 8)
+
+# Back in project A
+You: "What database are we using?"
+
+Claude: [Only sees project A memories, not project B's MongoDB]
+        "I don't see any database information stored for this workspace."
+```
+
 ---
 
 ## Configuration
@@ -518,6 +675,10 @@ Claude: [Retrieves session memories]
 
 - **`REDIS_URL`** - Redis connection (default: `redis://localhost:6379`)
 - **`ANTHROPIC_API_KEY`** - Claude API key for analysis and embeddings
+- **`WORKSPACE_MODE`** (v1.3+) - Workspace memory mode (default: `isolated`)
+  - `isolated` - Workspace-only memories, no cross-workspace access
+  - `global` - All memories shared globally across workspaces
+  - `hybrid` - Both workspace-specific AND global memories
 
 ### Redis Setup Options
 
@@ -801,7 +962,8 @@ Typical performance characteristics:
 
 ## Version History
 
-- **v1.2.0** (Current) - TTL support, Export/Import, Consolidation, Analytics
+- **v1.3.0** (Current) - Global memories, cross-workspace sharing, workspace modes
+- **v1.2.0** - TTL support, Export/Import, Consolidation, Analytics
 - **v1.1.0** - Smart context management (recall, analyze, summarize)
 - **v1.0.0** - Initial release with core memory operations
 

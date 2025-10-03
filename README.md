@@ -208,6 +208,17 @@ Claude can automatically extract and store memories, or you can be explicit:
 
 **What Claude does:** Uses the `store_memory` tool to save this information with appropriate context type and importance.
 
+**Store globally (v1.3+):**
+```
+"Remember globally: I prefer TypeScript strict mode for all projects"
+```
+
+```
+"Store this as a global preference: Always use ULIDs for database IDs"
+```
+
+**What Claude does:** Uses `store_memory` with `is_global: true` to make it accessible across all workspaces (requires `WORKSPACE_MODE=hybrid` or `global`).
+
 ### Recall Context
 
 Claude automatically retrieves relevant memories, but you can also ask:
@@ -241,6 +252,22 @@ Group related work:
 ```
 
 **What Claude does:** Uses `summarize_session` to create a session snapshot with all relevant memories.
+
+### Convert Memories (v1.3+)
+
+**Promote workspace memory to global:**
+```
+"Convert this memory to global: mem_abc123"
+```
+
+**What Claude does:** Uses `convert_to_global` to move the memory from workspace-specific to globally accessible.
+
+**Convert back to workspace:**
+```
+"Convert this global memory to workspace-specific: mem_xyz789"
+```
+
+**What Claude does:** Uses `convert_to_workspace` to move the memory from global to current workspace.
 
 ---
 
@@ -557,6 +584,34 @@ Claude: [Retrieves session memories]
          - Updated middleware for new auth flow"
 ```
 
+### Example 4: Global Memories (v1.3+)
+```
+# In project A (with WORKSPACE_MODE=hybrid)
+You: "Remember globally: I prefer async/await over .then() in all projects"
+
+Claude: [Stores with is_global: true]
+        ✓ Stored globally: async/await preference (importance: 9)
+
+# Switch to project B
+You: "What are my coding preferences?"
+
+Claude: [Retrieves global memories]
+        "Your global coding preferences include:
+         - Prefer async/await over .then() in all projects"
+
+# Project-specific memory
+You: "Remember for this project only: Use MongoDB with Mongoose"
+
+Claude: [Stores with is_global: false]
+        ✓ Stored: MongoDB with Mongoose (workspace-only, importance: 8)
+
+# Back in project A
+You: "What database are we using?"
+
+Claude: [Only sees project A memories, not project B's MongoDB]
+        "I don't see any database information stored for this workspace."
+```
+
 ---
 
 ## Configuration
@@ -565,6 +620,10 @@ Claude: [Retrieves session memories]
 
 - **`REDIS_URL`** - Redis connection (default: `redis://localhost:6379`)
 - **`ANTHROPIC_API_KEY`** - Claude API key for analysis and embeddings
+- **`WORKSPACE_MODE`** (v1.3+) - Workspace memory mode (default: `isolated`)
+  - `isolated` - Workspace-only memories, no cross-workspace access
+  - `global` - All memories shared globally across workspaces
+  - `hybrid` - Both workspace-specific AND global memories
 
 ### Redis Setup Options
 

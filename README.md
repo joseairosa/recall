@@ -263,7 +263,7 @@ Memories are categorized for better organization:
 
 ---
 
-## Available Tools (13)
+## Available Tools (15)
 
 Claude has access to these memory tools:
 
@@ -286,12 +286,17 @@ Claude has access to these memory tools:
 - **`find_duplicates`** - Detect similar memories
 - **`consolidate_memories`** - Merge multiple memories
 
+### Global Memories (v1.3+)
+- **`convert_to_global`** - Convert workspace memory to global
+- **`convert_to_workspace`** - Convert global memory to workspace-specific
+
 ---
 
-## Available Resources (9)
+## Available Resources (14)
 
 Browse memories directly using MCP resources:
 
+### Workspace Resources
 - **`memory://recent`** - Recent memories (default 50)
 - **`memory://by-type/{type}`** - Filter by context type
 - **`memory://by-tag/{tag}`** - Filter by tag
@@ -301,6 +306,13 @@ Browse memories directly using MCP resources:
 - **`memory://summary`** - Statistics overview
 - **`memory://search?q=query`** - Semantic search
 - **`memory://analytics`** - Usage analytics dashboard (v1.2+)
+
+### Global Resources (v1.3+)
+- **`memory://global/recent`** - Recent global memories (cross-workspace)
+- **`memory://global/by-type/{type}`** - Global memories by context type
+- **`memory://global/by-tag/{tag}`** - Global memories by tag
+- **`memory://global/important`** - Important global memories
+- **`memory://global/search?q=query`** - Search global memories
 
 ---
 
@@ -383,9 +395,44 @@ Developer B: "What's our API rate limit?"
 
 See [WORKSPACE_MODES.md](WORKSPACE_MODES.md) for future plans on enhanced organizational memory features.
 
-### Future: Global Memories
+### Global Memories (v1.3+)
 
-Coming in v1.3.0: Support for **global memories** that work across all workspaces (e.g., personal preferences, team conventions). See [WORKSPACE_MODES.md](WORKSPACE_MODES.md) for details.
+**Cross-workspace memory sharing** enables memories that work across all workspaces. Perfect for:
+- Personal preferences and coding standards
+- Team conventions and organizational knowledge
+- Shared patterns and solutions
+
+**Workspace Modes:**
+- **`isolated`** (default) - Workspace-only memories, no cross-workspace access
+- **`global`** - All memories shared globally, no workspace isolation
+- **`hybrid`** - Both workspace-specific AND global memories (best of both worlds)
+
+**Configure workspace mode:**
+```json
+{
+  "env": {
+    "WORKSPACE_MODE": "hybrid"
+  }
+}
+```
+
+**Create global memories:**
+```
+"Remember globally: I prefer TypeScript strict mode for all projects"
+```
+Claude stores with `is_global: true`, accessible across all workspaces.
+
+**Convert existing memories:**
+```
+"Convert this memory to global: [memory_id]"
+```
+
+**Browse global memories:**
+- Use `memory://global/recent` resource
+- Use `memory://global/search?q=query` for semantic search
+- Global resources only work in `global` or `hybrid` modes
+
+See [WORKSPACE_MODES.md](WORKSPACE_MODES.md) for detailed documentation.
 
 ---
 
@@ -801,7 +848,8 @@ Typical performance characteristics:
 
 ## Version History
 
-- **v1.2.0** (Current) - TTL support, Export/Import, Consolidation, Analytics
+- **v1.3.0** (Current) - Global memories, cross-workspace sharing, workspace modes
+- **v1.2.0** - TTL support, Export/Import, Consolidation, Analytics
 - **v1.1.0** - Smart context management (recall, analyze, summarize)
 - **v1.0.0** - Initial release with core memory operations
 

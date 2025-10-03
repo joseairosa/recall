@@ -2080,6 +2080,7 @@ function formatAnalytics(data) {
 
 // src/resources/index.ts
 var memoryStore3 = new MemoryStore();
+var redis = getRedisClient();
 var resources = {
   "memory://recent": {
     name: "Recent Memories",
@@ -2363,6 +2364,253 @@ var resources = {
         ]
       };
     }
+  },
+  // Global memory resources (v1.3.0)
+  "memory://global/recent": {
+    name: "Recent Global Memories",
+    description: "Get the most recent global memories (cross-workspace)",
+    mimeType: "application/json",
+    handler: async (uri) => {
+      const mode = getWorkspaceMode();
+      if (mode === "isolated" /* ISOLATED */) {
+        throw new McpError3(
+          ErrorCode3.InvalidRequest,
+          "Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories."
+        );
+      }
+      const limit = parseInt(uri.searchParams.get("limit") || "50", 10);
+      const ids = await redis.zrevrange(RedisKeys.globalTimeline(), 0, limit - 1);
+      const memories = await memoryStore3.getMemories(ids);
+      return {
+        contents: [
+          {
+            uri: uri.toString(),
+            mimeType: "application/json",
+            text: JSON.stringify(
+              {
+                count: memories.length,
+                workspace_mode: mode,
+                memories: memories.map((m) => ({
+                  memory_id: m.id,
+                  content: m.content,
+                  summary: m.summary,
+                  context_type: m.context_type,
+                  importance: m.importance,
+                  tags: m.tags,
+                  timestamp: m.timestamp,
+                  is_global: m.is_global
+                }))
+              },
+              null,
+              2
+            )
+          }
+        ]
+      };
+    }
+  },
+  "memory://global/by-type/{type}": {
+    name: "Global Memories by Type",
+    description: "Get global memories filtered by context type",
+    mimeType: "application/json",
+    handler: async (uri, params) => {
+      const mode = getWorkspaceMode();
+      if (mode === "isolated" /* ISOLATED */) {
+        throw new McpError3(
+          ErrorCode3.InvalidRequest,
+          "Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories."
+        );
+      }
+      const type = params.type;
+      const limit = uri.searchParams.get("limit") ? parseInt(uri.searchParams.get("limit"), 10) : void 0;
+      const ids = await redis.smembers(RedisKeys.globalByType(type));
+      const allMemories = await memoryStore3.getMemories(ids);
+      allMemories.sort((a, b) => b.timestamp - a.timestamp);
+      const memories = limit ? allMemories.slice(0, limit) : allMemories;
+      return {
+        contents: [
+          {
+            uri: uri.toString(),
+            mimeType: "application/json",
+            text: JSON.stringify(
+              {
+                context_type: type,
+                count: memories.length,
+                workspace_mode: mode,
+                memories: memories.map((m) => ({
+                  memory_id: m.id,
+                  content: m.content,
+                  summary: m.summary,
+                  importance: m.importance,
+                  tags: m.tags,
+                  timestamp: m.timestamp,
+                  is_global: m.is_global
+                }))
+              },
+              null,
+              2
+            )
+          }
+        ]
+      };
+    }
+  },
+  "memory://global/by-tag/{tag}": {
+    name: "Global Memories by Tag",
+    description: "Get global memories filtered by tag",
+    mimeType: "application/json",
+    handler: async (uri, params) => {
+      const mode = getWorkspaceMode();
+      if (mode === "isolated" /* ISOLATED */) {
+        throw new McpError3(
+          ErrorCode3.InvalidRequest,
+          "Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories."
+        );
+      }
+      const { tag } = params;
+      const limit = uri.searchParams.get("limit") ? parseInt(uri.searchParams.get("limit"), 10) : void 0;
+      const ids = await redis.smembers(RedisKeys.globalByTag(tag));
+      const allMemories = await memoryStore3.getMemories(ids);
+      allMemories.sort((a, b) => b.timestamp - a.timestamp);
+      const memories = limit ? allMemories.slice(0, limit) : allMemories;
+      return {
+        contents: [
+          {
+            uri: uri.toString(),
+            mimeType: "application/json",
+            text: JSON.stringify(
+              {
+                tag,
+                count: memories.length,
+                workspace_mode: mode,
+                memories: memories.map((m) => ({
+                  memory_id: m.id,
+                  content: m.content,
+                  summary: m.summary,
+                  context_type: m.context_type,
+                  importance: m.importance,
+                  tags: m.tags,
+                  timestamp: m.timestamp,
+                  is_global: m.is_global
+                }))
+              },
+              null,
+              2
+            )
+          }
+        ]
+      };
+    }
+  },
+  "memory://global/important": {
+    name: "Important Global Memories",
+    description: "Get high-importance global memories (importance >= 8)",
+    mimeType: "application/json",
+    handler: async (uri) => {
+      const mode = getWorkspaceMode();
+      if (mode === "isolated" /* ISOLATED */) {
+        throw new McpError3(
+          ErrorCode3.InvalidRequest,
+          "Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories."
+        );
+      }
+      const minImportance = parseInt(uri.searchParams.get("min") || "8", 10);
+      const limit = uri.searchParams.get("limit") ? parseInt(uri.searchParams.get("limit"), 10) : void 0;
+      const results = await redis.zrevrangebyscore(
+        RedisKeys.globalImportant(),
+        10,
+        minImportance,
+        "LIMIT",
+        0,
+        limit || 100
+      );
+      const memories = await memoryStore3.getMemories(results);
+      return {
+        contents: [
+          {
+            uri: uri.toString(),
+            mimeType: "application/json",
+            text: JSON.stringify(
+              {
+                min_importance: minImportance,
+                count: memories.length,
+                workspace_mode: mode,
+                memories: memories.map((m) => ({
+                  memory_id: m.id,
+                  content: m.content,
+                  summary: m.summary,
+                  context_type: m.context_type,
+                  importance: m.importance,
+                  tags: m.tags,
+                  timestamp: m.timestamp,
+                  is_global: m.is_global
+                }))
+              },
+              null,
+              2
+            )
+          }
+        ]
+      };
+    }
+  },
+  "memory://global/search": {
+    name: "Search Global Memories",
+    description: "Search global memories using semantic similarity",
+    mimeType: "application/json",
+    handler: async (uri) => {
+      const mode = getWorkspaceMode();
+      if (mode === "isolated" /* ISOLATED */) {
+        throw new McpError3(
+          ErrorCode3.InvalidRequest,
+          "Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories."
+        );
+      }
+      const query = uri.searchParams.get("q");
+      if (!query) {
+        throw new McpError3(ErrorCode3.InvalidRequest, 'Query parameter "q" is required');
+      }
+      const limit = parseInt(uri.searchParams.get("limit") || "10", 10);
+      const originalMode = process.env.WORKSPACE_MODE;
+      process.env.WORKSPACE_MODE = "global";
+      try {
+        const results = await memoryStore3.searchMemories(query, limit);
+        return {
+          contents: [
+            {
+              uri: uri.toString(),
+              mimeType: "application/json",
+              text: JSON.stringify(
+                {
+                  query,
+                  count: results.length,
+                  workspace_mode: mode,
+                  results: results.map((r) => ({
+                    memory_id: r.id,
+                    content: r.content,
+                    summary: r.summary,
+                    context_type: r.context_type,
+                    importance: r.importance,
+                    tags: r.tags,
+                    similarity: r.similarity,
+                    timestamp: r.timestamp,
+                    is_global: r.is_global
+                  }))
+                },
+                null,
+                2
+              )
+            }
+          ]
+        };
+      } finally {
+        if (originalMode) {
+          process.env.WORKSPACE_MODE = originalMode;
+        } else {
+          delete process.env.WORKSPACE_MODE;
+        }
+      }
+    }
   }
 };
 
@@ -2487,7 +2735,7 @@ async function getPrompt(name) {
 var server = new Server(
   {
     name: "@joseairosa/recall",
-    version: "1.2.1"
+    version: "1.3.0"
   },
   {
     capabilities: {

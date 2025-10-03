@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.0] - 2025-10-03
+
+### Added
+- **Global Memories** - Cross-workspace memory sharing
+  - `is_global` field on memories - Mark memories as accessible across all workspaces
+  - `workspace_id` field - Track workspace origin for each memory
+  - Three workspace modes via `WORKSPACE_MODE` environment variable:
+    - `isolated` (default) - Workspace-only, no cross-workspace access
+    - `global` - All memories shared globally, no workspace isolation
+    - `hybrid` - Both workspace AND global memories with smart weighting
+  - Hybrid search weighting: workspace memories 1.0x, global memories 0.9x (prefer local context)
+- **Global Memory Tools** (2 new tools)
+  - `convert_to_global` - Convert workspace-specific memory to global
+  - `convert_to_workspace` - Convert global memory to workspace-specific
+- **Global Memory Resources** (5 new resources)
+  - `memory://global/recent?limit=50` - Recent global memories
+  - `memory://global/by-type/{type}?limit=50` - Global memories by context type
+  - `memory://global/by-tag/{tag}?limit=50` - Global memories by tag
+  - `memory://global/important?min=8&limit=50` - Important global memories
+  - `memory://global/search?q=query&limit=10` - Search global memories
+  - All global resources throw helpful errors in `isolated` mode
+
+### Changed
+- Enhanced `CreateMemory` schema with optional `is_global` field (defaults to `false`)
+- Updated `MemoryEntry` schema with `is_global` and `workspace_id` fields
+- Updated `searchMemories()` to support three workspace modes with weighted results
+- Enhanced `getMemory()` to check both workspace and global storage
+- All retrieval methods respect workspace mode configuration
+
+### Technical
+- Added `WorkspaceMode` enum and `getWorkspaceMode()` helper
+- Added global Redis key helpers: `globalMemory()`, `globalMemories()`, `globalByType()`, etc.
+- Added `ConvertToGlobalSchema` and `ConvertToWorkspaceSchema` validation
+- Updated `MemoryStore` with `convertToGlobal()` and `convertToWorkspace()` methods
+- All global resources validate workspace mode and provide clear error messages
+- Backward compatible: defaults to `isolated` mode, no breaking changes
+
+### Use Cases
+- Personal preferences across all projects (coding standards, communication style)
+- Team conventions and organizational knowledge
+- Cross-project patterns and solutions
+- Shared tools and commands
+
+**Tools:** 15 total (6 core + 3 smart context + 4 advanced + 2 global)
+**Resources:** 14 total (9 workspace + 5 global)
+**Prompts:** 1 (`workspace_context`)
+
+See [WORKSPACE_MODES.md](WORKSPACE_MODES.md) for detailed documentation.
+
+---
+
 ## [1.2.1] - 2025-10-02
 
 ### Added
@@ -140,6 +191,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ---
 
 ## Migration Guides
+
+### Migrating from v1.2.1 to v1.3.0
+
+**No breaking changes.** All existing functionality works identically.
+
+**Defaults:**
+- Workspace mode: `isolated` (same as v1.2.1)
+- All memories: `is_global: false` (workspace-only)
+- No configuration changes required
+
+**New features available:**
+1. **Enable global memories** - Set `WORKSPACE_MODE=hybrid` in config
+2. **Convert existing memories** - Use `convert_to_global` tool
+3. **Browse global memories** - Use `memory://global/*` resources
+
+**Configuration example:**
+```json
+{
+  "env": {
+    "WORKSPACE_MODE": "hybrid",  // Enable both workspace + global
+    "REDIS_URL": "redis://localhost:6379",
+    "ANTHROPIC_API_KEY": "sk-ant-..."
+  }
+}
+```
+
+**Use cases:**
+- Keep mode as `isolated` for project-only memories (default behavior)
+- Use `hybrid` for personal preferences + project memories
+- Use `global` for team-wide shared knowledge across all projects
+
+See [WORKSPACE_MODES.md](WORKSPACE_MODES.md) for detailed guide.
 
 ### Migrating from v1.1.0 to v1.2.0
 

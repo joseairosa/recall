@@ -1,3 +1,6 @@
+# fork of 
+uses @anthropic-ai/claude-agent-sdk instead of @anthropic-ai/sdk so it works with claude code without ANTHROPIC_API_KEY
+
 # Recall 🧠
 
 **Give Claude perfect recall with persistent memory that survives context limits and session restarts.**

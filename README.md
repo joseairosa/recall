@@ -147,8 +147,7 @@ Add to your Claude configuration file:
     "recall": {
       "command": "recall",
       "env": {
-        "REDIS_URL": "redis://localhost:6379",
-        "ANTHROPIC_API_KEY": "your-api-key-here"
+        "REDIS_URL": "redis://localhost:6379"
       }
     }
   }
@@ -163,8 +162,7 @@ Add to your Claude configuration file:
       "command": "npx",
       "args": ["-y", "@joseairosa/recall"],
       "env": {
-        "REDIS_URL": "redis://localhost:6379",
-        "ANTHROPIC_API_KEY": "your-api-key-here"
+        "REDIS_URL": "redis://localhost:6379"
       }
     }
   }
@@ -800,11 +798,12 @@ Claude: [Only sees project A memories, not project B's MongoDB]
 ### Environment Variables
 
 - **`REDIS_URL`** - Redis connection (default: `redis://localhost:6379`)
-- **`ANTHROPIC_API_KEY`** - Claude API key for analysis and embeddings
 - **`WORKSPACE_MODE`** (v1.3+) - Workspace memory mode (default: `isolated`)
   - `isolated` - Workspace-only memories, no cross-workspace access
   - `global` - All memories shared globally across workspaces
   - `hybrid` - Both workspace-specific AND global memories
+
+**Note:** No API key is required - Recall uses your Claude Code subscription via the `@anthropic-ai/claude-agent-sdk`.
 
 ### Redis Setup Options
 
@@ -1042,9 +1041,10 @@ No local Redis installation required! ✨
 
 **Solution:**
 1. Check config file path is correct
-2. Verify `ANTHROPIC_API_KEY` is set
-3. Restart Claude **completely** (quit and reopen)
-4. Check Claude's MCP logs for errors
+2. Verify `REDIS_URL` is set correctly
+3. Ensure Claude Code subscription is active
+4. Restart Claude **completely** (quit and reopen)
+5. Check Claude's MCP logs for errors
 
 **Config file locations:**
 - **Claude Code**: `~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
@@ -1130,8 +1130,8 @@ Comprehensive test suite available in [tests/](tests/). See [tests/README.md](te
 # Static checks (fast, no dependencies)
 ./tests/test-v1.5.0-simple.sh
 
-# Runtime tests (requires Redis)
-ANTHROPIC_API_KEY="test-key" node tests/test-runtime.js
+# Runtime tests (requires Redis and Claude Code subscription)
+node tests/test-runtime.js
 ```
 
 **Testing workflow for releases:**

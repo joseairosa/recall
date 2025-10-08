@@ -1,46 +1,34 @@
-import Anthropic from '@anthropic-ai/sdk';
-
-let anthropicClient: Anthropic | null = null;
-
-function getAnthropicClient(): Anthropic {
-  if (!anthropicClient) {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      throw new Error('ANTHROPIC_API_KEY environment variable is required');
-    }
-    anthropicClient = new Anthropic({ apiKey });
-  }
-  return anthropicClient;
-}
+import { query } from '@anthropic-ai/claude-agent-sdk';
 
 // Claude doesn't have a native embeddings API, so we'll use a lightweight approach:
 // Generate a semantic "fingerprint" by having Claude extract key concepts
 async function generateSemanticFingerprint(text: string): Promise<string[]> {
   try {
-    const client = getAnthropicClient();
-    const response = await client.messages.create({
-      model: 'claude-3-5-haiku-20241022', // Fast, cheap model for this task
-      max_tokens: 200,
-      messages: [{
-        role: 'user',
-        content: `Extract 5-10 key concepts/keywords from this text. Return ONLY a comma-separated list, no explanations:
+    const prompt = `Extract 5-10 key concepts/keywords from this text. Return ONLY a comma-separated list, no explanations:
 
-${text}`
-      }]
-    });
+${text}`;
 
-    const content = response.content[0];
-    if (content.type === 'text') {
-      // Parse comma-separated keywords
-      const keywords = content.text
-        .split(',')
-        .map(k => k.trim().toLowerCase())
-        .filter(k => k.length > 0);
+    const q = query({ prompt });
 
-      return keywords;
+    // Collect the response
+    let responseText = '';
+    for await (const message of q) {
+      if (message.type === 'assistant' && message.content) {
+        for (const block of message.content) {
+          if (block.type === 'text') {
+            responseText += block.text;
+          }
+        }
+      }
     }
 
-    return [];
+    // Parse comma-separated keywords
+    const keywords = responseText
+      .split(',')
+      .map(k => k.trim().toLowerCase())
+      .filter(k => k.length > 0);
+
+    return keywords;
   } catch (error) {
     console.error('Error generating semantic fingerprint:', error);
     throw error;

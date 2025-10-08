@@ -1,15 +1,9 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { ExtractedMemory, ContextType, AnalysisResult } from '../types.js';
 
 export class ConversationAnalyzer {
-  private client: Anthropic;
-
   constructor() {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      throw new Error('ANTHROPIC_API_KEY environment variable is required');
-    }
-    this.client = new Anthropic({ apiKey });
+    // No API key needed - uses Claude Code subscription via the SDK
   }
 
   /**
@@ -17,12 +11,7 @@ export class ConversationAnalyzer {
    */
   async analyzeConversation(conversationText: string): Promise<ExtractedMemory[]> {
     try {
-      const response = await this.client.messages.create({
-        model: 'claude-3-5-haiku-20241022',
-        max_tokens: 2000,
-        messages: [{
-          role: 'user',
-          content: `Analyze this conversation and extract important information that should be remembered long-term.
+      const prompt = `Analyze this conversation and extract important information that should be remembered long-term.
 
 For each important piece of information, output EXACTLY in this JSON format (one per line):
 {"content":"the information","type":"directive|information|decision|code_pattern|requirement|error|todo|insight|preference","importance":1-10,"tags":["tag1","tag2"],"summary":"brief summary"}
@@ -42,17 +31,24 @@ Guidelines:
 Conversation:
 ${conversationText}
 
-Output ONLY the JSON objects, one per line, no other text:`
-        }]
-      });
+Output ONLY the JSON objects, one per line, no other text:`;
 
-      const content = response.content[0];
-      if (content.type !== 'text') {
-        return [];
+      const q = query({ prompt });
+
+      // Collect the response
+      let responseText = '';
+      for await (const message of q) {
+        if (message.type === 'assistant' && message.content) {
+          for (const block of message.content) {
+            if (block.type === 'text') {
+              responseText += block.text;
+            }
+          }
+        }
       }
 
       // Parse JSON lines
-      const lines = content.text.split('\n').filter(line => line.trim().startsWith('{'));
+      const lines = responseText.split('\n').filter(line => line.trim().startsWith('{'));
       const extracted: ExtractedMemory[] = [];
 
       for (const line of lines) {
@@ -92,26 +88,28 @@ Output ONLY the JSON objects, one per line, no other text:`
         .map(m => `[${m.context_type}] ${m.content}`)
         .join('\n');
 
-      const response = await this.client.messages.create({
-        model: 'claude-3-5-haiku-20241022',
-        max_tokens: 500,
-        messages: [{
-          role: 'user',
-          content: `Summarize this work session in 2-3 sentences. Focus on what was accomplished, decided, or learned.
+      const prompt = `Summarize this work session in 2-3 sentences. Focus on what was accomplished, decided, or learned.
 
 Session memories:
 ${memoriesText}
 
-Summary (2-3 sentences):`
-        }]
-      });
+Summary (2-3 sentences):`;
 
-      const content = response.content[0];
-      if (content.type === 'text') {
-        return content.text.trim();
+      const q = query({ prompt });
+
+      // Collect the response
+      let responseText = '';
+      for await (const message of q) {
+        if (message.type === 'assistant' && message.content) {
+          for (const block of message.content) {
+            if (block.type === 'text') {
+              responseText += block.text;
+            }
+          }
+        }
       }
 
-      return 'Session completed with multiple activities';
+      return responseText.trim() || 'Session completed with multiple activities';
     } catch (error) {
       console.error('Error summarizing session:', error);
       return 'Session summary unavailable';

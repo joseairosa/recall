@@ -108,7 +108,7 @@ npm run dev        # Watch mode
 redis-server
 
 # Run server (manual test)
-REDIS_URL=redis://localhost:6379 OPENAI_API_KEY=sk-... node dist/index.js
+REDIS_URL=redis://localhost:6379 node dist/index.js
 
 # In another terminal, test Redis
 redis-cli
@@ -128,15 +128,13 @@ tail -f ~/Library/Logs/Claude/mcp*.log
 
 ## Common Tasks
 
-### Update OpenAI Model
+### Update Embedding Strategy
 
-Edit [embeddings/generator.ts](src/embeddings/generator.ts):
-```typescript
-model: 'text-embedding-3-small',  // Current
-// Change to: 'text-embedding-3-large' for better quality
-```
+The project uses Claude (via claude-agent-sdk) for semantic fingerprinting. No API key is required as it uses your Claude Code subscription.
 
-⚠️ **Warning**: Changing model invalidates existing embeddings! Need migration.
+Edit [embeddings/generator.ts](src/embeddings/generator.ts) to modify the embedding generation approach if needed.
+
+⚠️ **Warning**: Changing the embedding approach invalidates existing embeddings! Need migration.
 
 ### Add New Context Type
 
@@ -232,7 +230,6 @@ redis-cli ping
 
 # Check env vars
 echo $REDIS_URL
-echo $OPENAI_API_KEY
 
 # Check logs
 tail -f ~/Library/Logs/Claude/mcp*.log
@@ -240,15 +237,15 @@ tail -f ~/Library/Logs/Claude/mcp*.log
 
 ### Memory Not Storing
 
-1. Check OpenAI API key validity
-2. Check Redis connection
-3. Look for errors in Claude Desktop logs
+1. Check Redis connection
+2. Look for errors in Claude Desktop logs
+3. Verify Claude Code subscription is active
 4. Test Redis directly: `redis-cli KEYS memory:*`
 
 ### Search Not Working
 
 1. Verify embeddings are generated (check `embedding` field length)
-2. Check OpenAI API quota
+2. Check Claude Code subscription is active
 3. Verify cosine similarity calculation
 4. Test with exact content match first
 

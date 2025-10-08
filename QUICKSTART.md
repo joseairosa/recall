@@ -21,9 +21,9 @@ redis-cli ping  # Should return PONG
 # Copy example env file
 cp .env.example .env
 
-# Edit .env and add your OpenAI API key
+# Edit .env if needed (defaults are usually fine)
 # REDIS_URL=redis://localhost:6379
-# OPENAI_API_KEY=sk-your-key-here
+# No API key needed - uses Claude Code subscription
 ```
 
 ### 3. Configure Claude Desktop
@@ -33,12 +33,11 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "memory": {
-      "command": "node",
-      "args": ["/Users/joseairosa/Development/mcp/mem/dist/index.js"],
+    "recall": {
+      "command": "npx",
+      "args": ["-y", "@joseairosa/recall"],
       "env": {
-        "REDIS_URL": "redis://localhost:6379",
-        "OPENAI_API_KEY": "sk-your-openai-key"
+        "REDIS_URL": "redis://localhost:6379"
       }
     }
   }
@@ -123,9 +122,12 @@ redis-cli ping
 brew services start redis
 ```
 
-### "OPENAI_API_KEY environment variable is required"
+### "Server connection issues"
 
-Make sure your API key is set in the Claude Desktop config, not just in `.env`.
+Ensure:
+1. Redis is running (`redis-cli ping` should return PONG)
+2. Claude Code subscription is active
+3. Config file has correct `REDIS_URL`
 
 ### Server not appearing in Claude
 

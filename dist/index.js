@@ -69,38 +69,25 @@ import { McpError as McpError6, ErrorCode as ErrorCode6 } from "@modelcontextpro
 import { ulid } from "ulid";
 
 // src/embeddings/generator.ts
-import Anthropic from "@anthropic-ai/sdk";
-var anthropicClient = null;
-function getAnthropicClient() {
-  if (!anthropicClient) {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      throw new Error("ANTHROPIC_API_KEY environment variable is required");
-    }
-    anthropicClient = new Anthropic({ apiKey });
-  }
-  return anthropicClient;
-}
+import { query } from "@anthropic-ai/claude-agent-sdk";
 async function generateSemanticFingerprint(text) {
   try {
-    const client = getAnthropicClient();
-    const response = await client.messages.create({
-      model: "claude-3-5-haiku-20241022",
-      // Fast, cheap model for this task
-      max_tokens: 200,
-      messages: [{
-        role: "user",
-        content: `Extract 5-10 key concepts/keywords from this text. Return ONLY a comma-separated list, no explanations:
+    const prompt = `Extract 5-10 key concepts/keywords from this text. Return ONLY a comma-separated list, no explanations:
 
-${text}`
-      }]
-    });
-    const content = response.content[0];
-    if (content.type === "text") {
-      const keywords = content.text.split(",").map((k) => k.trim().toLowerCase()).filter((k) => k.length > 0);
-      return keywords;
+${text}`;
+    const q = query({ prompt });
+    let responseText = "";
+    for await (const message of q) {
+      if (message.type === "assistant" && message.content) {
+        for (const block of message.content) {
+          if (block.type === "text") {
+            responseText += block.text;
+          }
+        }
+      }
     }
-    return [];
+    const keywords = responseText.split(",").map((k) => k.trim().toLowerCase()).filter((k) => k.length > 0);
+    return keywords;
   } catch (error) {
     console.error("Error generating semantic fingerprint:", error);
     throw error;
@@ -781,8 +768,8 @@ var MemoryStore = class {
     return true;
   }
   // Semantic search (respects workspace mode with global memory weighting)
-  async searchMemories(query, limit = 10, minImportance, contextTypes, category, fuzzy = false, regex) {
-    const queryEmbedding = await generateEmbedding(query);
+  async searchMemories(query3, limit = 10, minImportance, contextTypes, category, fuzzy = false, regex) {
+    const queryEmbedding = await generateEmbedding(query3);
     const mode = getWorkspaceMode();
     let memories = [];
     if (mode === "global" /* GLOBAL */) {
@@ -835,7 +822,7 @@ var MemoryStore = class {
     const withSimilarity = filtered.map((memory) => {
       let baseSimilarity = memory.embedding ? cosineSimilarity(queryEmbedding, memory.embedding) : 0;
       if (fuzzy) {
-        const queryWords = query.toLowerCase().split(/\s+/);
+        const queryWords = query3.toLowerCase().split(/\s+/);
         const contentWords = memory.content.toLowerCase().split(/\s+/);
         const matchCount = queryWords.filter((qw) => contentWords.some((cw) => cw.includes(qw))).length;
         const fuzzyBoost = matchCount / queryWords.length * 0.2;
@@ -1586,27 +1573,16 @@ import { z as z2 } from "zod";
 import { McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
 
 // src/analysis/conversation-analyzer.ts
-import Anthropic2 from "@anthropic-ai/sdk";
+import { query as query2 } from "@anthropic-ai/claude-agent-sdk";
 var ConversationAnalyzer = class {
-  client;
   constructor() {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      throw new Error("ANTHROPIC_API_KEY environment variable is required");
-    }
-    this.client = new Anthropic2({ apiKey });
   }
   /**
    * Analyze conversation and extract structured memories
    */
   async analyzeConversation(conversationText) {
     try {
-      const response = await this.client.messages.create({
-        model: "claude-3-5-haiku-20241022",
-        max_tokens: 2e3,
-        messages: [{
-          role: "user",
-          content: `Analyze this conversation and extract important information that should be remembered long-term.
+      const prompt = `Analyze this conversation and extract important information that should be remembered long-term.
 
 For each important piece of information, output EXACTLY in this JSON format (one per line):
 {"content":"the information","type":"directive|information|decision|code_pattern|requirement|error|todo|insight|preference","importance":1-10,"tags":["tag1","tag2"],"summary":"brief summary"}
@@ -1626,14 +1602,19 @@ Guidelines:
 Conversation:
 ${conversationText}
 
-Output ONLY the JSON objects, one per line, no other text:`
-        }]
-      });
-      const content = response.content[0];
-      if (content.type !== "text") {
-        return [];
+Output ONLY the JSON objects, one per line, no other text:`;
+      const q = query2({ prompt });
+      let responseText = "";
+      for await (const message of q) {
+        if (message.type === "assistant" && message.content) {
+          for (const block of message.content) {
+            if (block.type === "text") {
+              responseText += block.text;
+            }
+          }
+        }
       }
-      const lines = content.text.split("\n").filter((line) => line.trim().startsWith("{"));
+      const lines = responseText.split("\n").filter((line) => line.trim().startsWith("{"));
       const extracted = [];
       for (const line of lines) {
         try {
@@ -1663,24 +1644,24 @@ Output ONLY the JSON objects, one per line, no other text:`
   async summarizeSession(memories) {
     try {
       const memoriesText = memories.sort((a, b) => b.importance - a.importance).map((m) => `[${m.context_type}] ${m.content}`).join("\n");
-      const response = await this.client.messages.create({
-        model: "claude-3-5-haiku-20241022",
-        max_tokens: 500,
-        messages: [{
-          role: "user",
-          content: `Summarize this work session in 2-3 sentences. Focus on what was accomplished, decided, or learned.
+      const prompt = `Summarize this work session in 2-3 sentences. Focus on what was accomplished, decided, or learned.
 
 Session memories:
 ${memoriesText}
 
-Summary (2-3 sentences):`
-        }]
-      });
-      const content = response.content[0];
-      if (content.type === "text") {
-        return content.text.trim();
+Summary (2-3 sentences):`;
+      const q = query2({ prompt });
+      let responseText = "";
+      for await (const message of q) {
+        if (message.type === "assistant" && message.content) {
+          for (const block of message.content) {
+            if (block.type === "text") {
+              responseText += block.text;
+            }
+          }
+        }
       }
-      return "Session completed with multiple activities";
+      return responseText.trim() || "Session completed with multiple activities";
     } catch (error) {
       console.error("Error summarizing session:", error);
       return "Session summary unavailable";
@@ -1689,8 +1670,8 @@ Summary (2-3 sentences):`
   /**
    * Enhance a search query for better semantic matching
    */
-  async enhanceQuery(currentTask, query) {
-    const combined = query ? `${currentTask} ${query}` : currentTask;
+  async enhanceQuery(currentTask, query3) {
+    const combined = query3 ? `${currentTask} ${query3}` : currentTask;
     return combined;
   }
   /**
@@ -4735,13 +4716,13 @@ var resources = {
     description: "Search memories using semantic similarity",
     mimeType: "application/json",
     handler: async (uri) => {
-      const query = uri.searchParams.get("q");
-      if (!query) {
+      const query3 = uri.searchParams.get("q");
+      if (!query3) {
         throw new McpError7(ErrorCode7.InvalidRequest, 'Query parameter "q" is required');
       }
       const limit = parseInt(uri.searchParams.get("limit") || "10", 10);
       const minImportance = uri.searchParams.get("min_importance") ? parseInt(uri.searchParams.get("min_importance"), 10) : void 0;
-      const results = await memoryStore7.searchMemories(query, limit, minImportance);
+      const results = await memoryStore7.searchMemories(query3, limit, minImportance);
       return {
         contents: [
           {
@@ -4749,7 +4730,7 @@ var resources = {
             mimeType: "application/json",
             text: JSON.stringify(
               {
-                query,
+                query: query3,
                 count: results.length,
                 results: results.map((r) => ({
                   memory_id: r.id,
@@ -4988,15 +4969,15 @@ var resources = {
           "Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories."
         );
       }
-      const query = uri.searchParams.get("q");
-      if (!query) {
+      const query3 = uri.searchParams.get("q");
+      if (!query3) {
         throw new McpError7(ErrorCode7.InvalidRequest, 'Query parameter "q" is required');
       }
       const limit = parseInt(uri.searchParams.get("limit") || "10", 10);
       const originalMode = process.env.WORKSPACE_MODE;
       process.env.WORKSPACE_MODE = "global";
       try {
-        const results = await memoryStore7.searchMemories(query, limit);
+        const results = await memoryStore7.searchMemories(query3, limit);
         return {
           contents: [
             {
@@ -5004,7 +4985,7 @@ var resources = {
               mimeType: "application/json",
               text: JSON.stringify(
                 {
-                  query,
+                  query: query3,
                   count: results.length,
                   workspace_mode: mode,
                   results: results.map((r) => ({

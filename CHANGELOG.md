@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.6.0] - 2025-10-04
+
+### Added
+- **Time Window Context Retrieval** - Get all memories from specific time periods
+  - `get_time_window_context` tool for time-based memory retrieval
+  - Multiple time specifications: hours, minutes, or explicit timestamp ranges
+  - Three output formats: Markdown (default), JSON, and plain text
+  - Four grouping options: chronological, by type, by importance, or by tags
+  - Filtering by minimum importance and context types
+  - Perfect for building context files from work sessions
+  - Respects workspace modes (isolated/global/hybrid)
+
+- **Best Practices Documentation** - Context bloat prevention
+  - Added guidelines for selective memory storage
+  - Clear examples of what to store vs. avoid
+  - Added to both README.md and CLAUDE.md
+  - Helps users avoid indiscriminate memory storage
+
+### Technical
+- New `GetTimeWindowContextSchema` in types.ts
+- New `getMemoriesByTimeWindow()` method in MemoryStore
+- Helper functions for formatting output (JSON, Markdown, Text)
+- Uses Redis `ZRANGEBYSCORE` for efficient time-range queries
+
+### Testing
+- New `test-time-window.js` test suite with 8 tests
+- All tests passing
+- Test coverage for time-based retrieval, filtering, grouping
+
+### Tool Count
+- **28 tools** (was 27 in v1.5.0)
+
+---
+
 ## [1.5.0] - 2025-10-03
 
 ### Added

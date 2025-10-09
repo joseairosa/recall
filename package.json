@@ -35,7 +35,7 @@
   },
   "homepage": "https://github.com/joseairosa/recall#readme",
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.1.0",
+    "@anthropic-ai/claude-agent-sdk": "^0.1.11",
     "@modelcontextprotocol/sdk": "^1.0.4",
     "ioredis": "^5.4.2",
     "ulid": "^2.3.0",

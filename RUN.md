@@ -43,3 +43,16 @@ edit your /home/myuser/.claude.json
         }
     }
 }
+
+by default "recall workspaces" are defined by the current directory
+use "WORKSPACE_MODE": "hybrid" in env above to save memories locally or
+globally
+check :https://github.com/joseairosa/recall/blob/main/WORKSPACE_MODES.md
+
+Test It!
+
+Ask Claude:
+"Store a memory that I prefer dart for all projects"
+
+Then verify:
+"What do you remember about my coding preferences?"

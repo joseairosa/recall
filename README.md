@@ -253,6 +253,30 @@ npm run build
 
 ## How to Use
 
+### ⚠️ Best Practices: Avoid Context Bloat
+
+**Be selective with memory storage to keep Claude efficient.**
+
+**Store HIGH-SIGNAL context:**
+- ✅ Project preferences (coding style, tech stack, architecture patterns)
+- ✅ Critical decisions ("We chose PostgreSQL over MongoDB because...")
+- ✅ Important constraints (API limits, business rules, security requirements)
+- ✅ Learned patterns from bugs/solutions
+
+**Don't store LOW-SIGNAL content:**
+- ❌ Code snippets (put those in files instead)
+- ❌ Obvious facts or general knowledge
+- ❌ Temporary context (only needed in current session)
+- ❌ Duplicates of what's in documentation
+
+**Keep memories concise:**
+- ✅ Good: "API rate limit is 1000 req/min, prefer caching for frequent data"
+- ❌ Bad: "Here's the entire implementation of our caching layer: [50 lines of code]"
+
+**Remember:** Recall is for high-level context, not a code repository. Quality over quantity keeps your context window efficient.
+
+---
+
 ### Store Important Information
 
 Claude can automatically extract and store memories, or you can be explicit:
@@ -312,6 +336,37 @@ Group related work:
 ```
 
 **What Claude does:** Uses `summarize_session` to create a session snapshot with all relevant memories.
+
+### Get Time Window Context (v1.6+)
+
+Retrieve all memories from a specific time period:
+
+```
+"Give me the context for the last 2 hours"
+```
+
+```
+"Show me everything from the last 30 minutes, formatted as markdown"
+```
+
+```
+"Get all high-importance memories from the last hour, grouped by type"
+```
+
+**What Claude does:** Uses `get_time_window_context` to retrieve and format memories from the specified time window.
+
+**Options:**
+- Time specification: hours, minutes, or explicit timestamps
+- Output formats: markdown (default), JSON, or plain text
+- Grouping: chronological, by type, by importance, or by tags
+- Filtering: minimum importance, specific context types
+
+**Example outputs:**
+- **Markdown**: Clean formatted context ready to paste into documentation
+- **JSON**: Structured data for external processing
+- **Text**: Simple plain text summary
+
+Perfect for building context files from work sessions or exporting specific time periods.
 
 ### Convert Memories (v1.3+)
 

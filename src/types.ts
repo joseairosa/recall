@@ -170,6 +170,21 @@ export const SummarizeSessionSchema = z.object({
 
 export type SummarizeSession = z.infer<typeof SummarizeSessionSchema>;
 
+// Get time window context schema (v1.6.0)
+export const GetTimeWindowContextSchema = z.object({
+  hours: z.number().min(0.1).max(72).optional().describe('Number of hours to look back (mutually exclusive with minutes/timestamps)'),
+  minutes: z.number().min(1).max(4320).optional().describe('Number of minutes to look back (mutually exclusive with hours/timestamps)'),
+  start_timestamp: z.number().optional().describe('Unix timestamp in ms for start of window (requires end_timestamp)'),
+  end_timestamp: z.number().optional().describe('Unix timestamp in ms for end of window (requires start_timestamp)'),
+  format: z.enum(['json', 'markdown', 'text']).default('markdown').describe('Output format'),
+  include_metadata: z.boolean().default(true).describe('Include metadata (tags, importance, type)'),
+  group_by: z.enum(['type', 'importance', 'chronological', 'tags']).default('chronological').describe('How to group the output'),
+  min_importance: z.number().min(1).max(10).optional().describe('Filter by minimum importance'),
+  context_types: z.array(ContextType).optional().describe('Filter by specific context types'),
+});
+
+export type GetTimeWindowContext = z.infer<typeof GetTimeWindowContextSchema>;
+
 // Extracted memory from conversation analysis
 export interface ExtractedMemory {
   content: string;

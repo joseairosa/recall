@@ -12,6 +12,87 @@ This is an MCP (Model Context Protocol) server that provides **long-term memory*
 
 ---
 
+## Using Recall Efficiently (Context Bloat Prevention)
+
+**IMPORTANT: Be selective with memory storage to avoid context bloat.**
+
+### When to Store Memories
+
+Store **HIGH-SIGNAL** context only:
+- ✅ High-level decisions and reasoning ("We chose PostgreSQL over MongoDB because...")
+- ✅ Project preferences (coding style, tech stack, architecture patterns)
+- ✅ Critical constraints (API limits, business rules, security requirements)
+- ✅ Learned patterns from bugs/solutions ("Avoid X because it causes Y")
+
+### When NOT to Store
+
+Don't store **LOW-SIGNAL** content:
+- ❌ Code snippets or implementations (put those in files)
+- ❌ Obvious facts or general knowledge
+- ❌ Temporary context (only needed in current session)
+- ❌ Duplicates of what's already in documentation
+
+### Keep Memories Concise
+
+**Examples:**
+- ✅ GOOD: "API rate limit is 1000 req/min, prefer caching for frequently accessed data"
+- ❌ BAD: "Here's the entire implementation of our caching layer: [50 lines of code]"
+
+- ✅ GOOD: "Team prefers Tailwind CSS over styled-components for consistency"
+- ❌ BAD: "Tailwind is a utility-first CSS framework that..."
+
+**Remember:** Recall is for high-level context, not a code repository. Quality over quantity.
+
+---
+
+## Time Window Context Retrieval (v1.6.0+)
+
+### When to Use `get_time_window_context`
+
+Use this tool to retrieve consolidated context from specific time periods:
+
+**Perfect for:**
+- 📋 Building context files from work sessions ("Give me everything from the last 2 hours as markdown")
+- 🔄 Session handoffs ("Show me what we worked on in the last hour")
+- 📊 Progress summaries ("Get all decisions from today")
+- 📝 Documentation ("Export the last 4 hours as a context file")
+
+**How to use:**
+```
+"Give me the context for the last 2 hours"
+"Show me all high-importance memories from the last hour, grouped by type"
+"Export the last 30 minutes as JSON"
+```
+
+### Output Format Options
+
+- **Markdown** (default): Clean formatted context ready to paste
+- **JSON**: Structured data for processing
+- **Text**: Simple plain text summary
+
+### Grouping Options
+
+- **Chronological**: Time-ordered (default, oldest to newest)
+- **By type**: Grouped by context_type (decisions, patterns, etc.)
+- **By importance**: High to low priority
+- **By tags**: Organized by tag categories
+
+### Best Practices
+
+**DO:**
+- ✅ Use for building context files after work sessions
+- ✅ Filter by importance (>= 8) for critical context only
+- ✅ Group by type when exporting for specific purposes
+- ✅ Use markdown format for human-readable output
+- ✅ Use JSON format when passing to external tools
+
+**DON'T:**
+- ❌ Retrieve huge time windows (>24 hours) without filtering
+- ❌ Use when semantic search would be better (use `search_memories` instead)
+- ❌ Store the output as another memory (creates redundancy)
+
+---
+
 ## Development Guidelines
 
 ### Code Style

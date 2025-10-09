@@ -15,6 +15,7 @@ import {
   recall_relevant_context,
   analyze_and_remember,
   summarize_session,
+  get_time_window_context,
 } from './context-tools.js';
 import {
   exportMemories,
@@ -40,6 +41,7 @@ export const tools = {
   recall_relevant_context,
   analyze_and_remember,
   summarize_session,
+  get_time_window_context,
 
   // Export/Import tools
   export_memories: {

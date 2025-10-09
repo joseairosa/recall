@@ -115,6 +115,30 @@ ANTHROPIC_API_KEY="test-key" OPENAI_API_KEY="test-key" node tests/test-v1.5.0.js
 
 ---
 
+#### `test-time-window.js`
+**Purpose**: Tests v1.6.0 time window context retrieval
+
+**What it tests**:
+- Time-based memory retrieval (last N hours/minutes)
+- Importance filtering (minimum threshold)
+- Context type filtering (single and multiple types)
+- Combined filters (importance + type)
+- Chronological ordering verification
+- Empty time windows (no results)
+
+**Run**:
+```bash
+ANTHROPIC_API_KEY="test-key" OPENAI_API_KEY="test-key" node tests/test-time-window.js
+```
+
+**Duration**: ~5 seconds
+
+**Requirements**: Redis running
+
+**Test Coverage**: 8 tests covering all time window retrieval features
+
+---
+
 ### Manual Tests
 
 #### `test-v1.5.0-manual.md`

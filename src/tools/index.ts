@@ -110,7 +110,9 @@ export const tools = {
     inputSchema: zodToJsonSchema(CreateMemorySchema),
     handler: async (args: z.infer<typeof CreateMemorySchema>) => {
       try {
-        const memory = await memoryStore.createMemory(args);
+        // Parse args with schema to apply defaults
+        const parsedArgs = CreateMemorySchema.parse(args);
+        const memory = await memoryStore.createMemory(parsedArgs);
         return {
           content: [
             {

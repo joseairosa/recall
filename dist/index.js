@@ -288,6 +288,17 @@ var SummarizeSessionSchema = z.object({
   auto_create_snapshot: z.boolean().default(true).describe("Automatically create session snapshot"),
   lookback_minutes: z.number().default(60).describe("How many minutes back to look for memories")
 });
+var GetTimeWindowContextSchema = z.object({
+  hours: z.number().min(0.1).max(72).optional().describe("Number of hours to look back (mutually exclusive with minutes/timestamps)"),
+  minutes: z.number().min(1).max(4320).optional().describe("Number of minutes to look back (mutually exclusive with hours/timestamps)"),
+  start_timestamp: z.number().optional().describe("Unix timestamp in ms for start of window (requires end_timestamp)"),
+  end_timestamp: z.number().optional().describe("Unix timestamp in ms for end of window (requires start_timestamp)"),
+  format: z.enum(["json", "markdown", "text"]).default("markdown").describe("Output format"),
+  include_metadata: z.boolean().default(true).describe("Include metadata (tags, importance, type)"),
+  group_by: z.enum(["type", "importance", "chronological", "tags"]).default("chronological").describe("How to group the output"),
+  min_importance: z.number().min(1).max(10).optional().describe("Filter by minimum importance"),
+  context_types: z.array(ContextType).optional().describe("Filter by specific context types")
+});
 var ExportMemoriesSchema = z.object({
   format: z.enum(["json"]).default("json").describe("Export format"),
   include_embeddings: z.boolean().default(false).describe("Include vector embeddings in export"),
@@ -597,6 +608,29 @@ var MemoryStore = class {
       allMemories.sort((a, b) => b.timestamp - a.timestamp);
       return allMemories.slice(0, limit);
     }
+  }
+  // Get memories by time window (v1.6.0)
+  async getMemoriesByTimeWindow(startTime, endTime, minImportance, contextTypes) {
+    const mode = getWorkspaceMode();
+    let ids = [];
+    if (mode === "global" /* GLOBAL */) {
+      ids = await this.redis.zrangebyscore(RedisKeys.globalTimeline(), startTime, endTime);
+    } else if (mode === "isolated" /* ISOLATED */) {
+      ids = await this.redis.zrangebyscore(RedisKeys.timeline(this.workspaceId), startTime, endTime);
+    } else {
+      const wsIds = await this.redis.zrangebyscore(RedisKeys.timeline(this.workspaceId), startTime, endTime);
+      const globalIds = await this.redis.zrangebyscore(RedisKeys.globalTimeline(), startTime, endTime);
+      ids = [.../* @__PURE__ */ new Set([...wsIds, ...globalIds])];
+    }
+    let memories = await this.getMemories(ids);
+    if (minImportance !== void 0) {
+      memories = memories.filter((m) => m.importance >= minImportance);
+    }
+    if (contextTypes && contextTypes.length > 0) {
+      memories = memories.filter((m) => contextTypes.includes(m.context_type));
+    }
+    memories.sort((a, b) => a.timestamp - b.timestamp);
+    return memories;
   }
   // Get memories by type (respects workspace mode)
   async getMemoriesByType(type, limit) {
@@ -1962,6 +1996,184 @@ function zodToJsonSchemaInner(schema) {
     return zodToJsonSchema(schema);
   }
   return { type: "string" };
+}
+var get_time_window_context = {
+  description: 'Get all memories from a specific time window and build consolidated context output. Perfect for retrieving "everything from the last 2 hours" or specific time ranges.',
+  inputSchema: zodToJsonSchema(GetTimeWindowContextSchema),
+  handler: async (args) => {
+    try {
+      let startTime;
+      let endTime;
+      if (args.start_timestamp && args.end_timestamp) {
+        startTime = args.start_timestamp;
+        endTime = args.end_timestamp;
+      } else if (args.hours !== void 0) {
+        endTime = Date.now();
+        startTime = endTime - args.hours * 60 * 60 * 1e3;
+      } else if (args.minutes !== void 0) {
+        endTime = Date.now();
+        startTime = endTime - args.minutes * 60 * 1e3;
+      } else {
+        endTime = Date.now();
+        startTime = endTime - 60 * 60 * 1e3;
+      }
+      const memories = await memoryStore.getMemoriesByTimeWindow(
+        startTime,
+        endTime,
+        args.min_importance,
+        args.context_types
+      );
+      if (memories.length === 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                success: false,
+                message: "No memories found in the specified time window",
+                start_time: new Date(startTime).toISOString(),
+                end_time: new Date(endTime).toISOString()
+              }, null, 2)
+            }
+          ]
+        };
+      }
+      const groupedMemories = groupMemories(memories, args.group_by);
+      let output;
+      if (args.format === "json") {
+        output = formatAsJSON(groupedMemories, memories, startTime, endTime, args.include_metadata);
+      } else if (args.format === "markdown") {
+        output = formatAsMarkdown(groupedMemories, memories, startTime, endTime, args.include_metadata);
+      } else {
+        output = formatAsText(groupedMemories, memories, startTime, endTime, args.include_metadata);
+      }
+      return {
+        content: [
+          {
+            type: "text",
+            text: output
+          }
+        ]
+      };
+    } catch (error) {
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to get time window context: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+};
+function groupMemories(memories, groupBy) {
+  const groups = /* @__PURE__ */ new Map();
+  if (groupBy === "chronological") {
+    groups.set("all", memories);
+  } else if (groupBy === "type") {
+    memories.forEach((m) => {
+      const key = m.context_type;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(m);
+    });
+  } else if (groupBy === "importance") {
+    memories.forEach((m) => {
+      const key = m.importance >= 8 ? "High (8-10)" : m.importance >= 5 ? "Medium (5-7)" : "Low (1-4)";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(m);
+    });
+  } else if (groupBy === "tags") {
+    memories.forEach((m) => {
+      if (m.tags.length === 0) {
+        if (!groups.has("untagged")) groups.set("untagged", []);
+        groups.get("untagged").push(m);
+      } else {
+        m.tags.forEach((tag) => {
+          if (!groups.has(tag)) groups.set(tag, []);
+          groups.get(tag).push(m);
+        });
+      }
+    });
+  }
+  return groups;
+}
+function formatAsJSON(groups, allMemories, startTime, endTime, includeMetadata) {
+  const data = {
+    time_window: {
+      start: new Date(startTime).toISOString(),
+      end: new Date(endTime).toISOString(),
+      duration_hours: ((endTime - startTime) / (1e3 * 60 * 60)).toFixed(2)
+    },
+    total_memories: allMemories.length,
+    memories: allMemories.map((m) => ({
+      content: m.content,
+      ...includeMetadata && {
+        type: m.context_type,
+        importance: m.importance,
+        tags: m.tags,
+        timestamp: new Date(m.timestamp).toISOString(),
+        summary: m.summary
+      }
+    }))
+  };
+  return JSON.stringify(data, null, 2);
+}
+function formatAsMarkdown(groups, allMemories, startTime, endTime, includeMetadata) {
+  const lines = [];
+  const duration = ((endTime - startTime) / (1e3 * 60 * 60)).toFixed(1);
+  lines.push(`# Context from ${new Date(startTime).toLocaleString()} to ${new Date(endTime).toLocaleString()}`);
+  lines.push("");
+  lines.push(`**Duration:** ${duration} hours`);
+  lines.push(`**Total Memories:** ${allMemories.length}`);
+  lines.push("");
+  lines.push("---");
+  lines.push("");
+  for (const [groupName, memories] of groups) {
+    if (groupName !== "all") {
+      lines.push(`## ${groupName.charAt(0).toUpperCase() + groupName.slice(1)}`);
+      lines.push("");
+    }
+    memories.forEach((m) => {
+      lines.push(`### ${m.summary || m.content.substring(0, 50)}`);
+      lines.push("");
+      lines.push(m.content);
+      lines.push("");
+      if (includeMetadata) {
+        lines.push(`**Type:** ${m.context_type} | **Importance:** ${m.importance}/10 | **Time:** ${new Date(m.timestamp).toLocaleTimeString()}`);
+        if (m.tags.length > 0) {
+          lines.push(`**Tags:** ${m.tags.join(", ")}`);
+        }
+        lines.push("");
+      }
+      lines.push("---");
+      lines.push("");
+    });
+  }
+  return lines.join("\n");
+}
+function formatAsText(groups, allMemories, startTime, endTime, includeMetadata) {
+  const lines = [];
+  const duration = ((endTime - startTime) / (1e3 * 60 * 60)).toFixed(1);
+  lines.push(`Context from ${new Date(startTime).toLocaleString()} to ${new Date(endTime).toLocaleString()}`);
+  lines.push(`Duration: ${duration} hours`);
+  lines.push(`Total: ${allMemories.length} memories`);
+  lines.push("");
+  lines.push("=".repeat(80));
+  lines.push("");
+  for (const [groupName, memories] of groups) {
+    if (groupName !== "all") {
+      lines.push(`[${groupName.toUpperCase()}]`);
+      lines.push("");
+    }
+    memories.forEach((m, index) => {
+      lines.push(`${index + 1}. ${m.content}`);
+      if (includeMetadata) {
+        lines.push(`   [${m.context_type} | importance: ${m.importance}/10 | ${new Date(m.timestamp).toLocaleTimeString()}]`);
+        if (m.tags.length > 0) {
+          lines.push(`   tags: ${m.tags.join(", ")}`);
+        }
+      }
+      lines.push("");
+    });
+  }
+  return lines.join("\n");
 }
 
 // src/tools/export-import-tools.ts
@@ -3978,6 +4190,7 @@ var tools = {
   recall_relevant_context,
   analyze_and_remember,
   summarize_session,
+  get_time_window_context,
   // Export/Import tools
   export_memories: {
     description: "Export memories to JSON format with optional filtering",
@@ -5314,7 +5527,7 @@ async function getPrompt(name) {
 var server = new Server(
   {
     name: "@joseairosa/recall",
-    version: "1.5.0"
+    version: "1.6.0"
   },
   {
     capabilities: {

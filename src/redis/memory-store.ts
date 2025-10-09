@@ -202,6 +202,47 @@ export class MemoryStore {
     }
   }
 
+  // Get memories by time window (v1.6.0)
+  async getMemoriesByTimeWindow(
+    startTime: number,
+    endTime: number,
+    minImportance?: number,
+    contextTypes?: ContextType[]
+  ): Promise<MemoryEntry[]> {
+    const mode = getWorkspaceMode();
+    let ids: string[] = [];
+
+    if (mode === WorkspaceMode.GLOBAL) {
+      // Global mode: only global memories
+      ids = await this.redis.zrangebyscore(RedisKeys.globalTimeline(), startTime, endTime);
+    } else if (mode === WorkspaceMode.ISOLATED) {
+      // Isolated mode: only workspace memories
+      ids = await this.redis.zrangebyscore(RedisKeys.timeline(this.workspaceId), startTime, endTime);
+    } else {
+      // Hybrid mode: merge workspace + global
+      const wsIds = await this.redis.zrangebyscore(RedisKeys.timeline(this.workspaceId), startTime, endTime);
+      const globalIds = await this.redis.zrangebyscore(RedisKeys.globalTimeline(), startTime, endTime);
+      ids = [...new Set([...wsIds, ...globalIds])]; // Deduplicate
+    }
+
+    let memories = await this.getMemories(ids);
+
+    // Filter by importance if specified
+    if (minImportance !== undefined) {
+      memories = memories.filter(m => m.importance >= minImportance);
+    }
+
+    // Filter by context types if specified
+    if (contextTypes && contextTypes.length > 0) {
+      memories = memories.filter(m => contextTypes.includes(m.context_type));
+    }
+
+    // Sort by timestamp ascending (chronological order)
+    memories.sort((a, b) => a.timestamp - b.timestamp);
+
+    return memories;
+  }
+
   // Get memories by type (respects workspace mode)
   async getMemoriesByType(type: ContextType, limit?: number): Promise<MemoryEntry[]> {
     const mode = getWorkspaceMode();

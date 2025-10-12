@@ -87,7 +87,7 @@ docker run -d -p 6379:6379 redis:latest
 **Option 2: Cloud Redis (No local install needed)**
 
 Use a free Redis cloud service:
-- **[Upstash](https://upstash.com/)** - Free tier with 10,000 commands/day
+- **[Upstash](https://upstash.com/)** - Free tier with 500,000 commands/month
 - **[Redis Cloud](https://redis.com/try-free/)** - Free 30MB database
 - **[Railway](https://railway.app/)** - Free Redis with credit
 

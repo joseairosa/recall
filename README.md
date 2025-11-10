@@ -1,4 +1,4 @@
-# Recall 🧠
+# Recall 🧠 (Redis or Valkey Compatible)
 
 **Give Claude perfect recall with persistent memory that survives context limits and session restarts.**
 
@@ -10,7 +10,8 @@ Your AI assistant can now remember important context, decisions, and patterns ac
 
 **IMPORTANT: READ BEFORE USE**
 
-Recall stores conversation memories in Redis, which may contain sensitive information including:
+Recall stores conversation memories in either **Redis** or **Valkey**, which may contain sensitive information including:
+
 - Code snippets, API keys, credentials, and secrets discussed in conversations
 - Business logic, architecture decisions, and proprietary information
 - Personal data, team member names, and organizational details
@@ -18,47 +19,47 @@ Recall stores conversation memories in Redis, which may contain sensitive inform
 
 **You are responsible for:**
 
-1. **Redis Security**: Ensure your Redis instance is properly secured with authentication, TLS encryption, and network access controls
-2. **Data Ownership**: Only use Redis servers that YOU control or have explicit permission to use
-3. **Access Control**: Understand who has access to your Redis instance and stored memories
-4. **Sensitive Data**: Never store memories on shared/public Redis instances if they contain sensitive information
+1. **Redis/Valkey Security**: Ensure your memory store is properly secured with authentication, TLS encryption, and network access controls  
+2. **Data Ownership**: Only use Redis/Valkey servers that YOU control or have explicit permission to use  
+3. **Access Control**: Understand who has access to your memory store and stored memories  
+4. **Sensitive Data**: Never store memories on shared/public instances if they contain sensitive information  
 5. **Compliance**: Ensure your use complies with your organization's data policies and relevant regulations (GDPR, CCPA, etc.)
 
-**Disclaimer of Liability:**
-
+**Disclaimer of Liability:**  
 THIS SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND. THE AUTHOR (JOSÉ AIROSA) IS NOT LIABLE FOR:
-- Data breaches, leaks, or unauthorized access to stored memories
-- Loss of data or corrupted memories
-- Compliance violations or regulatory issues
+
+- Data breaches, leaks, or unauthorized access to stored memories  
+- Loss of data or corrupted memories  
+- Compliance violations or regulatory issues  
 - Any damages arising from the use or misuse of this software
 
 By using Recall, you acknowledge that you understand these risks and accept full responsibility for:
-- Securing your Redis infrastructure
-- Managing access to stored memories
-- Protecting sensitive information
+
+- Securing your Redis or Valkey infrastructure  
+- Managing access to stored memories  
+- Protecting sensitive information  
 - Compliance with applicable laws and regulations
 
 **Best Practices:**
-- Use dedicated Redis instances with strong authentication
-- Enable TLS/SSL encryption (rediss://) for remote connections
-- Regularly audit stored memories for sensitive data
-- Implement Redis access controls and firewall rules
-- Use separate Redis databases for different security contexts
-- Consider data retention policies and periodic cleanup
-- Never share Redis credentials or connection strings publicly
 
-See the [Security Considerations](#security-considerations) section below for detailed guidance.
+- Use dedicated Redis or Valkey instances with strong authentication  
+- Enable TLS/SSL encryption (`rediss://`) for remote connections  
+- Regularly audit stored memories for sensitive data  
+- Implement access controls and firewall rules  
+- Use separate databases for different security contexts  
+- Consider data retention policies and periodic cleanup  
+- Never share connection strings publicly
 
 ---
 
 ## What is This?
 
-Recall is a **brain extension** for Claude that stores memories in Redis. It solves the context window problem by:
+Recall is a **brain extension** for Claude that stores memories in Redis or Valkey. It solves the context window problem by:
 
-- 📝 **Remembering** directives, decisions, code patterns, and important information
-- 🔍 **Retrieving** relevant context automatically when you need it
-- 🔄 **Persisting** across sessions - memories survive restarts and context compaction
-- 🗂️ **Organizing** by workspace - Project A memories don't pollute Project B
+- 📝 **Remembering** directives, decisions, code patterns, and important information  
+- 🔍 **Retrieving** relevant context automatically when you need it  
+- 🔄 **Persisting** across sessions – memories survive restarts and context compaction  
+- 🗂️ **Organizing** by workspace – Project A memories don't pollute Project B
 
 ---
 
@@ -66,25 +67,30 @@ Recall is a **brain extension** for Claude that stores memories in Redis. It sol
 
 ### 1. Prerequisites
 
-- **Redis** running locally (default: `localhost:6379`)
-- **Node.js** 18 or higher
+- **Redis** or **Valkey** running locally (`localhost:6379`)  
+- **Node.js** 18 or higher  
 - **Claude Code** or **Claude Desktop**
 
-**Option 1: Local Redis (Recommended for getting started)**
+**Option A: Local Redis**
 ```bash
 # macOS
 brew install redis
 brew services start redis
-
 # Ubuntu/Debian
 sudo apt-get install redis-server
 sudo systemctl start redis
-
 # Docker
 docker run -d -p 6379:6379 redis:latest
-```
 
-**Option 2: Cloud Redis (No local install needed)**
+
+**Option B: Local Valkey**
+# macOS
+brew install valkey
+brew services start valkey
+# Docker
+docker run -d -p 6379:6379 valkey/valkey:latest
+
+**Option 2a: Cloud Redis (No local install needed)**
 
 Use a free Redis cloud service:
 - **[Upstash](https://upstash.com/)** - Free tier with 500,000 commands/month
@@ -99,6 +105,12 @@ Then use the provided connection URL in your config:
   }
 }
 ```
+
+**Option 2b: Cloud Valkey (No local install needed) **
+Most cloud providers offer Valkey services and will have free or low cost trials available. e.g. https://aws.amazon.com/elasticache/resources/ , use free tier to try it out https://aws.amazon.com/free/
+
+
+
 
 ### 2. Install
 
@@ -154,6 +166,22 @@ Add to your Claude configuration file:
   }
 }
 ```
+or for Valkey:
+```json
+{
+  "mcpServers": {
+    "recall": {
+      "command": "recall",
+      "env": {
+        "BACKEND_TYPE":"valkey",
+        "VALKEY_HOST":"localhost",
+        "VALKEY_PORT":6379 ,
+        "ANTHROPIC_API_KEY": "your-api-key-here"
+      }
+    }
+  }
+}
+```
 
 **Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
 ```json
@@ -164,6 +192,22 @@ Add to your Claude configuration file:
       "args": ["-y", "@joseairosa/recall"],
       "env": {
         "REDIS_URL": "redis://localhost:6379",
+        "ANTHROPIC_API_KEY": "your-api-key-here"
+      }
+    }
+  }
+}
+```
+or for Valkey:
+```json
+{
+  "mcpServers": {
+    "recall": {
+      "command": "recall",
+      "env": {
+        "BACKEND_TYPE":"valkey",
+        "VALKEY_HOST":"localhost",
+        "VALKEY_PORT":6379 ,
         "ANTHROPIC_API_KEY": "your-api-key-here"
       }
     }
@@ -593,9 +637,9 @@ Memories from Project A **never pollute** Project B. Each workspace gets its own
 ### Using Remote Redis
 
 Want to:
-- **Share memories across machines**? Use cloud Redis with the same `REDIS_URL`
-- **No local install**? Use Upstash, Redis Cloud, or Railway (free tiers available)
-- **Team collaboration**? Share Redis URL and workspace path with your team
+- **Share memories across machines**? Use cloud Redis with the same `REDIS_URL` or Cloud Valkey with the same host/port
+- **No local install**? Use Upstash, Redis Cloud, or Railway (free tiers available) - see also Valkey cloud instances
+- **Team collaboration**? Share Redis URL (or valkey host/port) and workspace path with your team
 
 See [Configuration](#configuration) section for cloud Redis setup.
 
@@ -620,13 +664,21 @@ See [Configuration](#configuration) section for cloud Redis setup.
 
 **Setup for shared organizational memory:**
 
-1. **Deploy shared Redis instance:**
+1. **Deploy shared instance:**
+  ***a) Redis ***
    ```bash
    # Use any cloud Redis service (Upstash, Redis Cloud, etc.)
    # Or deploy your own Redis server
    ```
 
-2. **Share Redis URL with team:**
+  ***b) Valkey ***
+    ```bash
+   # Use any cloud Valkey service (Elasticache, Memorystore for valkey, etc.)
+   # Or deploy your own Valkey server
+   ```
+
+2. **Share Connection information with team:**
+  ***a) Redis ***
    ```json
    {
      "env": {
@@ -635,10 +687,21 @@ See [Configuration](#configuration) section for cloud Redis setup.
    }
    ```
 
+  ***b) Valkey ***
+   ```json
+   {
+     "env": {
+       "BACKEND_TYPE":"valkey",
+       "VALKEY_HOST":"valkey-remote-host",
+       "VALKEY_PORT":6379
+     }
+   }
+   ``` 
+
 3. **Define shared workspace path:**
    - Option A: Use a fixed workspace path for org-wide memories
    - Option B: Wait for v1.3.0 global memories feature for automatic sharing
-   - Option C: Use project-based isolation but share Redis for cross-project search
+   - Option C: Use project-based isolation but share Redis/Valkey for cross-project search
 
 **Example workflow:**
 ```
@@ -652,8 +715,9 @@ Developer B: "What's our API rate limit?"
 
 **Security considerations:**
 - Use Redis authentication and TLS (rediss://) for sensitive data
-- Consider separate Redis databases for different teams/projects
-- Implement access controls at the Redis level
+- Build valkey with TLS support(https://valkey.io/topics/encryption/)
+- Consider separate Redis/Valkey databases for different teams/projects
+- Implement access controls at the Redis/Valkey level
 - Audit memory contents periodically for sensitive information
 
 See [WORKSPACE_MODES.md](WORKSPACE_MODES.md) for future plans on enhanced organizational memory features.
@@ -855,6 +919,9 @@ Claude: [Only sees project A memories, not project B's MongoDB]
 ### Environment Variables
 
 - **`REDIS_URL`** - Redis connection (default: `redis://localhost:6379`)
+- **`BACKEND_TYPE`** - Specifies which backend to use - set to `valkey` for Valkey (default: `redis`) - not needed if using redis.
+- **`VALKEY_HOST`** - Valkey host (default: `localhost`)
+- **`VALKEY_PORT`** - Valkey port (default: `6379`) 
 - **`ANTHROPIC_API_KEY`** - Claude API key for analysis and embeddings
 - **`WORKSPACE_MODE`** (v1.3+) - Workspace memory mode (default: `isolated`)
   - `isolated` - Workspace-only memories, no cross-workspace access
@@ -892,11 +959,15 @@ Then set: `REDIS_URL=redis://localhost:6380`
 }
 ```
 
+
+### Valkey Setup Options
+- see valkey installation options here https://valkey.io/topics/installation/
+
 ---
 
 ## How It Works
 
-1. **Storage**: Memories stored in Redis with workspace isolation
+1. **Storage**: Memories stored in Redis/Valkey with workspace isolation
 2. **Embeddings**: Hybrid approach using Claude-extracted keywords + trigrams (128-dim vectors)
 3. **Search**: Cosine similarity for semantic retrieval
 4. **Context**: Auto-injected at conversation start via MCP prompts
@@ -907,7 +978,7 @@ Then set: `REDIS_URL=redis://localhost:6380`
 Very affordable! Estimated **~$0.20/day** for active development:
 - Uses Claude Haiku (cheapest model) for analysis
 - Hybrid embeddings reduce API calls
-- Redis in-memory storage is fast and free
+- Redis/Valkey in-memory storage is fast and free
 
 ---
 
@@ -956,23 +1027,26 @@ redis-server --requirepass your-strong-password
 - Enable Redis ACLs for fine-grained permissions (Redis 6+)
 - Regular backups with encrypted storage
 
+### Valkey Security Configuration
+See Valkey security here https://valkey.io/topics/security/, https://valkey.io/topics/acl/, https://valkey.io/topics/persistence/
+
 ### Organizational Deployments
 
 When deploying for team/organizational use:
 
 **Infrastructure Security:**
-- Deploy Redis in private VPC/network
-- Use dedicated Redis instance (not shared with other services)
-- Enable Redis encryption at rest
+- Deploy Redis/Valkey in private VPC/network
+- Use dedicated Redis/Valkey instance (not shared with other services)
+- Enable Redis/Valkey encryption at rest
 - Implement network segmentation and access controls
 - Use VPN or private network access for remote connections
 
 **Access Management:**
-- Document who has Redis access
-- Use separate Redis databases for different teams/security levels
-- Implement audit logging for Redis access
+- Document who has Redis/Valkey access
+- Use separate Redis/Valkey databases for different teams/security levels
+- Implement audit logging for Redis/Valkey access
 - Regular access reviews and credential rotation
-- Consider using Redis Enterprise with RBAC
+- Consider using Redis/Valkey Enterprise with RBAC
 
 **Data Governance:**
 - Define data retention policies
@@ -1001,7 +1075,7 @@ When deploying for team/organizational use:
 If you suspect a security breach:
 
 1. **Immediately rotate Redis credentials**
-2. **Audit Redis access logs** for unauthorized access
+2. **Audit Redis/Valkey access logs** for unauthorized access
 3. **Review stored memories** for exposed sensitive data
 4. **Flush compromised data** using `export_memories` + selective deletion
 5. **Update all team members** with new credentials
@@ -1035,7 +1109,7 @@ If you suspect a security breach:
 As a developer using Recall, you must:
 
 ✅ **Do:**
-- Use secure, authenticated Redis instances
+- Use secure, authenticated Redis/Valkey instances
 - Enable TLS for all remote connections
 - Regularly audit stored memories
 - Implement proper access controls
@@ -1044,9 +1118,9 @@ As a developer using Recall, you must:
 - Comply with your organization's security policies
 
 ❌ **Don't:**
-- Use public Redis instances for any sensitive data
+- Use public Redis/Valkey instances for any sensitive data
 - Store credentials or secrets in memories (use environment variables/secret managers instead)
-- Share Redis connection strings publicly
+- Share Redis/Valkey connection strings publicly
 - Ignore security warnings or skip authentication
 - Store regulated data (PII, PHI, PCI) without proper controls
 

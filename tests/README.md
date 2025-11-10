@@ -88,8 +88,10 @@ node tests/test-runtime.js
 
 ---
 
-#### `test-v1.5.0.js`
+#### `test-vr-v1.7.0.js`
 **Purpose**: Full integration tests with real Redis operations
+
+
 
 **What it tests**:
 - Memory CRUD operations
@@ -101,22 +103,38 @@ node tests/test-runtime.js
 - Relationship preservation
 
 **Run**:
+This needs to be compiled first - install tsc then in tests run
 ```bash
-ANTHROPIC_API_KEY="test-key" OPENAI_API_KEY="test-key" node tests/test-v1.5.0.js
+tsc
 ```
+This will compile the test code into tests/test_dist
+
+Then to run the test for Redis:
+
+**Requirements**: Redis running
+
+```bash
+ANTHROPIC_API_KEY="test-key" node test_dist/tests/test-vr-V1.7.0.js
+```
+
+To run this test on Valkey:
+
+**Requirements**: Valkey running
+
+```bash
+ANTHROPIC_API_KEY="test-key" BACKEND_TYPE="valkey" VALKEY_HOST="localhost" VALKEY_PORT="6379" node test_dist/tests/test-vr-V1.7.0.js
+```
+
 
 **Duration**: ~30 seconds
 
-**Requirements**:
-- Redis running
-- OPENAI_API_KEY for embeddings (can use dummy for basic tests)
 
-**⚠️ Warning**: Creates real Redis data. Use test Redis instance or flush after.
+**⚠️ Warning**: Creates real data. Use test instance or flush after.
 
 ---
 
-#### `test-time-window.js`
-**Purpose**: Tests v1.6.0 time window context retrieval
+#### `test-time-window-vr.ts`
+**Purpose**: Tests v1.7.0 time window context retrieval
 
 **What it tests**:
 - Time-based memory retrieval (last N hours/minutes)
@@ -126,14 +144,35 @@ ANTHROPIC_API_KEY="test-key" OPENAI_API_KEY="test-key" node tests/test-v1.5.0.js
 - Chronological ordering verification
 - Empty time windows (no results)
 
+
+
 **Run**:
+This needs to be compiled first - install tsc then in tests run - unless already done in test-vr-v1.7.0.js test above.
 ```bash
-ANTHROPIC_API_KEY="test-key" OPENAI_API_KEY="test-key" node tests/test-time-window.js
+tsc
 ```
+This will compile the test code into tests/test_dist
+
+Then to run the test for Redis:
+
+**Requirements**: Redis running
+
+```bash
+REDIS_URL="redis://localhost:6379/15" node test_dist/tests/test-time-window-vr.js
+```
+the 15 after the port number in the url is the db number.
+
+To run this test on Valkey:
+
+**Requirements**: Valkey running
+```bash
+BACKEND_TYPE="valkey" VALKEY_HOST="localhost" VALKEY_PORT="6379" VALKEY_DB=15 node test_dist/tests/test-time-window-vr.js
+```
+
 
 **Duration**: ~5 seconds
 
-**Requirements**: Redis running
+
 
 **Test Coverage**: 8 tests covering all time window retrieval features
 
@@ -169,41 +208,30 @@ ANTHROPIC_API_KEY="test-key" OPENAI_API_KEY="test-key" node tests/test-time-wind
 
 ### Utility Scripts
 
-#### `test-relationships.js`
-**Purpose**: Tests v1.4.0 relationship features (graph traversal, linking)
-
+#### `test-relationships-vr.js`
+**Purpose**: Tests v1.7.0 relationship features (graph traversal, linking)
 **Run**:
+This needs to be compiled first - install tsc then in tests run - unless already done in test-vr-v1.7.0.js test above.
 ```bash
-ANTHROPIC_API_KEY="test-key" OPENAI_API_KEY="test-key" node tests/test-relationships.js
+tsc
 ```
+This will compile the test code into tests/test_dist
 
----
+Then to run the test for Redis:
 
-#### `test-resource.js`
-**Purpose**: Tests MCP resource endpoints
+**Requirements**: Redis running
 
-**Run**:
 ```bash
-ANTHROPIC_API_KEY="test-key" OPENAI_API_KEY="test-key" node tests/test-resource.js
+ANTHROPIC_API_KEY="test-key" REDIS_URL="redis://localhost:6379/15" node test_dist/tests/test-relationships-vr.js
 ```
+the 15 after the port number in the url is the db number.
 
----
+To run this test on Valkey:
 
-#### `view-memories.js`
-**Purpose**: Utility to inspect Redis memory data
-
-**Run**:
+**Requirements**: Valkey running
 ```bash
-node tests/view-memories.js
+ANTHROPIC_API_KEY="test-key" BACKEND_TYPE="valkey" VALKEY_HOST="localhost" VALKEY_PORT="6379" VALKEY_DB=15 node test_dist/tests/test-relationships-vr.js
 ```
-
-**Use cases**:
-- Debug stored memories
-- Verify indexes
-- Inspect version history
-- Check category assignments
-
----
 
 ## Testing Workflow for New Releases
 

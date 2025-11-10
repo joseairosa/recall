@@ -53,7 +53,7 @@ is_global?: boolean  // Optional, defaults to false
 
 ### Storage Architecture
 
-**Redis Key Structure:**
+**Redis/Valkey Key Structure:**
 - Global memories: `global:memory:{id}`
 - Workspace memories: `ws:{workspace_id}:memory:{id}`
 

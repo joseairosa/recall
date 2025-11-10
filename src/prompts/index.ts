@@ -1,7 +1,7 @@
-import { MemoryStore } from '../redis/memory-store.js';
+import { MemoryStore } from '../persistence/memory-store.js';
 import { formatWorkspaceContext } from './formatters.js';
 
-const memoryStore = new MemoryStore();
+const memoryStore = await MemoryStore.create();
 
 export const prompts = {
   workspace_context: {

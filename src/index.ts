@@ -10,16 +10,25 @@ import {
   ListPromptsRequestSchema,
   GetPromptRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { checkRedisConnection, closeRedisClient } from './redis/client.js';
+import { IStorageClientProvider } from './persistence/storage-client.interface.js';
 import { tools } from './tools/index.js';
 import { resources } from './resources/index.js';
 import { listPrompts, getPrompt } from './prompts/index.js';
+import { RedisClientProvider } from './persistence/redis-client.js';
+import { ValkeyClientProvider } from './persistence/valkey-client.js';
+import { StorageClient } from './persistence/storage-client.js';
+import { createStorageClient } from './persistence/storage-client.factory.js';
+
+function log(message: string, ...args: any[]) {
+  console.error(`[Recall MCP] ${message}`, ...args);
+}
+
 
 // Create server instance
 const server = new Server(
   {
     name: '@joseairosa/recall',
-    version: '1.6.0',
+    version: '1.7.0',
   },
   {
     capabilities: {
@@ -175,11 +184,15 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
   return promptResult;
 });
 
+let storageClient: StorageClient;
+
 // Start server
 async function main() {
-  // Check Redis connection
-  console.error('Checking Redis connection...');
-  const isConnected = await checkRedisConnection();
+    // Check backend connection
+  console.error('Checking connection...');
+
+  storageClient = await createStorageClient()
+  const isConnected = await storageClient.checkConnection();
 
   if (!isConnected) {
     console.error('ERROR: Failed to connect to Redis');
@@ -187,8 +200,8 @@ async function main() {
     process.exit(1);
   }
 
-  console.error('Redis connection successful');
-
+  console.error('Backend connection successful');
+ 
   // Create transport
   const transport = new StdioServerTransport();
 
@@ -197,22 +210,23 @@ async function main() {
 
   console.error('Recall MCP Server started successfully');
   console.error('Listening on stdio...');
+
 }
 
 // Handle graceful shutdown
 process.on('SIGINT', async () => {
   console.error('\nShutting down...');
-  await closeRedisClient();
+  await storageClient.closeClient();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
   console.error('\nShutting down...');
-  await closeRedisClient();
+  await storageClient.closeClient();
   process.exit(0);
 });
 
-// Start the server
+// Update error handler
 main().catch((error) => {
   console.error('Fatal error:', error);
   process.exit(1);

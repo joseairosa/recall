@@ -32,3 +32,6 @@ view-memories.js
 # Local config
 .claude/
 .mcp.json
+
+#test build files
+tests/test_dist/

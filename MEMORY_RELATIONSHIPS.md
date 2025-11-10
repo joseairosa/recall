@@ -316,7 +316,7 @@ Claude: [Uses get_related_memories with filter 'supersedes']
 
 ### Storage
 
-**Redis Keys:**
+**Redis/Valkey Keys:**
 ```
 # Workspace relationships
 ws:{workspace_id}:relationship:{id}

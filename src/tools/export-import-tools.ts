@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { MemoryStore } from '../redis/memory-store.js';
+import { MemoryStore } from '../persistence/memory-store.js';
 import {
   ExportMemoriesSchema,
   ImportMemoriesSchema,
@@ -22,7 +22,7 @@ export async function exportMemories(
   args: ExportMemories,
   workspacePath?: string
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
-  const store = new MemoryStore(workspacePath);
+  const store = await MemoryStore.create(workspacePath);
 
   // Get all memories or filtered subset
   let memories: MemoryEntry[];
@@ -85,7 +85,7 @@ export async function importMemories(
   args: ImportMemories,
   workspacePath?: string
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
-  const store = new MemoryStore(workspacePath);
+  const store = await MemoryStore.create(workspacePath);
 
   let importData: any;
   try {
@@ -124,6 +124,7 @@ export async function importMemories(
         summary: memoryData.summary,
         session_id: memoryData.session_id,
         ttl_seconds: memoryData.ttl_seconds,
+        is_global: false,
       };
 
       // Create or update memory
@@ -134,6 +135,7 @@ export async function importMemories(
         // For new imports, we'll create with the original ID by directly manipulating
         // We need to recreate the memory with its original ID
         // This is a special case for imports
+        // TODO: importedMemory isn't used - should it be removed?
         const importedMemory: MemoryEntry = {
           id: memoryData.id,
           timestamp: memoryData.timestamp || Date.now(),
@@ -146,6 +148,8 @@ export async function importMemories(
           embedding: args.regenerate_embeddings ? undefined : memoryData.embedding,
           ttl_seconds: memoryData.ttl_seconds,
           expires_at: memoryData.expires_at,
+          workspace_id: '',
+          is_global: false,
         };
 
         // If we need to regenerate embeddings, create normally
@@ -195,7 +199,7 @@ export async function findDuplicates(
   args: FindDuplicates,
   workspacePath?: string
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
-  const store = new MemoryStore(workspacePath);
+  const store = await  MemoryStore.create(workspacePath);
 
   // Get all memories
   const memories = await store.getRecentMemories(10000);
@@ -332,7 +336,7 @@ export async function consolidateMemories(
   args: ConsolidateMemories,
   workspacePath?: string
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
-  const store = new MemoryStore(workspacePath);
+  const store = await MemoryStore.create(workspacePath);
 
   const result = await store.mergeMemories(args.memory_ids, args.keep_id);
 

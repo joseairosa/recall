@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 
 /**
- * Comprehensive test script for v1.5.0 features
+ * Comprehensive test script for v1.7.0 features (converted from v1.5.0)
  * Tests: Versioning, Templates, Categories, Advanced Search
  */
 
-import Redis from 'ioredis';
+import { createStorageClient } from '../src/persistence/storage-client.factory.js';
 import { MemoryStore } from '../src/persistence/memory-store.js';
+import { StorageClient } from '../src/persistence/storage-client.js';
+import { RelationshipType } from '../src/types.js';
 
-const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+let storageClient: StorageClient;
 
 // Colors for console output
 const colors = {
@@ -20,30 +22,26 @@ const colors = {
   cyan: '\x1b[36m',
 };
 
-function log(message, color = 'reset') {
+function log(message: string, color: keyof typeof colors = 'reset') {
   console.log(`${colors[color]}${message}${colors.reset}`);
 }
 
-function logSection(title) {
+function logSection(title: string) {
   console.log('\n' + '='.repeat(60));
   log(title, 'cyan');
   console.log('='.repeat(60));
 }
 
-function logTest(name) {
+function logTest(name: string) {
   log(`\n→ Testing: ${name}`, 'blue');
 }
 
-function logSuccess(message) {
+function logSuccess(message: string) {
   log(`  ✓ ${message}`, 'green');
 }
 
-function logError(message) {
+function logError(message: string) {
   log(`  ✗ ${message}`, 'red');
-}
-
-function logWarning(message) {
-  log(`  ⚠ ${message}`, 'yellow');
 }
 
 // Test results
@@ -53,7 +51,7 @@ const results = {
   warnings: 0,
 };
 
-async function assert(condition, message) {
+async function assert(condition: any, message: string) {
   if (condition) {
     results.passed++;
     logSuccess(message);
@@ -64,12 +62,29 @@ async function assert(condition, message) {
   }
 }
 
+const createdMemoryIds: string[] = [];
+const createdTemplateIds: string[] = [];
+const createdRelationshipIds: string[] = [];
+
 async function cleanup() {
-  // Clean up test keys
-  const testKeys = await redis.keys('ws:*:test-*');
-  if (testKeys.length > 0) {
-    await redis.del(...testKeys);
+  logSection('Performing Cleanup');
+  const memoryStore = await MemoryStore.create();
+  for (const id of createdMemoryIds) {
+    try {
+      await memoryStore.deleteMemory(id);
+    } catch (e) {}
   }
+  for (const id of createdTemplateIds) {
+    try {
+      await memoryStore.deleteTemplate(id);
+    } catch (e) {}
+  }
+  for (const id of createdRelationshipIds) {
+    try {
+      await memoryStore.deleteRelationship(id);
+    } catch (e) {}
+  }
+  logSuccess('Cleanup complete.');
 }
 
 // ============================================================================
@@ -87,7 +102,9 @@ async function testVersioning() {
     context_type: 'information',
     importance: 7,
     tags: ['test', 'versioning'],
+    is_global: false
   });
+  createdMemoryIds.push(memory.id);
   await assert(memory.id, 'Memory created successfully');
   await assert(memory.content === 'Initial content for versioning test', 'Content matches');
 
@@ -98,7 +115,7 @@ async function testVersioning() {
     importance: 8,
   });
   await assert(updated, 'Memory updated successfully');
-  await assert(updated.content === 'Updated content v2', 'Content updated');
+  await assert(updated!.content === 'Updated content v2', 'Content updated');
 
   // Test 3: Check version was created
   logTest('Verify version history was created');
@@ -124,7 +141,7 @@ async function testVersioning() {
   const rolledBack = await memoryStore.rollbackMemory(memory.id, firstVersionId, true);
   await assert(rolledBack, 'Rollback successful');
   await assert(
-    rolledBack.content === 'Initial content for versioning test',
+    rolledBack!.content === 'Initial content for versioning test',
     'Content rolled back correctly'
   );
 
@@ -135,21 +152,6 @@ async function testVersioning() {
     historyAfterRollback.length > history2.length,
     `Rollback added versions (${historyAfterRollback.length} total)`
   );
-
-  // Test 7: Check Redis keys
-  logTest('Verify Redis version keys exist');
-  const versionKeys = await redis.keys(`*:memory:${memory.id}:versions`);
-  await assert(versionKeys.length > 0, `Version sorted set exists (${versionKeys.length} keys)`);
-
-  const versionData = await redis.zrange(versionKeys[0], 0, -1);
-  await assert(
-    versionData.length >= 2,
-    `Version IDs stored in Redis (${versionData.length} versions)`
-  );
-
-  // Cleanup
-  await memoryStore.deleteMemory(memory.id);
-  logSuccess('Cleanup: Test memory deleted');
 }
 
 // ============================================================================
@@ -170,6 +172,7 @@ async function testTemplates() {
     default_tags: ['bug', 'test'],
     default_importance: 8,
   });
+  createdTemplateIds.push(template.template_id);
   await assert(template.template_id, 'Template created successfully');
   await assert(template.name === 'Bug Report', 'Template name correct');
   await assert(template.content_template.includes('{{title}}'), 'Template has placeholders');
@@ -193,6 +196,7 @@ async function testTemplates() {
     ['urgent'],
     9
   );
+  createdMemoryIds.push(memory.id);
   await assert(memory.id, 'Memory created from template');
   await assert(memory.content.includes('Login fails'), 'Template variable replaced');
   await assert(memory.content.includes('high'), 'Severity variable replaced');
@@ -207,22 +211,12 @@ async function testTemplates() {
     await memoryStore.createFromTemplate(template.template_id, { title: 'Test' });
     logError('Should have thrown error for missing variables');
     results.failed++;
-  } catch (error) {
+  } catch (error: any) {
     await assert(
       error.message.includes('Missing variables'),
       'Correctly caught missing variables'
     );
   }
-
-  // Test 5: Verify Redis keys
-  logTest('Verify Redis template keys exist');
-  const templateKeys = await redis.keys('*:template:*');
-  await assert(templateKeys.length > 0, `Template keys exist (${templateKeys.length} keys)`);
-
-  // Cleanup
-  await memoryStore.deleteTemplate(template.template_id);
-  await memoryStore.deleteMemory(memory.id);
-  logSuccess('Cleanup: Template and memory deleted');
 }
 
 // ============================================================================
@@ -241,7 +235,9 @@ async function testCategories() {
     importance: 7,
     tags: ['test'],
     category: 'authentication',
+    is_global: false
   });
+  createdMemoryIds.push(memory1.id);
   await assert(memory1.category === 'authentication', 'Category set on creation');
 
   // Test 2: Set category on existing memory
@@ -251,9 +247,11 @@ async function testCategories() {
     context_type: 'information',
     importance: 6,
     tags: ['test'],
+    is_global: false
   });
+  createdMemoryIds.push(memory2.id);
   const categorized = await memoryStore.setMemoryCategory(memory2.id, 'database');
-  await assert(categorized.category === 'database', 'Category assigned');
+  await assert(categorized!.category === 'database', 'Category assigned');
 
   // Test 3: Create multiple memories in same category
   logTest('Create multiple memories in same category');
@@ -263,7 +261,9 @@ async function testCategories() {
     importance: 5,
     tags: ['test'],
     category: 'authentication',
+    is_global: false
   });
+  createdMemoryIds.push(memory3.id);
   await assert(memory3.category === 'authentication', 'Second memory in same category');
 
   // Test 4: List all categories
@@ -272,7 +272,7 @@ async function testCategories() {
   await assert(categories.length >= 2, `Categories exist (${categories.length} total)`);
   const authCategory = categories.find((c) => c.category === 'authentication');
   await assert(authCategory, 'Authentication category found');
-  await assert(authCategory.memory_count >= 2, 'Category count is correct');
+  await assert(authCategory?.memory_count! >= 2, 'Category count is correct');
 
   // Test 5: Get memories by category
   logTest('Get memories by category');
@@ -286,24 +286,13 @@ async function testCategories() {
   // Test 6: Update category
   logTest('Update memory category');
   const updated = await memoryStore.setMemoryCategory(memory1.id, 'security');
-  await assert(updated.category === 'security', 'Category updated');
+  await assert(updated!.category === 'security', 'Category updated');
 
   const authMemoriesAfter = await memoryStore.getMemoriesByCategory('authentication');
   await assert(
     authMemoriesAfter.length === authMemories.length - 1,
     'Memory removed from old category'
   );
-
-  // Test 7: Verify Redis keys
-  logTest('Verify Redis category keys exist');
-  const categoryKeys = await redis.keys('*:category:*');
-  await assert(categoryKeys.length > 0, `Category keys exist (${categoryKeys.length} keys)`);
-
-  // Cleanup
-  await memoryStore.deleteMemory(memory1.id);
-  await memoryStore.deleteMemory(memory2.id);
-  await memoryStore.deleteMemory(memory3.id);
-  logSuccess('Cleanup: Test memories deleted');
 }
 
 // ============================================================================
@@ -322,6 +311,7 @@ async function testAdvancedSearch() {
     importance: 8,
     tags: ['auth'],
     category: 'authentication',
+    is_global: false
   });
 
   const memory2 = await memoryStore.createMemory({
@@ -330,6 +320,7 @@ async function testAdvancedSearch() {
     importance: 7,
     tags: ['db'],
     category: 'database',
+    is_global: false
   });
 
   const memory3 = await memoryStore.createMemory({
@@ -338,6 +329,7 @@ async function testAdvancedSearch() {
     importance: 6,
     tags: ['api'],
     category: 'api',
+    is_global: false
   });
 
   const memory4 = await memoryStore.createMemory({
@@ -346,19 +338,17 @@ async function testAdvancedSearch() {
     importance: 7,
     tags: ['api'],
     category: 'api',
+    is_global: false
   });
 
+  createdMemoryIds.push(memory1.id, memory2.id, memory3.id, memory4.id);
   await assert(memory1.id && memory2.id && memory3.id && memory4.id, 'Test memories created');
 
   // Test 1: Fuzzy search
   logTest('Fuzzy search (typo tolerance)');
   const fuzzyResults = await memoryStore.searchMemories(
     'authentification', // Typo
-    10,
-    undefined,
-    undefined,
-    undefined,
-    true // fuzzy
+    10, undefined, undefined, undefined, true // fuzzy
   );
   await assert(fuzzyResults.length > 0, `Fuzzy search found results (${fuzzyResults.length})`);
   const foundAuth = fuzzyResults.some((r) => r.content.includes('Authentication'));
@@ -367,13 +357,7 @@ async function testAdvancedSearch() {
   // Test 2: Regex search
   logTest('Regex search (pattern matching)');
   const regexResults = await memoryStore.searchMemories(
-    'API', // Query
-    10,
-    undefined,
-    undefined,
-    undefined,
-    false,
-    'API.*v[0-9]+' // Regex pattern
+    'API', 10, undefined, undefined, undefined, false, 'API.*v[0-9]+' // Regex
   );
   await assert(regexResults.length >= 2, `Regex search found results (${regexResults.length})`);
   await assert(
@@ -384,11 +368,7 @@ async function testAdvancedSearch() {
   // Test 3: Category filter
   logTest('Category filtering');
   const categoryResults = await memoryStore.searchMemories(
-    'configuration', // Query
-    10,
-    undefined,
-    undefined,
-    'database' // Category filter
+    'configuration', 10, undefined, undefined, 'database' // Category
   );
   await assert(categoryResults.length > 0, `Category search found results`);
   await assert(
@@ -399,12 +379,7 @@ async function testAdvancedSearch() {
   // Test 4: Combined filters (category + fuzzy)
   logTest('Combined filters (category + fuzzy)');
   const combinedResults = await memoryStore.searchMemories(
-    'conection', // Typo
-    10,
-    undefined,
-    undefined,
-    'database', // Category
-    true // Fuzzy
+    'conection', 10, undefined, undefined, 'database', true // Category + Fuzzy
   );
   await assert(
     combinedResults.length > 0,
@@ -414,25 +389,13 @@ async function testAdvancedSearch() {
   // Test 5: Search with importance filter
   logTest('Search with importance filter');
   const importantResults = await memoryStore.searchMemories(
-    'API',
-    10,
-    8, // min_importance
-    undefined,
-    undefined,
-    false
+    'API', 10, 8, undefined, undefined, false
   );
   await assert(importantResults.length >= 0, 'Importance filter works');
   await assert(
     importantResults.every((r) => r.importance >= 8),
     'All results meet importance threshold'
   );
-
-  // Cleanup
-  await memoryStore.deleteMemory(memory1.id);
-  await memoryStore.deleteMemory(memory2.id);
-  await memoryStore.deleteMemory(memory3.id);
-  await memoryStore.deleteMemory(memory4.id);
-  logSuccess('Cleanup: Test memories deleted');
 }
 
 // ============================================================================
@@ -450,7 +413,9 @@ async function testBackwardCompatibility() {
     context_type: 'information',
     importance: 7,
     tags: ['old'],
+    is_global: false
   });
+  createdMemoryIds.push(oldStyleMemory.id);
   await assert(oldStyleMemory.id, 'Old-style memory created');
   await assert(oldStyleMemory.category === undefined, 'Category is optional');
 
@@ -459,12 +424,12 @@ async function testBackwardCompatibility() {
   const updated = await memoryStore.updateMemory(oldStyleMemory.id, {
     content: 'Updated old-style memory',
   });
-  await assert(updated.content === 'Updated old-style memory', 'Old-style update works');
+  await assert(updated!.content === 'Updated old-style memory', 'Old-style update works');
 
   // Test 3: Search without new parameters (like v1.4.0)
   logTest('Search without v1.5.0 parameters');
-  const results = await memoryStore.searchMemories('old', 10);
-  await assert(results.length > 0, 'Old-style search works');
+  const searchResults = await memoryStore.searchMemories('old', 10);
+  await assert(searchResults.length > 0, 'Old-style search works');
 
   // Test 4: Verify v1.4.0 relationships still work
   logTest('Verify v1.4.0 relationships still work');
@@ -473,23 +438,20 @@ async function testBackwardCompatibility() {
     context_type: 'information',
     importance: 6,
     tags: ['test'],
+    is_global: false
   });
+  createdMemoryIds.push(memory2.id);
 
   const relationship = await memoryStore.createRelationship(
     oldStyleMemory.id,
     memory2.id,
-    'relates_to'
+    RelationshipType.RELATES_TO
   );
+  createdRelationshipIds.push(relationship.id);
   await assert(relationship.id, 'Relationships still work');
 
-  const related = await memoryStore.getRelatedMemories(oldStyleMemory.id, undefined, 1, 'both');
+  const related = await memoryStore.getRelatedMemories(oldStyleMemory.id, { depth: 1, direction: 'both' });
   await assert(related.length > 0, 'Get related memories still works');
-
-  // Cleanup
-  await memoryStore.deleteRelationship(relationship.id);
-  await memoryStore.deleteMemory(oldStyleMemory.id);
-  await memoryStore.deleteMemory(memory2.id);
-  logSuccess('Cleanup: Test memories deleted');
 }
 
 // ============================================================================
@@ -498,15 +460,16 @@ async function testBackwardCompatibility() {
 async function runAllTests() {
   console.log('\n');
   log('╔═══════════════════════════════════════════════════════════╗', 'cyan');
-  log('║     Recall v1.5.0 - Comprehensive Feature Test Suite     ║', 'cyan');
+  log('║     Recall v1.7.0 - Comprehensive Feature Test Suite     ║', 'cyan');
   log('╚═══════════════════════════════════════════════════════════╝', 'cyan');
 
   try {
-    // Check Redis connection
+    // Pre-flight Checks
     logSection('Pre-flight Checks');
-    logTest('Redis connection');
-    await redis.ping();
-    logSuccess('Redis connected successfully');
+    logTest('Backend connection');
+    storageClient = await createStorageClient();
+    const connected = await storageClient.checkConnection();
+    await assert(connected, 'Backend connected successfully');
 
     // Run all test phases
     await testVersioning();
@@ -515,31 +478,31 @@ async function runAllTests() {
     await testAdvancedSearch();
     await testBackwardCompatibility();
 
+  } catch (error: any) {
+    logError(`\nTest suite crashed: ${error.message}`);
+    console.error(error.stack);
+    results.failed++;
+  } finally {
     // Cleanup
     await cleanup();
 
     // Print summary
     logSection('Test Summary');
-    log(`Total Tests: ${results.passed + results.failed}`, 'blue');
+    log(`Total Assertions: ${results.passed + results.failed}`, 'blue');
     log(`✓ Passed: ${results.passed}`, 'green');
     log(`✗ Failed: ${results.failed}`, results.failed > 0 ? 'red' : 'green');
-    if (results.warnings > 0) {
-      log(`⚠ Warnings: ${results.warnings}`, 'yellow');
+
+    if (storageClient) {
+      await storageClient.closeClient();
     }
 
     if (results.failed === 0) {
-      log('\n🎉 All tests passed! v1.5.0 is working correctly.', 'green');
+      log('\n🎉 All tests passed! v1.7.0 features are working correctly.', 'green');
       process.exit(0);
     } else {
       log('\n❌ Some tests failed. Review errors above.', 'red');
       process.exit(1);
     }
-  } catch (error) {
-    logError(`\nTest suite crashed: ${error.message}`);
-    console.error(error.stack);
-    process.exit(1);
-  } finally {
-    redis.disconnect();
   }
 }
 

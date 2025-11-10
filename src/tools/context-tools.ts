@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
-import { MemoryStore } from '../redis/memory-store.js';
+import { MemoryStore } from '../persistence/memory-store.js';
 import { ConversationAnalyzer } from '../analysis/conversation-analyzer.js';
 import {
   RecallContextSchema,
@@ -11,7 +11,7 @@ import {
   type MemoryEntry,
 } from '../types.js';
 
-const memoryStore = new MemoryStore();
+const memoryStore = await MemoryStore.create();
 const analyzer = new ConversationAnalyzer();
 
 /**
@@ -88,6 +88,7 @@ export const analyze_and_remember = {
             importance: e.importance,
             tags: e.tags,
             summary: e.summary,
+            is_global: false,
           }))
         );
 

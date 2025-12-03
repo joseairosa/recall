@@ -7,11 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-##[1.7.0] - 2025-11-20
+## [1.7.0] - 2025-11-20
 
 ### Added
-- **Added Valkey support** - now supports Valkey as alternative memory store
 
+- **Valkey Support** - Now supports Valkey as an alternative backend to Redis
+  - New `BACKEND_TYPE` environment variable to select backend (`redis` or `valkey`)
+  - `VALKEY_HOST` and `VALKEY_PORT` configuration options
+  - Uses `@valkey/valkey-glide` client for Valkey connections
+  - Full feature parity with Redis backend
+
+### Changed
+
+- **Architecture Refactor** - Introduced storage abstraction layer
+  - New `StorageClient` interface for backend-agnostic storage operations
+  - `RedisAdapter` and `ValkeyAdapter` implement the common interface
+  - Factory pattern (`createStorageClient`) for backend selection
+  - Moved persistence code to `src/persistence/` directory
+
+### Fixed
+
+- Ported JavaScript tests to TypeScript for better type safety
+
+---
 
 ## [1.6.0] - 2025-10-04
 

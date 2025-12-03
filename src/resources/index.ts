@@ -1,31 +1,36 @@
-import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
-import { MemoryStore } from '../redis/memory-store.js';
-import type { ContextType } from '../types.js';
-import { getAnalytics } from './analytics.js';
-import { getWorkspaceMode, WorkspaceMode, RedisKeys } from '../types.js';
-import { getRedisClient } from '../redis/client.js';
+import { McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
+import { MemoryStore } from "../persistence/memory-store.js";
+import type { ContextType } from "../types.js";
+import { getAnalytics } from "./analytics.js";
+import { getWorkspaceMode, WorkspaceMode, StorageKeys } from "../types.js";
+import { RedisClientProvider } from "../persistence/redis-client.js";
+import { ValkeyClientProvider } from "../persistence/valkey-client.js";
+import { StorageClient } from "../persistence/storage-client.js";
+import { createStorageClient } from "../persistence/storage-client.factory.js";
 
-const memoryStore = new MemoryStore();
-const redis = getRedisClient();
+
+
+const memoryStore = await MemoryStore.create();
+const storageClient = await createStorageClient()
 
 export const resources = {
-  'memory://recent': {
-    name: 'Recent Memories',
-    description: 'Get the most recent memories (default: 50)',
-    mimeType: 'application/json',
+  "memory://recent": {
+    name: "Recent Memories",
+    description: "Get the most recent memories (default: 50)",
+    mimeType: "application/json",
     handler: async (uri: URL) => {
-      const limit = parseInt(uri.searchParams.get('limit') || '50', 10);
+      const limit = parseInt(uri.searchParams.get("limit") || "50", 10);
       const memories = await memoryStore.getRecentMemories(limit);
 
       return {
         contents: [
           {
             uri: uri.toString(),
-            mimeType: 'application/json',
+            mimeType: "application/json",
             text: JSON.stringify(
               {
                 count: memories.length,
-                memories: memories.map(m => ({
+                memories: memories.map((m) => ({
                   memory_id: m.id,
                   content: m.content,
                   summary: m.summary,
@@ -45,13 +50,15 @@ export const resources = {
     },
   },
 
-  'memory://by-type/{type}': {
-    name: 'Memories by Type',
-    description: 'Get memories filtered by context type',
-    mimeType: 'application/json',
+  "memory://by-type/{type}": {
+    name: "Memories by Type",
+    description: "Get memories filtered by context type",
+    mimeType: "application/json",
     handler: async (uri: URL, params: { type: string }) => {
       const type = params.type as ContextType;
-      const limit = uri.searchParams.get('limit') ? parseInt(uri.searchParams.get('limit')!, 10) : undefined;
+      const limit = uri.searchParams.get("limit")
+        ? parseInt(uri.searchParams.get("limit")!, 10)
+        : undefined;
 
       const memories = await memoryStore.getMemoriesByType(type, limit);
 
@@ -59,12 +66,12 @@ export const resources = {
         contents: [
           {
             uri: uri.toString(),
-            mimeType: 'application/json',
+            mimeType: "application/json",
             text: JSON.stringify(
               {
                 context_type: type,
                 count: memories.length,
-                memories: memories.map(m => ({
+                memories: memories.map((m) => ({
                   memory_id: m.id,
                   content: m.content,
                   summary: m.summary,
@@ -82,13 +89,15 @@ export const resources = {
     },
   },
 
-  'memory://by-tag/{tag}': {
-    name: 'Memories by Tag',
-    description: 'Get memories filtered by tag',
-    mimeType: 'application/json',
+  "memory://by-tag/{tag}": {
+    name: "Memories by Tag",
+    description: "Get memories filtered by tag",
+    mimeType: "application/json",
     handler: async (uri: URL, params: { tag: string }) => {
       const { tag } = params;
-      const limit = uri.searchParams.get('limit') ? parseInt(uri.searchParams.get('limit')!, 10) : undefined;
+      const limit = uri.searchParams.get("limit")
+        ? parseInt(uri.searchParams.get("limit")!, 10)
+        : undefined;
 
       const memories = await memoryStore.getMemoriesByTag(tag, limit);
 
@@ -96,12 +105,12 @@ export const resources = {
         contents: [
           {
             uri: uri.toString(),
-            mimeType: 'application/json',
+            mimeType: "application/json",
             text: JSON.stringify(
               {
                 tag,
                 count: memories.length,
-                memories: memories.map(m => ({
+                memories: memories.map((m) => ({
                   memory_id: m.id,
                   content: m.content,
                   summary: m.summary,
@@ -120,26 +129,31 @@ export const resources = {
     },
   },
 
-  'memory://important': {
-    name: 'Important Memories',
-    description: 'Get high-importance memories (importance >= 8)',
-    mimeType: 'application/json',
+  "memory://important": {
+    name: "Important Memories",
+    description: "Get high-importance memories (importance >= 8)",
+    mimeType: "application/json",
     handler: async (uri: URL) => {
-      const minImportance = parseInt(uri.searchParams.get('min') || '8', 10);
-      const limit = uri.searchParams.get('limit') ? parseInt(uri.searchParams.get('limit')!, 10) : undefined;
+      const minImportance = parseInt(uri.searchParams.get("min") || "8", 10);
+      const limit = uri.searchParams.get("limit")
+        ? parseInt(uri.searchParams.get("limit")!, 10)
+        : undefined;
 
-      const memories = await memoryStore.getImportantMemories(minImportance, limit);
+      const memories = await memoryStore.getImportantMemories(
+        minImportance,
+        limit
+      );
 
       return {
         contents: [
           {
             uri: uri.toString(),
-            mimeType: 'application/json',
+            mimeType: "application/json",
             text: JSON.stringify(
               {
                 min_importance: minImportance,
                 count: memories.length,
-                memories: memories.map(m => ({
+                memories: memories.map((m) => ({
                   memory_id: m.id,
                   content: m.content,
                   summary: m.summary,
@@ -158,16 +172,19 @@ export const resources = {
     },
   },
 
-  'memory://session/{session_id}': {
-    name: 'Session Memories',
-    description: 'Get all memories in a specific session',
-    mimeType: 'application/json',
+  "memory://session/{session_id}": {
+    name: "Session Memories",
+    description: "Get all memories in a specific session",
+    mimeType: "application/json",
     handler: async (uri: URL, params: { session_id: string }) => {
       const { session_id } = params;
       const session = await memoryStore.getSession(session_id);
 
       if (!session) {
-        throw new McpError(ErrorCode.InvalidRequest, `Session ${session_id} not found`);
+        throw new McpError(
+          ErrorCode.InvalidRequest,
+          `Session ${session_id} not found`
+        );
       }
 
       const memories = await memoryStore.getSessionMemories(session_id);
@@ -176,7 +193,7 @@ export const resources = {
         contents: [
           {
             uri: uri.toString(),
-            mimeType: 'application/json',
+            mimeType: "application/json",
             text: JSON.stringify(
               {
                 session_id: session.session_id,
@@ -184,7 +201,7 @@ export const resources = {
                 created_at: session.created_at,
                 summary: session.summary,
                 count: memories.length,
-                memories: memories.map(m => ({
+                memories: memories.map((m) => ({
                   memory_id: m.id,
                   content: m.content,
                   summary: m.summary,
@@ -203,10 +220,10 @@ export const resources = {
     },
   },
 
-  'memory://sessions': {
-    name: 'All Sessions',
-    description: 'Get list of all sessions',
-    mimeType: 'application/json',
+  "memory://sessions": {
+    name: "All Sessions",
+    description: "Get list of all sessions",
+    mimeType: "application/json",
     handler: async (uri: URL) => {
       const sessions = await memoryStore.getAllSessions();
 
@@ -214,11 +231,11 @@ export const resources = {
         contents: [
           {
             uri: uri.toString(),
-            mimeType: 'application/json',
+            mimeType: "application/json",
             text: JSON.stringify(
               {
                 count: sessions.length,
-                sessions: sessions.map(s => ({
+                sessions: sessions.map((s) => ({
                   session_id: s.session_id,
                   session_name: s.session_name,
                   created_at: s.created_at,
@@ -235,10 +252,10 @@ export const resources = {
     },
   },
 
-  'memory://summary': {
-    name: 'Memory Summary',
-    description: 'Get overall summary statistics of stored memories',
-    mimeType: 'application/json',
+  "memory://summary": {
+    name: "Memory Summary",
+    description: "Get overall summary statistics of stored memories",
+    mimeType: "application/json",
     handler: async (uri: URL) => {
       const stats = await memoryStore.getSummaryStats();
 
@@ -246,7 +263,7 @@ export const resources = {
         contents: [
           {
             uri: uri.toString(),
-            mimeType: 'application/json',
+            mimeType: "application/json",
             text: JSON.stringify(stats, null, 2),
           },
         ],
@@ -254,33 +271,40 @@ export const resources = {
     },
   },
 
-  'memory://search': {
-    name: 'Search Memories',
-    description: 'Search memories using semantic similarity',
-    mimeType: 'application/json',
+  "memory://search": {
+    name: "Search Memories",
+    description: "Search memories using semantic similarity",
+    mimeType: "application/json",
     handler: async (uri: URL) => {
-      const query = uri.searchParams.get('q');
+      const query = uri.searchParams.get("q");
       if (!query) {
-        throw new McpError(ErrorCode.InvalidRequest, 'Query parameter "q" is required');
+        throw new McpError(
+          ErrorCode.InvalidRequest,
+          'Query parameter "q" is required'
+        );
       }
 
-      const limit = parseInt(uri.searchParams.get('limit') || '10', 10);
-      const minImportance = uri.searchParams.get('min_importance')
-        ? parseInt(uri.searchParams.get('min_importance')!, 10)
+      const limit = parseInt(uri.searchParams.get("limit") || "10", 10);
+      const minImportance = uri.searchParams.get("min_importance")
+        ? parseInt(uri.searchParams.get("min_importance")!, 10)
         : undefined;
 
-      const results = await memoryStore.searchMemories(query, limit, minImportance);
+      const results = await memoryStore.searchMemories(
+        query,
+        limit,
+        minImportance
+      );
 
       return {
         contents: [
           {
             uri: uri.toString(),
-            mimeType: 'application/json',
+            mimeType: "application/json",
             text: JSON.stringify(
               {
                 query,
                 count: results.length,
-                results: results.map(r => ({
+                results: results.map((r) => ({
                   memory_id: r.id,
                   content: r.content,
                   summary: r.summary,
@@ -300,10 +324,10 @@ export const resources = {
     },
   },
 
-  'memory://analytics': {
-    name: 'Memory Analytics',
-    description: 'Get detailed analytics about memory usage and trends',
-    mimeType: 'text/markdown',
+  "memory://analytics": {
+    name: "Memory Analytics",
+    description: "Get detailed analytics about memory usage and trends",
+    mimeType: "text/markdown",
     handler: async (uri: URL) => {
       const analytics = await getAnalytics();
 
@@ -311,7 +335,7 @@ export const resources = {
         contents: [
           {
             uri: uri.toString(),
-            mimeType: 'text/markdown',
+            mimeType: "text/markdown",
             text: analytics,
           },
         ],
@@ -320,33 +344,37 @@ export const resources = {
   },
 
   // Global memory resources (v1.3.0)
-  'memory://global/recent': {
-    name: 'Recent Global Memories',
-    description: 'Get the most recent global memories (cross-workspace)',
-    mimeType: 'application/json',
+  "memory://global/recent": {
+    name: "Recent Global Memories",
+    description: "Get the most recent global memories (cross-workspace)",
+    mimeType: "application/json",
     handler: async (uri: URL) => {
       const mode = getWorkspaceMode();
       if (mode === WorkspaceMode.ISOLATED) {
         throw new McpError(
           ErrorCode.InvalidRequest,
-          'Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories.'
+          "Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories."
         );
       }
 
-      const limit = parseInt(uri.searchParams.get('limit') || '50', 10);
-      const ids = await redis.zrevrange(RedisKeys.globalTimeline(), 0, limit - 1);
+      const limit = parseInt(uri.searchParams.get("limit") || "50", 10);
+      const ids = await storageClient.zrevrange(
+        StorageKeys.globalTimeline(),
+        0,
+        limit - 1
+      );
       const memories = await memoryStore.getMemories(ids);
 
       return {
         contents: [
           {
             uri: uri.toString(),
-            mimeType: 'application/json',
+            mimeType: "application/json",
             text: JSON.stringify(
               {
                 count: memories.length,
                 workspace_mode: mode,
-                memories: memories.map(m => ({
+                memories: memories.map((m) => ({
                   memory_id: m.id,
                   content: m.content,
                   summary: m.summary,
@@ -366,23 +394,25 @@ export const resources = {
     },
   },
 
-  'memory://global/by-type/{type}': {
-    name: 'Global Memories by Type',
-    description: 'Get global memories filtered by context type',
-    mimeType: 'application/json',
+  "memory://global/by-type/{type}": {
+    name: "Global Memories by Type",
+    description: "Get global memories filtered by context type",
+    mimeType: "application/json",
     handler: async (uri: URL, params: { type: string }) => {
       const mode = getWorkspaceMode();
       if (mode === WorkspaceMode.ISOLATED) {
         throw new McpError(
           ErrorCode.InvalidRequest,
-          'Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories.'
+          "Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories."
         );
       }
 
       const type = params.type as ContextType;
-      const limit = uri.searchParams.get('limit') ? parseInt(uri.searchParams.get('limit')!, 10) : undefined;
+      const limit = uri.searchParams.get("limit")
+        ? parseInt(uri.searchParams.get("limit")!, 10)
+        : undefined;
 
-      const ids = await redis.smembers(RedisKeys.globalByType(type));
+      const ids = await storageClient.smembers(StorageKeys.globalByType(type));
       const allMemories = await memoryStore.getMemories(ids);
 
       // Sort by timestamp descending
@@ -393,13 +423,13 @@ export const resources = {
         contents: [
           {
             uri: uri.toString(),
-            mimeType: 'application/json',
+            mimeType: "application/json",
             text: JSON.stringify(
               {
                 context_type: type,
                 count: memories.length,
                 workspace_mode: mode,
-                memories: memories.map(m => ({
+                memories: memories.map((m) => ({
                   memory_id: m.id,
                   content: m.content,
                   summary: m.summary,
@@ -418,23 +448,25 @@ export const resources = {
     },
   },
 
-  'memory://global/by-tag/{tag}': {
-    name: 'Global Memories by Tag',
-    description: 'Get global memories filtered by tag',
-    mimeType: 'application/json',
+  "memory://global/by-tag/{tag}": {
+    name: "Global Memories by Tag",
+    description: "Get global memories filtered by tag",
+    mimeType: "application/json",
     handler: async (uri: URL, params: { tag: string }) => {
       const mode = getWorkspaceMode();
       if (mode === WorkspaceMode.ISOLATED) {
         throw new McpError(
           ErrorCode.InvalidRequest,
-          'Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories.'
+          "Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories."
         );
       }
 
       const { tag } = params;
-      const limit = uri.searchParams.get('limit') ? parseInt(uri.searchParams.get('limit')!, 10) : undefined;
+      const limit = uri.searchParams.get("limit")
+        ? parseInt(uri.searchParams.get("limit")!, 10)
+        : undefined;
 
-      const ids = await redis.smembers(RedisKeys.globalByTag(tag));
+      const ids = await storageClient.smembers(StorageKeys.globalByTag(tag));
       const allMemories = await memoryStore.getMemories(ids);
 
       // Sort by timestamp descending
@@ -445,13 +477,13 @@ export const resources = {
         contents: [
           {
             uri: uri.toString(),
-            mimeType: 'application/json',
+            mimeType: "application/json",
             text: JSON.stringify(
               {
                 tag,
                 count: memories.length,
                 workspace_mode: mode,
-                memories: memories.map(m => ({
+                memories: memories.map((m) => ({
                   memory_id: m.id,
                   content: m.content,
                   summary: m.summary,
@@ -471,29 +503,29 @@ export const resources = {
     },
   },
 
-  'memory://global/important': {
-    name: 'Important Global Memories',
-    description: 'Get high-importance global memories (importance >= 8)',
-    mimeType: 'application/json',
+  "memory://global/important": {
+    name: "Important Global Memories",
+    description: "Get high-importance global memories (importance >= 8)",
+    mimeType: "application/json",
     handler: async (uri: URL) => {
       const mode = getWorkspaceMode();
       if (mode === WorkspaceMode.ISOLATED) {
         throw new McpError(
           ErrorCode.InvalidRequest,
-          'Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories.'
+          "Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories."
         );
       }
 
-      const minImportance = parseInt(uri.searchParams.get('min') || '8', 10);
-      const limit = uri.searchParams.get('limit') ? parseInt(uri.searchParams.get('limit')!, 10) : undefined;
+      const minImportance = parseInt(uri.searchParams.get("min") || "8", 10);
+      const limit = uri.searchParams.get("limit")
+        ? parseInt(uri.searchParams.get("limit")!, 10)
+        : undefined;
 
-      const results = await redis.zrevrangebyscore(
-        RedisKeys.globalImportant(),
+      const results = await storageClient.zrevrangebyscore(
+        StorageKeys.globalImportant(),
         10,
         minImportance,
-        'LIMIT',
-        0,
-        limit || 100
+        { offset: 0, count: limit || 100 }
       );
 
       const memories = await memoryStore.getMemories(results);
@@ -502,13 +534,13 @@ export const resources = {
         contents: [
           {
             uri: uri.toString(),
-            mimeType: 'application/json',
+            mimeType: "application/json",
             text: JSON.stringify(
               {
                 min_importance: minImportance,
                 count: memories.length,
                 workspace_mode: mode,
-                memories: memories.map(m => ({
+                memories: memories.map((m) => ({
                   memory_id: m.id,
                   content: m.content,
                   summary: m.summary,
@@ -528,29 +560,32 @@ export const resources = {
     },
   },
 
-  'memory://global/search': {
-    name: 'Search Global Memories',
-    description: 'Search global memories using semantic similarity',
-    mimeType: 'application/json',
+  "memory://global/search": {
+    name: "Search Global Memories",
+    description: "Search global memories using semantic similarity",
+    mimeType: "application/json",
     handler: async (uri: URL) => {
       const mode = getWorkspaceMode();
       if (mode === WorkspaceMode.ISOLATED) {
         throw new McpError(
           ErrorCode.InvalidRequest,
-          'Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories.'
+          "Global memories are not available in isolated mode. Set WORKSPACE_MODE=hybrid or global to access global memories."
         );
       }
 
-      const query = uri.searchParams.get('q');
+      const query = uri.searchParams.get("q");
       if (!query) {
-        throw new McpError(ErrorCode.InvalidRequest, 'Query parameter "q" is required');
+        throw new McpError(
+          ErrorCode.InvalidRequest,
+          'Query parameter "q" is required'
+        );
       }
 
-      const limit = parseInt(uri.searchParams.get('limit') || '10', 10);
+      const limit = parseInt(uri.searchParams.get("limit") || "10", 10);
 
       // Temporarily switch to global mode for search
       const originalMode = process.env.WORKSPACE_MODE;
-      process.env.WORKSPACE_MODE = 'global';
+      process.env.WORKSPACE_MODE = "global";
 
       try {
         const results = await memoryStore.searchMemories(query, limit);
@@ -559,13 +594,13 @@ export const resources = {
           contents: [
             {
               uri: uri.toString(),
-              mimeType: 'application/json',
+              mimeType: "application/json",
               text: JSON.stringify(
                 {
                   query,
                   count: results.length,
                   workspace_mode: mode,
-                  results: results.map(r => ({
+                  results: results.map((r) => ({
                     memory_id: r.id,
                     content: r.content,
                     summary: r.summary,
@@ -598,24 +633,28 @@ export const resources = {
   // Relationship Resources (v1.4.0)
   // ============================================================================
 
-  'memory://relationships': {
-    name: 'All Memory Relationships',
-    description: 'List all memory relationships in the current workspace',
-    mimeType: 'application/json',
+  "memory://relationships": {
+    name: "All Memory Relationships",
+    description: "List all memory relationships in the current workspace",
+    mimeType: "application/json",
     handler: async (uri: URL) => {
-      const limit = parseInt(uri.searchParams.get('limit') || '100', 10);
+      const limit = parseInt(uri.searchParams.get("limit") || "100", 10);
       const mode = getWorkspaceMode();
 
       // Get all relationship IDs based on mode
       let relationshipIds: string[] = [];
 
       if (mode === WorkspaceMode.ISOLATED || mode === WorkspaceMode.HYBRID) {
-        const workspaceIds = await redis.smembers(RedisKeys.relationships(memoryStore['workspaceId']));
+        const workspaceIds = await storageClient.smembers(
+          StorageKeys.relationships(memoryStore["workspaceId"])
+        );
         relationshipIds.push(...workspaceIds);
       }
 
       if (mode === WorkspaceMode.GLOBAL || mode === WorkspaceMode.HYBRID) {
-        const globalIds = await redis.smembers(RedisKeys.globalRelationships());
+        const globalIds = await storageClient.smembers(
+          StorageKeys.globalRelationships()
+        );
         relationshipIds.push(...globalIds);
       }
 
@@ -624,24 +663,26 @@ export const resources = {
 
       // Fetch relationships
       const relationships = await Promise.all(
-        relationshipIds.map(async id => {
+        relationshipIds.map(async (id) => {
           const rel = await memoryStore.getRelationship(id);
           return rel;
         })
       );
 
-      const validRelationships = relationships.filter((r): r is NonNullable<typeof r> => r !== null);
+      const validRelationships = relationships.filter(
+        (r): r is NonNullable<typeof r> => r !== null
+      );
 
       return {
         contents: [
           {
             uri: uri.toString(),
-            mimeType: 'application/json',
+            mimeType: "application/json",
             text: JSON.stringify(
               {
                 count: validRelationships.length,
                 workspace_mode: mode,
-                relationships: validRelationships.map(r => ({
+                relationships: validRelationships.map((r) => ({
                   id: r.id,
                   from_memory_id: r.from_memory_id,
                   to_memory_id: r.to_memory_id,
@@ -659,18 +700,21 @@ export const resources = {
     },
   },
 
-  'memory://memory/{id}/related': {
-    name: 'Related Memories',
-    description: 'Get memories related to a specific memory',
-    mimeType: 'application/json',
+  "memory://memory/{id}/related": {
+    name: "Related Memories",
+    description: "Get memories related to a specific memory",
+    mimeType: "application/json",
     handler: async (uri: URL) => {
-      const memoryId = uri.pathname.split('/')[2];
+      const memoryId = uri.pathname.split("/")[2];
       if (!memoryId) {
-        throw new McpError(ErrorCode.InvalidRequest, 'Memory ID is required');
+        throw new McpError(ErrorCode.InvalidRequest, "Memory ID is required");
       }
 
-      const depth = parseInt(uri.searchParams.get('depth') || '1', 10);
-      const direction = (uri.searchParams.get('direction') || 'both') as 'outgoing' | 'incoming' | 'both';
+      const depth = parseInt(uri.searchParams.get("depth") || "1", 10);
+      const direction = (uri.searchParams.get("direction") || "both") as
+        | "outgoing"
+        | "incoming"
+        | "both";
 
       const results = await memoryStore.getRelatedMemories(memoryId, {
         depth,
@@ -681,14 +725,14 @@ export const resources = {
         contents: [
           {
             uri: uri.toString(),
-            mimeType: 'application/json',
+            mimeType: "application/json",
             text: JSON.stringify(
               {
                 root_memory_id: memoryId,
                 total_related: results.length,
                 depth,
                 direction,
-                related_memories: results.map(r => ({
+                related_memories: results.map((r) => ({
                   memory_id: r.memory.id,
                   content: r.memory.content,
                   summary: r.memory.summary,
@@ -714,20 +758,24 @@ export const resources = {
     },
   },
 
-  'memory://graph/{id}': {
-    name: 'Memory Graph',
-    description: 'Get a graph of related memories starting from a root memory',
-    mimeType: 'application/json',
+  "memory://graph/{id}": {
+    name: "Memory Graph",
+    description: "Get a graph of related memories starting from a root memory",
+    mimeType: "application/json",
     handler: async (uri: URL) => {
-      const memoryId = uri.pathname.split('/')[2];
+      const memoryId = uri.pathname.split("/")[2];
       if (!memoryId) {
-        throw new McpError(ErrorCode.InvalidRequest, 'Memory ID is required');
+        throw new McpError(ErrorCode.InvalidRequest, "Memory ID is required");
       }
 
-      const maxDepth = parseInt(uri.searchParams.get('depth') || '2', 10);
-      const maxNodes = parseInt(uri.searchParams.get('max_nodes') || '50', 10);
+      const maxDepth = parseInt(uri.searchParams.get("depth") || "2", 10);
+      const maxNodes = parseInt(uri.searchParams.get("max_nodes") || "50", 10);
 
-      const graph = await memoryStore.getMemoryGraph(memoryId, maxDepth, maxNodes);
+      const graph = await memoryStore.getMemoryGraph(
+        memoryId,
+        maxDepth,
+        maxNodes
+      );
 
       // Format graph for display
       const formattedNodes = Object.fromEntries(
@@ -742,7 +790,7 @@ export const resources = {
             tags: node.memory.tags,
             is_global: node.memory.is_global,
             depth: node.depth,
-            relationships: node.relationships.map(rel => ({
+            relationships: node.relationships.map((rel) => ({
               id: rel.id,
               type: rel.relationship_type,
               from: rel.from_memory_id,
@@ -756,7 +804,7 @@ export const resources = {
         contents: [
           {
             uri: uri.toString(),
-            mimeType: 'application/json',
+            mimeType: "application/json",
             text: JSON.stringify(
               {
                 root_memory_id: graph.root_memory_id,

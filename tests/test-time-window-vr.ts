@@ -1,28 +1,27 @@
 #!/usr/bin/env node
 
 /**
- * Test script for time window context retrieval (v1.6.0)
+ * Test script for time window context retrieval (v1.6.0) - TypeScript Version
  */
 
-import Redis from 'ioredis';
+import { createStorageClient } from '../src/persistence/storage-client.factory.js';
+import { CreateMemory, MemoryEntry } from '../src/types.js';
 import { ulid } from 'ulid';
 
 // Initialize Redis and create simplified store for testing
-const redis = new Redis({
-  host: process.env.REDIS_HOST || 'localhost',
-  port: parseInt(process.env.REDIS_PORT || '6379'),
-  db: 15, // Use test database
-});
+const storageClient = await createStorageClient();
 
 // Simplified MemoryStore mock for testing
 class TestMemoryStore {
-  constructor() {
-    this.workspaceId = 'test-workspace';
+  
+  workspaceId = 'test-workspace';
+
+  static async create() {
+    return new TestMemoryStore();
   }
 
-  async createMemory(data) {
+  async createMemory(data: CreateMemory, timestamp: number): Promise<MemoryEntry> {
     const id = ulid();
-    const timestamp = Date.now();
     const memory = {
       id,
       timestamp: timestamp.toString(),
@@ -34,10 +33,9 @@ class TestMemoryStore {
       is_global: 'false',
     };
 
-    // Store in Redis (hset expects flat key-value pairs)
-    const flatData = Object.entries(memory).flat();
-    await redis.hset(`ws:${this.workspaceId}:memory:${id}`, ...flatData);
-    await redis.zadd(`ws:${this.workspaceId}:memories:timeline`, timestamp, id);
+    // Store in Redis/Valkey
+    await storageClient.hset(`ws:${this.workspaceId}:memory:${id}`, memory);
+    await storageClient.zadd(`ws:${this.workspaceId}:memories:timeline`, timestamp, id);
 
     return {
       id,
@@ -51,18 +49,21 @@ class TestMemoryStore {
     };
   }
 
-  async getMemoriesByTimeWindow(startTime, endTime, minImportance, contextTypes) {
+  async getMemoriesByTimeWindow(startTime: number, endTime: number, minImportance?: number, contextTypes?: string[]): Promise<MemoryEntry[]> {
     // Get IDs in time range
-    const ids = await redis.zrangebyscore(
+    const ids = await storageClient.zrangebyscore(
       `ws:${this.workspaceId}:memories:timeline`,
       startTime,
       endTime
     );
-
+    console.log("Retrieved IDs in time window:", ids);
     // Retrieve memories
-    const memories = [];
+    const memories: MemoryEntry[] = [];
     for (const id of ids) {
-      const data = await redis.hgetall(`ws:${this.workspaceId}:memory:${id}`);
+      const mem_key = `ws:${this.workspaceId}:memory:${id}`;
+      console.log("Memory key:", mem_key);
+      const data = await storageClient.hgetall(mem_key);
+      console.log("Retrieved memory data:", data);  
       if (Object.keys(data).length > 0) {
         // Convert string values back to correct types
         const memory = {
@@ -71,7 +72,7 @@ class TestMemoryStore {
           importance: parseInt(data.importance),
           tags: data.tags ? JSON.parse(data.tags) : [],
           is_global: data.is_global === 'true',
-        };
+        } as MemoryEntry;
         memories.push(memory);
       }
     }
@@ -93,9 +94,9 @@ class TestMemoryStore {
     return filtered;
   }
 
-  async deleteMemory(id) {
-    await redis.del(`ws:${this.workspaceId}:memory:${id}`);
-    await redis.zrem(`ws:${this.workspaceId}:memories:timeline`, id);
+  async deleteMemory(id:string) {
+    await storageClient.del(`ws:${this.workspaceId}:memory:${id}`);
+    await storageClient.zrem(`ws:${this.workspaceId}:memories:timeline`, id);
   }
 }
 
@@ -110,7 +111,7 @@ const colors = {
   yellow: '\x1b[33m',
 };
 
-function log(message, color = 'reset') {
+function log(message:string, color: keyof typeof colors = 'reset') {
   console.log(`${colors[color]}${message}${colors.reset}`);
 }
 
@@ -127,9 +128,10 @@ async function runTests() {
     log('Test 1: Creating test memories across different time periods', 'blue');
 
     const now = Date.now();
-    const oneHourAgo = now - (60 * 60 * 1000);
-    const twoHoursAgo = now - (2 * 60 * 60 * 1000);
-    const thirtyMinsAgo = now - (30 * 60 * 1000);
+    const twoHoursAgo = now - (2 * 60 * 60 * 1000); // Start of our test window
+    const memoryTime1 = twoHoursAgo + 1000; // ~2h ago
+    const memoryTime2 = now - (60 * 60 * 1000); // 1h ago
+    const memoryTime3 = now - (30 * 60 * 1000); // 30m ago
 
     // Create memories
     const memory1 = await store.createMemory({
@@ -137,21 +139,24 @@ async function runTests() {
       context_type: 'decision',
       importance: 8,
       tags: ['database'],
-    });
+      is_global: false,
+    }, memoryTime1);
 
     const memory2 = await store.createMemory({
       content: 'Memory from 1 hour ago - implemented caching layer',
       context_type: 'code_pattern',
       importance: 7,
       tags: ['performance'],
-    });
+      is_global: false,
+    }, memoryTime2);
 
     const memory3 = await store.createMemory({
       content: 'Memory from 30 mins ago - fixed authentication bug',
       context_type: 'error',
       importance: 9,
       tags: ['security', 'bug-fix'],
-    });
+      is_global: false, 
+    }, memoryTime3);
 
     log('✓ Created 3 test memories', 'green');
     passed++;
@@ -159,12 +164,13 @@ async function runTests() {
     // Test 2: Get memories from last hour (should get 2 recent ones)
     log('\nTest 2: Retrieve memories from last hour', 'blue');
 
+    const oneHourAgo = now - (60 * 60 * 1000);
     const lastHourMemories = await store.getMemoriesByTimeWindow(
       oneHourAgo,
       now + 1000 // Add buffer
     );
 
-    if (lastHourMemories.length >= 2) {
+    if (lastHourMemories.length === 2) {
       log(`✓ Retrieved ${lastHourMemories.length} memories from last hour`, 'green');
       passed++;
     } else {
@@ -182,7 +188,7 @@ async function runTests() {
     );
 
     const hasHighImportance = highImportanceMemories.every(m => m.importance >= 8);
-    if (hasHighImportance && highImportanceMemories.length >= 1) {
+    if (hasHighImportance && highImportanceMemories.length === 2) {
       log(`✓ Retrieved ${highImportanceMemories.length} high-importance memories`, 'green');
       passed++;
     } else {
@@ -201,7 +207,7 @@ async function runTests() {
     );
 
     const allDecisions = decisionMemories.every(m => m.context_type === 'decision');
-    if (allDecisions && decisionMemories.length >= 1) {
+    if (allDecisions && decisionMemories.length === 1) {
       log(`✓ Retrieved ${decisionMemories.length} decision memories`, 'green');
       passed++;
     } else {
@@ -266,7 +272,7 @@ async function runTests() {
       m.context_type === 'decision' || m.context_type === 'error'
     );
 
-    if (validTypes && multiTypeMemories.length >= 2) {
+    if (validTypes && multiTypeMemories.length === 2) {
       log(`✓ Retrieved ${multiTypeMemories.length} memories with multiple types`, 'green');
       passed++;
     } else {
@@ -288,7 +294,7 @@ async function runTests() {
       m.importance >= 8 && m.context_type === 'error'
     );
 
-    if (validCombined) {
+    if (validCombined && combinedFilterMemories.length === 1) {
       log(`✓ Combined filtering works (${combinedFilterMemories.length} memories)`, 'green');
       passed++;
     } else {
@@ -303,9 +309,10 @@ async function runTests() {
     await store.deleteMemory(memory3.id);
     log('✓ Cleanup complete', 'green');
 
-  } catch (error) {
+  } catch (error: any) {
     log(`\n✗ Test failed with error: ${error.message}`, 'red');
     log(error.stack, 'red');
+    (await storageClient).closeClient();
     failed++;
   }
 
@@ -318,16 +325,19 @@ async function runTests() {
 
   if (failed === 0) {
     log('✓ All tests passed!', 'green');
+    (await storageClient).closeClient();
     process.exit(0);
   } else {
     log('✗ Some tests failed', 'red');
+    (await storageClient).closeClient();
     process.exit(1);
   }
 }
 
 // Run tests
-runTests().catch(error => {
+runTests().catch(async (error) => {
   log(`Fatal error: ${error.message}`, 'red');
   log(error.stack, 'red');
+  (await storageClient).closeClient();
   process.exit(1);
 });

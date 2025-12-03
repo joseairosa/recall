@@ -72,32 +72,41 @@ Recall is a **brain extension** for Claude that stores memories in Redis or Valk
 - **Claude Code** or **Claude Desktop**
 
 **Option A: Local Redis**
+
 ```bash
 # macOS
 brew install redis
 brew services start redis
+
 # Ubuntu/Debian
 sudo apt-get install redis-server
 sudo systemctl start redis
+
 # Docker
 docker run -d -p 6379:6379 redis:latest
-
+```
 
 **Option B: Local Valkey**
+
+```bash
 # macOS
 brew install valkey
 brew services start valkey
+
 # Docker
 docker run -d -p 6379:6379 valkey/valkey:latest
+```
 
-**Option 2a: Cloud Redis (No local install needed)**
+**Option C: Cloud Redis (No local install needed)**
 
 Use a free Redis cloud service:
+
 - **[Upstash](https://upstash.com/)** - Free tier with 500,000 commands/month
 - **[Redis Cloud](https://redis.com/try-free/)** - Free 30MB database
 - **[Railway](https://railway.app/)** - Free Redis with credit
 
 Then use the provided connection URL in your config:
+
 ```json
 {
   "env": {
@@ -106,11 +115,12 @@ Then use the provided connection URL in your config:
 }
 ```
 
-**Option 2b: Cloud Valkey (No local install needed) **
-Most cloud providers offer Valkey services and will have free or low cost trials available. e.g. https://aws.amazon.com/elasticache/resources/ , use free tier to try it out https://aws.amazon.com/free/
+**Option D: Cloud Valkey (No local install needed)**
 
+Most cloud providers offer Valkey services with free or low-cost trials available:
 
-
+- **[AWS ElastiCache](https://aws.amazon.com/elasticache/)** - Use free tier to try it out
+- **[AWS Free Tier](https://aws.amazon.com/free/)** - General AWS free tier options
 
 ### 2. Install
 

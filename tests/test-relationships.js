@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 
 // Simple test script for relationship functionality
-import { MemoryStore } from './dist/index.js';
-import { RelationshipType } from './dist/index.js';
+import { MemoryStore } from '../dist/index.js';
+import { RelationshipType } from '../dist/index.js';
 
 async function testRelationships() {
   console.log('🧪 Testing Memory Relationships v1.4.0\n');
 
-  const store = new MemoryStore();
+  const store = await MemoryStore.create();
 
   try {
     // Test 1: Create two memories

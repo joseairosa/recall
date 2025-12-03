@@ -6,7 +6,7 @@ Project-specific instructions for Claude when working with this codebase.
 
 ## Project Context
 
-This is an MCP (Model Context Protocol) server that provides **long-term memory** for Claude conversations. It stores context in Redis with semantic search capabilities to survive context window limitations.
+This is an MCP (Model Context Protocol) server that provides **long-term memory** for Claude conversations. It stores context in Redis or Valkey with semantic search capabilities to survive context window limitations.
 
 **Key Principle**: This server IS the solution to context loss - treat it with care and always maintain backward compatibility.
 
@@ -107,10 +107,10 @@ Use this tool to retrieve consolidated context from specific time periods:
 1. **Immutable Memory IDs**: Never change ULID generation - memories must remain accessible
 2. **Backward Compatible**: New context types OK, removing types breaks existing memories
 3. **Index Integrity**: Always update ALL indexes when modifying/deleting memories
-4. **Atomic Operations**: Use Redis pipelines for multi-step updates
+4. **Atomic Operations**: Use Redis/Valkey pipelines for multi-step updates
 5. **Error Handling**: Use MCP error codes (`ErrorCode.InvalidRequest`, `ErrorCode.InternalError`)
 
-### Redis Data Model
+### Redis/Valkey Data Model
 
 **NEVER** change these key patterns without migration:
 ```
@@ -147,7 +147,7 @@ These 10 types are core to the system:
 ### Adding a New Tool
 
 1. Add Zod schema to [types.ts](src/types.ts)
-2. Add method to `MemoryStore` class in [memory-store.ts](src/redis/memory-store.ts)
+2. Add method to `MemoryStore` class in [memory-store.ts](src/persistence/memory-store.ts)
 3. Add tool handler to [tools/index.ts](src/tools/index.ts)
 4. Update documentation in [README.md](README.md)
 
@@ -162,7 +162,7 @@ These 10 types are core to the system:
 
 **CRITICAL**: If changing `MemoryStore` methods:
 1. Ensure index updates are atomic (use pipelines)
-2. Test with existing Redis data
+2. Test with existing Redis/Valkey data
 3. Document migration path if needed
 4. Update version in [package.json](package.json)
 
@@ -234,7 +234,7 @@ export const ContextType = z.enum([
 ### Increase Embedding Dimensions
 
 If switching to larger embedding model:
-1. Update `embedding` field handling in [memory-store.ts](src/redis/memory-store.ts)
+1. Update `embedding` field handling in [memory-store.ts](src/persistence/memory-store.ts)
 2. Existing memories will have wrong dimensions - need migration
 3. Consider versioning: `embedding_v1`, `embedding_v2`
 
@@ -244,7 +244,7 @@ If switching to larger embedding model:
 
 **Current**: No formal migration system
 
-**If Redis Schema Changes**:
+**If Redis/Valkey Schema Changes**:
 1. Create migration script in `scripts/migrate-{version}.ts`
 2. Document in `MIGRATIONS.md`
 3. Provide rollback instructions

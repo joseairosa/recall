@@ -1,13 +1,13 @@
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
-import { MemoryStore } from '../redis/memory-store.js';
+import { MemoryStore } from '../persistence/memory-store.js';
 import {
   GetMemoryHistorySchema,
   RollbackMemorySchema,
 } from '../types.js';
 
-const memoryStore = new MemoryStore();
+const memoryStore = await MemoryStore.create();
 
 export const versionTools = {
   get_memory_history: {

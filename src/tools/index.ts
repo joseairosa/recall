@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
-import { MemoryStore } from '../redis/memory-store.js';
+import { MemoryStore } from '../persistence/memory-store.js';
 import {
   CreateMemorySchema,
   BatchCreateMemoriesSchema,
@@ -34,7 +34,7 @@ import { versionTools } from './version-tools.js';
 import { templateTools } from './template-tools.js';
 import { categoryTools } from './category-tools.js';
 
-const memoryStore = new MemoryStore();
+const memoryStore = await MemoryStore.create();
 
 export const tools = {
   // Context management tools

@@ -243,8 +243,8 @@ export interface DuplicateGroup {
   similarity_score: number;
 }
 
-// Redis keys helper with workspace isolation and global support
-export const RedisKeys = {
+// Storage keys helper with workspace isolation and global support
+export const StorageKeys = {
   // Workspace-scoped keys
   memory: (workspace: string, id: string) => `ws:${workspace}:memory:${id}`,
   memories: (workspace: string) => `ws:${workspace}:memories:all`,
@@ -304,7 +304,7 @@ export const RedisKeys = {
 
 // Helper to get the appropriate key based on is_global flag
 export function getMemoryKey(workspace: string, id: string, isGlobal: boolean): string {
-  return isGlobal ? RedisKeys.globalMemory(id) : RedisKeys.memory(workspace, id);
+  return isGlobal ? StorageKeys.globalMemory(id) : StorageKeys.memory(workspace, id);
 }
 
 // Convert memory to global schema

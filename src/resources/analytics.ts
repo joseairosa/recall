@@ -1,4 +1,4 @@
-import { MemoryStore } from '../redis/memory-store.js';
+import { MemoryStore } from '../persistence/memory-store.js';
 import type { MemoryEntry } from '../types.js';
 
 export interface AnalyticsData {
@@ -30,7 +30,7 @@ export interface AnalyticsData {
 }
 
 export async function getAnalytics(workspacePath?: string): Promise<string> {
-  const store = new MemoryStore(workspacePath);
+  const store = await MemoryStore.create(workspacePath);
 
   // Get summary stats
   const stats = await store.getSummaryStats();

@@ -29,7 +29,7 @@ async function testServerStart() {
     const server = spawn('node', ['dist/index.js'], {
       env: {
         ...process.env,
-        REDIS_URL: 'redis://localhost:6379',
+//        REDIS_URL: 'redis://localhost:6379',
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -39,7 +39,6 @@ async function testServerStart() {
 
     server.stdout.on('data', (data) => {
       output += data.toString();
-      console.log('STDOUT:', data.toString().trim());
     });
 
     server.stderr.on('data', (data) => {
@@ -95,21 +94,25 @@ async function testToolsAvailable() {
     const server = spawn('node', ['dist/index.js'], {
       env: {
         ...process.env,
-        REDIS_URL: 'redis://localhost:6379',
+       //ddc REDIS_URL: 'redis://localhost:6379',
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
     let initialized = false;
     let responded = false;
+    let buffer = '';
 
     server.stdout.on('data', (data) => {
-      const str = data.toString();
+      buffer += data.toString();
+      let boundary = buffer.indexOf('\n');
 
-      // Look for JSON-RPC response
-      try {
-        const lines = str.split('\n').filter(l => l.trim());
-        for (const line of lines) {
+      while (boundary !== -1) {
+        const line = buffer.substring(0, boundary).trim();
+        buffer = buffer.substring(boundary + 1);
+
+        if (line.startsWith('{')) {
+          try {
           if (line.startsWith('{') && line.includes('result')) {
             const response = JSON.parse(line);
             if (response.result && response.result.capabilities) {
@@ -157,9 +160,12 @@ async function testToolsAvailable() {
               resolve(true);
             }
           }
+          } catch (e) {
+            log(`✗ JSON Parse Error on line: ${line}`, 'red');
+            // It might be a partial line, so we continue buffering
+          }
         }
-      } catch (e) {
-        // Not JSON or parse error, ignore
+        boundary = buffer.indexOf('\n');
       }
     });
 

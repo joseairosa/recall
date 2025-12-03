@@ -1,15 +1,8 @@
 import { ulid } from 'ulid';
-import type { Redis } from 'ioredis';
-import { IStorageClientProvider } from './storage-client.interface.js';
 import { generateEmbedding, cosineSimilarity } from '../embeddings/generator.js';
-import { ContextType, StorageKeys, createWorkspaceId, getWorkspaceMode, WorkspaceMode, type MemoryEntry, type CreateMemory, type SessionInfo, type MemoryRelationship, type RelationshipType, type RelatedMemoryResult, type MemoryGraph, type MemoryGraphNode } from '../types.js';
+import { ContextType, StorageKeys, createWorkspaceId, getWorkspaceMode, WorkspaceMode, type MemoryEntry, type CreateMemory, type SessionInfo, type MemoryRelationship, type RelationshipType, type RelatedMemoryResult, type MemoryGraph, type MemoryGraphNode, type MemoryVersion } from '../types.js';
 import { StorageClient } from './storage-client.js';
-import { RedisClientProvider } from './redis-client.js';
-import { ValkeyClientProvider } from './valkey-client.js';
 import { createStorageClient } from './storage-client.factory.js';
-import {MemoryVersion } from  '../types.js';
-
-import { log } from 'console';
 
 
 

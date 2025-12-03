@@ -37,7 +37,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
   "mcpServers": {
     "memory": {
       "command": "node",
-      "args": ["/Users/joseairosa/Development/mcp/mem/dist/index.js"],
+      "args": ["/path/to/recall/dist/index.js"],
       "env": {
         "REDIS_URL": "redis://localhost:6379",
         "OPENAI_API_KEY": "sk-your-openai-key"
@@ -188,11 +188,11 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
   "mcpServers": {
     "memory": {
       "command": "node",
-      "args": ["/Users/joseairosa/Development/mcp/mem/dist/index.js"],
+      "args": ["/path/to/recall/dist/index.js"],
       "env": {
         "BACKEND_TYPE": "valkey",
         "VALKEY_HOST": "localhost",
-        "VALKEY_PORT": "6379",
+        "VALKEY_PORT": "6379"
       }
     }
   }

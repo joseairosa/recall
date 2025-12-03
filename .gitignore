@@ -29,6 +29,9 @@ coverage/
 test-resource.js
 view-memories.js
 
+# Build output
+dist/
+
 # Local config
 .claude/
 .mcp.json

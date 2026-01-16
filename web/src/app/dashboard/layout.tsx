@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import {
   Brain,
   LayoutDashboard,
@@ -14,8 +15,10 @@ import {
   Menu,
   X,
 } from "lucide-react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/AuthContext";
 
 const navigation = [
   { name: "Overview", href: "/dashboard", icon: LayoutDashboard },
@@ -31,25 +34,24 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const { user, loading, signOut } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
+  // Redirect to sign-in if not authenticated
   useEffect(() => {
-    const apiKey = localStorage.getItem("recall_api_key");
-    if (!apiKey) {
+    if (!loading && !user) {
       router.push("/sign-in");
-    } else {
-      setIsAuthenticated(true);
     }
-  }, [router]);
+  }, [user, loading, router]);
 
-  const handleSignOut = () => {
-    localStorage.removeItem("recall_api_key");
+  const handleSignOut = async () => {
+    await signOut();
     router.push("/sign-in");
   };
 
-  if (!isAuthenticated) {
+  // Show loading state
+  if (loading || !user) {
     return (
       <div className="min-h-screen gradient-bg flex items-center justify-center">
         <div className="animate-pulse">
@@ -113,8 +115,33 @@ export default function DashboardLayout({
             })}
           </nav>
 
-          {/* Sign out */}
+          {/* User info and sign out */}
           <div className="p-4 border-t">
+            <div className="flex items-center gap-3 mb-3">
+              {user.photoURL ? (
+                <Image
+                  src={user.photoURL}
+                  alt={user.displayName || "User"}
+                  width={32}
+                  height={32}
+                  className="w-8 h-8 rounded-full"
+                />
+              ) : (
+                <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                  <span className="text-sm font-medium text-primary">
+                    {(user.displayName || user.email || "U")[0].toUpperCase()}
+                  </span>
+                </div>
+              )}
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">
+                  {user.displayName || "User"}
+                </p>
+                <p className="text-xs text-muted-foreground truncate">
+                  {user.email}
+                </p>
+              </div>
+            </div>
             <Button
               variant="ghost"
               className="w-full justify-start"
@@ -141,9 +168,7 @@ export default function DashboardLayout({
           <div className="flex-1" />
 
           <div className="flex items-center gap-4">
-            <span className="text-sm text-muted-foreground">
-              Free Plan
-            </span>
+            <span className="text-sm text-muted-foreground">Free Plan</span>
           </div>
         </header>
 

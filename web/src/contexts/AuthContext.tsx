@@ -66,10 +66,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => unsubscribe();
   }, []);
 
+  // Get API base URL at runtime
+  const getApiUrl = () => {
+    if (process.env.NEXT_PUBLIC_API_URL) {
+      return process.env.NEXT_PUBLIC_API_URL;
+    }
+    // In browser, use relative URLs for production (same domain)
+    if (typeof window !== "undefined" && window.location.hostname !== "localhost") {
+      return "";
+    }
+    // Development fallback
+    return "http://localhost:8080";
+  };
+
   // Create API key for user based on their Firebase UID
   const createApiKeyForUser = async (user: User) => {
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
+      const apiUrl = getApiUrl();
 
       // First, try to get existing key by checking if we have one stored for this user
       const userKeyId = `recall_user_${user.uid}`;

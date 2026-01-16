@@ -88,27 +88,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      // Create new API key using Firebase UID as tenant ID
-      const response = await fetch(`${apiUrl}/api/keys`, {
+      // Get Firebase ID token for authentication
+      const idToken = await user.getIdToken();
+
+      // Create or retrieve API key using Firebase authentication
+      const response = await fetch(`${apiUrl}/api/auth/keys`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tenantId: user.uid,
-          plan: "free",
-          name: user.displayName || user.email || "Firebase User",
-        }),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${idToken}`,
+        },
       });
 
       const data = await response.json();
 
-      if (data.success && data.data.apiKey) {
-        const newKey = data.data.apiKey;
-        setApiKey(newKey);
-        localStorage.setItem("recall_api_key", newKey);
-        localStorage.setItem(userKeyId, newKey);
+      if (data.success) {
+        if (data.data.apiKey) {
+          // New key created
+          const newKey = data.data.apiKey;
+          setApiKey(newKey);
+          localStorage.setItem("recall_api_key", newKey);
+          localStorage.setItem(userKeyId, newKey);
+        } else if (data.data.hasExistingKey) {
+          // User already has a key but we don't have it locally
+          // They'll need to use the dashboard to manage/regenerate it
+          console.log("User has existing API key on server");
+          setError("You have an existing API key. Check the API Keys page to manage it.");
+        }
       } else {
         console.error("Failed to create API key:", data);
-        setError("Failed to create API key");
+        setError(data.error?.message || "Failed to create API key");
       }
     } catch (err) {
       console.error("Error creating API key:", err);

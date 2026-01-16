@@ -24,6 +24,7 @@ import { MemoryStore } from '../persistence/memory-store.js';
 import { createMcpHandler } from './mcp-handler.js';
 import { getProviderInfo, listAvailableProviders } from '../embeddings/generator.js';
 import { AuditService, parseRequestForAudit } from './audit.service.js';
+import { verifyFirebaseToken } from './firebase-admin.js';
 
 // ESM __dirname equivalent
 const __filename = fileURLToPath(import.meta.url);
@@ -499,6 +500,80 @@ export function createHttpServer(storageClient: StorageClient) {
   // ============================================
   // API Key Management
   // ============================================
+
+  /**
+   * Create or retrieve API key using Firebase authentication
+   * POST /api/auth/keys
+   *
+   * This endpoint is for authenticated users from the web dashboard.
+   * It verifies the Firebase ID token and creates/retrieves an API key.
+   */
+  app.post('/api/auth/keys', async (req: Request, res: Response) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Missing or invalid authorization header' },
+        });
+        return;
+      }
+
+      const idToken = authHeader.substring(7);
+      const decodedToken = await verifyFirebaseToken(idToken);
+
+      if (!decodedToken) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Invalid Firebase token' },
+        });
+        return;
+      }
+
+      // Use Firebase UID as tenant ID
+      const tenantId = decodedToken.uid;
+      const name = decodedToken.name || decodedToken.email || 'Firebase User';
+      const plan = 'free'; // Default to free plan
+
+      // Check if user already has an API key
+      const existingKeys = await listApiKeys(storageClient, tenantId);
+      if (existingKeys.length > 0) {
+        // Return existing key info (but not the actual key for security)
+        res.json({
+          success: true,
+          data: {
+            id: existingKeys[0].id,
+            tenantId,
+            plan: existingKeys[0].plan,
+            hasExistingKey: true,
+            message: 'You already have an API key. Use the dashboard to manage it.',
+          },
+        });
+        return;
+      }
+
+      // Create new API key
+      const { apiKey, record } = await createApiKey(
+        storageClient,
+        tenantId,
+        plan,
+        name
+      );
+
+      res.status(201).json({
+        success: true,
+        data: {
+          apiKey,
+          id: record.id,
+          tenantId,
+          plan,
+          message: 'Store this API key securely - it cannot be retrieved later',
+        },
+      });
+    } catch (error) {
+      handleError(res, error);
+    }
+  });
 
   /**
    * Create an API key (for admin use or self-service)

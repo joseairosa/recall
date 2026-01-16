@@ -43,6 +43,7 @@
     "@valkey/valkey-glide": "^2.1.2",
     "cors": "^2.8.5",
     "express": "^5.2.1",
+    "firebase-admin": "^13.6.0",
     "ioredis": "^5.4.2",
     "ulid": "^2.3.0",
     "zod": "^3.24.1"

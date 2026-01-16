@@ -1,0 +1,55 @@
+# Docker Compose for Development
+# Uses volume mounts for hot reloading
+
+services:
+  # Redis for data persistence
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Recall HTTP Server (development mode)
+  recall:
+    image: node:20-slim
+    working_dir: /app
+    ports:
+      - "8080:8080"
+    volumes:
+      # Mount source code for hot reloading
+      - .:/app
+      # Use named volume for node_modules to avoid overwriting
+      - node_modules:/app/node_modules
+      - web_node_modules:/app/web/node_modules
+    environment:
+      - NODE_ENV=development
+      - PORT=8080
+      - REDIS_URL=redis://redis:6379
+      # Add your embedding provider API key (at least one required)
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - VOYAGE_API_KEY=${VOYAGE_API_KEY:-}
+      - COHERE_API_KEY=${COHERE_API_KEY:-}
+      # Optional: Admin secret for creating API keys
+      - ADMIN_SECRET=${ADMIN_SECRET:-}
+    command: >
+      sh -c "
+        npm install &&
+        cd web && npm install && npm run build && cd .. &&
+        npm run dev:http
+      "
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  redis_data:
+  node_modules:
+  web_node_modules:

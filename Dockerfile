@@ -1,12 +1,40 @@
 # Recall HTTP Server Dockerfile
 # For Railway, Render, and other container deployments
+# Builds both the backend API server and Next.js web frontend
 
-FROM node:20-slim
+FROM node:20-slim AS base
 
-# Set working directory
+# Install curl for health checks
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
+# ============================================
+# Stage 1: Build the Next.js frontend
+# ============================================
+FROM base AS web-builder
+
+WORKDIR /app/web
+
+# Copy web package files
+COPY web/package*.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy web source files
+COPY web/ ./
+
+# Build Next.js static export
+ENV NODE_ENV=production
+RUN npm run build
+
+# ============================================
+# Stage 2: Build the backend
+# ============================================
+FROM base AS backend-builder
+
 WORKDIR /app
 
-# Copy package files
+# Copy backend package files
 COPY package*.json ./
 COPY tsup.config.ts ./
 
@@ -18,11 +46,25 @@ RUN npm ci --ignore-scripts
 COPY src/ ./src/
 COPY tsconfig.json ./
 
-# Build the project
+# Build the backend
 RUN npm run build
 
-# Remove dev dependencies to reduce image size
-RUN npm prune --production
+# ============================================
+# Stage 3: Production image
+# ============================================
+FROM base AS production
+
+WORKDIR /app
+
+# Copy backend package files and install production deps only
+COPY package*.json ./
+RUN npm ci --production --ignore-scripts
+
+# Copy built backend
+COPY --from=backend-builder /app/dist ./dist
+
+# Copy built frontend
+COPY --from=web-builder /app/web/out ./web/out
 
 # Expose port (Railway uses PORT env var)
 EXPOSE 8080

@@ -230,6 +230,34 @@ export class ValkeyAdapter implements StorageClient {
     }
   }
 
+  async zcount(key: string, min: number | string, max: number | string): Promise<number> {
+    if (!key) return 0;
+    try {
+      const result = await this.client.zcount(key, {
+        value: typeof min === 'number' ? min : parseFloat(min) || 0,
+        isInclusive: true,
+      }, {
+        value: typeof max === 'number' ? max : parseFloat(max) || Infinity,
+        isInclusive: true,
+      });
+      return result || 0;
+    } catch (error) {
+      console.error("Error in zcount:", error);
+      return 0;
+    }
+  }
+
+  async expire(key: string, seconds: number): Promise<boolean> {
+    if (!key) return false;
+    try {
+      const result = await this.client.expire(key, seconds);
+      return result;
+    } catch (error) {
+      console.error("Error in expire:", error);
+      return false;
+    }
+  }
+
   pipeline(): IPipelineOperations {
     const pipeline = new Batch(false);
     return new ValkeyPipelineOperations(pipeline,this.client);

@@ -5,20 +5,36 @@
  * Provides multi-tenant memory storage via API key authentication.
  */
 
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
-import { AuthenticatedRequest } from './types.js';
-import { createAuthMiddleware, createApiKey } from './auth.middleware.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { AuthenticatedRequest, AuditAction, AuditResource } from './types.js';
+import {
+  createAuthMiddleware,
+  createApiKey,
+  listApiKeys,
+  getApiKeyById,
+  revokeApiKey,
+  regenerateApiKey,
+  deleteApiKey,
+} from './auth.middleware.js';
 import { StorageClient } from '../persistence/storage-client.js';
 import { MemoryStore } from '../persistence/memory-store.js';
 import { createMcpHandler } from './mcp-handler.js';
 import { getProviderInfo, listAvailableProviders } from '../embeddings/generator.js';
+import { AuditService, parseRequestForAudit } from './audit.service.js';
+
+// ESM __dirname equivalent
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 /**
  * Creates and configures the Express HTTP server
  */
 export function createHttpServer(storageClient: StorageClient) {
   const app = express();
+  const auditService = new AuditService(storageClient);
 
   // Middleware
   app.use(cors());
@@ -30,7 +46,7 @@ export function createHttpServer(storageClient: StorageClient) {
       success: true,
       data: {
         status: 'healthy',
-        version: '1.7.0',
+        version: '1.8.0',
         timestamp: new Date().toISOString(),
       },
     });
@@ -61,6 +77,53 @@ export function createHttpServer(storageClient: StorageClient) {
   // Auth middleware for protected routes
   const authMiddleware = createAuthMiddleware(storageClient);
 
+  // Audit logging middleware (logs after response)
+  const auditMiddleware = (
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction
+  ) => {
+    const startTime = Date.now();
+
+    // Store original send function
+    const originalSend = res.send.bind(res);
+
+    // Override send to capture status and log audit
+    res.send = function (body: any) {
+      const duration = Date.now() - startTime;
+
+      // Log audit entry asynchronously (fire and forget)
+      if (req.tenant) {
+        const { action, resource, resourceId } = parseRequestForAudit(
+          req.method,
+          req.path
+        );
+
+        auditService
+          .log({
+            tenantId: req.tenant.tenantId,
+            apiKeyId: req.tenant.apiKeyId,
+            action,
+            resource,
+            resourceId,
+            ip: req.ip || req.socket.remoteAddress,
+            userAgent: req.get('user-agent'),
+            method: req.method,
+            path: req.path,
+            statusCode: res.statusCode,
+            duration,
+          })
+          .catch((err) => {
+            console.error('[Audit] Failed to log entry:', err);
+          });
+      }
+
+      return originalSend(body);
+    };
+
+    next();
+  };
+
   // ============================================
   // Memory CRUD Operations
   // ============================================
@@ -73,6 +136,7 @@ export function createHttpServer(storageClient: StorageClient) {
   app.post(
     '/api/memories',
     authMiddleware,
+    auditMiddleware,
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
@@ -113,6 +177,7 @@ export function createHttpServer(storageClient: StorageClient) {
   app.get(
     '/api/memories/search',
     authMiddleware,
+    auditMiddleware,
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
@@ -148,6 +213,7 @@ export function createHttpServer(storageClient: StorageClient) {
   app.get(
     '/api/memories/important',
     authMiddleware,
+    auditMiddleware,
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
@@ -174,6 +240,7 @@ export function createHttpServer(storageClient: StorageClient) {
   app.get(
     '/api/memories/by-type/:type',
     authMiddleware,
+    auditMiddleware,
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
@@ -198,6 +265,7 @@ export function createHttpServer(storageClient: StorageClient) {
   app.get(
     '/api/memories/by-tag/:tag',
     authMiddleware,
+    auditMiddleware,
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
@@ -222,6 +290,7 @@ export function createHttpServer(storageClient: StorageClient) {
   app.get(
     '/api/memories',
     authMiddleware,
+    auditMiddleware,
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
@@ -247,6 +316,7 @@ export function createHttpServer(storageClient: StorageClient) {
   app.get(
     '/api/memories/:id',
     authMiddleware,
+    auditMiddleware,
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
@@ -279,6 +349,7 @@ export function createHttpServer(storageClient: StorageClient) {
   app.put(
     '/api/memories/:id',
     authMiddleware,
+    auditMiddleware,
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
@@ -319,6 +390,7 @@ export function createHttpServer(storageClient: StorageClient) {
   app.delete(
     '/api/memories/:id',
     authMiddleware,
+    auditMiddleware,
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
@@ -343,6 +415,7 @@ export function createHttpServer(storageClient: StorageClient) {
   app.get(
     '/api/stats',
     authMiddleware,
+    auditMiddleware,
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
@@ -372,6 +445,7 @@ export function createHttpServer(storageClient: StorageClient) {
   app.get(
     '/api/sessions',
     authMiddleware,
+    auditMiddleware,
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
@@ -396,6 +470,7 @@ export function createHttpServer(storageClient: StorageClient) {
   app.get(
     '/api/sessions/:id',
     authMiddleware,
+    auditMiddleware,
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
@@ -422,7 +497,7 @@ export function createHttpServer(storageClient: StorageClient) {
   );
 
   // ============================================
-  // Tenant Management (Admin endpoints)
+  // API Key Management
   // ============================================
 
   /**
@@ -454,7 +529,7 @@ export function createHttpServer(storageClient: StorageClient) {
         return;
       }
 
-      const apiKey = await createApiKey(
+      const { apiKey, record } = await createApiKey(
         storageClient,
         tenantId,
         plan || 'free',
@@ -465,6 +540,7 @@ export function createHttpServer(storageClient: StorageClient) {
         success: true,
         data: {
           apiKey,
+          id: record.id,
           tenantId,
           plan: plan || 'free',
           message: 'Store this API key securely - it cannot be retrieved later',
@@ -476,12 +552,249 @@ export function createHttpServer(storageClient: StorageClient) {
   });
 
   /**
+   * List API keys for current tenant
+   * GET /api/keys
+   */
+  app.get(
+    '/api/keys',
+    authMiddleware,
+    auditMiddleware,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const tenant = req.tenant!;
+        const keys = await listApiKeys(storageClient, tenant.tenantId);
+
+        res.json({
+          success: true,
+          data: keys,
+        });
+      } catch (error) {
+        handleError(res, error);
+      }
+    }
+  );
+
+  /**
+   * Get a specific API key by ID
+   * GET /api/keys/:id
+   */
+  app.get(
+    '/api/keys/:id',
+    authMiddleware,
+    auditMiddleware,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const tenant = req.tenant!;
+        const key = await getApiKeyById(
+          storageClient,
+          tenant.tenantId,
+          req.params.id
+        );
+
+        if (!key) {
+          res.status(404).json({
+            success: false,
+            error: { code: 'NOT_FOUND', message: 'API key not found' },
+          });
+          return;
+        }
+
+        res.json({
+          success: true,
+          data: key,
+        });
+      } catch (error) {
+        handleError(res, error);
+      }
+    }
+  );
+
+  /**
+   * Revoke an API key
+   * DELETE /api/keys/:id
+   */
+  app.delete(
+    '/api/keys/:id',
+    authMiddleware,
+    auditMiddleware,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const tenant = req.tenant!;
+
+        // Prevent revoking the current key
+        if (req.params.id === tenant.apiKeyId) {
+          res.status(400).json({
+            success: false,
+            error: {
+              code: 'CANNOT_REVOKE_CURRENT',
+              message: 'Cannot revoke the API key you are currently using',
+            },
+          });
+          return;
+        }
+
+        const success = await revokeApiKey(
+          storageClient,
+          tenant.tenantId,
+          req.params.id
+        );
+
+        if (!success) {
+          res.status(404).json({
+            success: false,
+            error: { code: 'NOT_FOUND', message: 'API key not found' },
+          });
+          return;
+        }
+
+        res.json({
+          success: true,
+          data: { revoked: req.params.id },
+        });
+      } catch (error) {
+        handleError(res, error);
+      }
+    }
+  );
+
+  /**
+   * Regenerate an API key
+   * POST /api/keys/:id/regenerate
+   */
+  app.post(
+    '/api/keys/:id/regenerate',
+    authMiddleware,
+    auditMiddleware,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const tenant = req.tenant!;
+
+        const result = await regenerateApiKey(
+          storageClient,
+          tenant.tenantId,
+          req.params.id
+        );
+
+        if (!result) {
+          res.status(404).json({
+            success: false,
+            error: { code: 'NOT_FOUND', message: 'API key not found' },
+          });
+          return;
+        }
+
+        res.json({
+          success: true,
+          data: {
+            apiKey: result.apiKey,
+            id: result.record.id,
+            message:
+              'Store this new API key securely - it cannot be retrieved later. The old key has been revoked.',
+          },
+        });
+      } catch (error) {
+        handleError(res, error);
+      }
+    }
+  );
+
+  // ============================================
+  // Audit Log
+  // ============================================
+
+  /**
+   * Get audit log entries
+   * GET /api/audit?limit=50&offset=0&action=create&resource=memory
+   */
+  app.get(
+    '/api/audit',
+    authMiddleware,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const tenant = req.tenant!;
+
+        const limit = parseInt(req.query.limit as string) || 50;
+        const offset = parseInt(req.query.offset as string) || 0;
+        const action = req.query.action as AuditAction | undefined;
+        const resource = req.query.resource as AuditResource | undefined;
+        const startTime = req.query.startTime
+          ? parseInt(req.query.startTime as string)
+          : undefined;
+        const endTime = req.query.endTime
+          ? parseInt(req.query.endTime as string)
+          : undefined;
+
+        const { entries, total } = await auditService.getEntries({
+          tenantId: tenant.tenantId,
+          limit,
+          offset,
+          action,
+          resource,
+          startTime,
+          endTime,
+        });
+
+        res.json({
+          success: true,
+          data: {
+            entries,
+            total,
+            limit,
+            offset,
+          },
+        });
+      } catch (error) {
+        handleError(res, error);
+      }
+    }
+  );
+
+  /**
+   * Get a specific audit entry
+   * GET /api/audit/:id
+   */
+  app.get(
+    '/api/audit/:id',
+    authMiddleware,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const tenant = req.tenant!;
+
+        const entry = await auditService.getEntry(
+          tenant.tenantId,
+          req.params.id
+        );
+
+        if (!entry) {
+          res.status(404).json({
+            success: false,
+            error: { code: 'NOT_FOUND', message: 'Audit entry not found' },
+          });
+          return;
+        }
+
+        res.json({
+          success: true,
+          data: entry,
+        });
+      } catch (error) {
+        handleError(res, error);
+      }
+    }
+  );
+
+  // ============================================
+  // Tenant Info
+  // ============================================
+
+  /**
    * Get tenant info
    * GET /api/me
    */
   app.get(
     '/api/me',
     authMiddleware,
+    auditMiddleware,
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
@@ -519,11 +832,48 @@ export function createHttpServer(storageClient: StorageClient) {
   const mcpHandler = createMcpHandler(storageClient);
   app.all('/mcp', authMiddleware, mcpHandler as any);
 
-  // 404 handler
-  app.use((_req: Request, res: Response) => {
-    res.status(404).json({
-      success: false,
-      error: { code: 'NOT_FOUND', message: 'Endpoint not found' },
+  // ============================================
+  // Static Website Serving
+  // ============================================
+
+  // Path to the static website (built with Next.js static export)
+  const webDistPath = path.resolve(__dirname, '../../web/out');
+
+  // Serve static files from the web/out directory
+  app.use(express.static(webDistPath, {
+    // Enable index.html serving for directories
+    index: 'index.html',
+  }));
+
+  // SPA fallback - serve index.html for unmatched routes
+  // This handles client-side routing
+  app.get('*', (req: Request, res: Response) => {
+    // Don't serve index.html for API routes that weren't found
+    if (req.path.startsWith('/api/') || req.path.startsWith('/mcp')) {
+      res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Endpoint not found' },
+      });
+      return;
+    }
+
+    // For SPA routes, try to serve the specific HTML file first
+    const htmlPath = path.join(webDistPath, req.path, 'index.html');
+    const fallbackPath = path.join(webDistPath, 'index.html');
+
+    // Check if the specific page exists (for static export with trailingSlash)
+    res.sendFile(htmlPath, (err) => {
+      if (err) {
+        // Fall back to the main index.html for SPA routing
+        res.sendFile(fallbackPath, (err2) => {
+          if (err2) {
+            res.status(404).json({
+              success: false,
+              error: { code: 'NOT_FOUND', message: 'Page not found' },
+            });
+          }
+        });
+      }
     });
   });
 

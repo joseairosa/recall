@@ -12,6 +12,7 @@ import { Request } from 'express';
 export interface TenantContext {
   tenantId: string;
   apiKey: string;
+  apiKeyId: string;       // Key ID for audit logging
   plan: 'free' | 'pro' | 'team' | 'enterprise';
   limits: {
     maxMemories: number;
@@ -30,12 +31,45 @@ export interface AuthenticatedRequest extends Request {
  * API Key record stored in Redis
  */
 export interface ApiKeyRecord {
+  id: string;              // Key ID for management (different from apiKey value)
   tenantId: string;
-  apiKey: string;
+  apiKey: string;          // The actual bearer token (sk-xxx)
   plan: 'free' | 'pro' | 'team' | 'enterprise';
   createdAt: number;
   lastUsedAt?: number;
   name?: string;
+  usageCount: number;      // Total API calls made with this key
+  status: 'active' | 'revoked';
+}
+
+/**
+ * Audit log action types
+ */
+export type AuditAction = 'create' | 'read' | 'update' | 'delete' | 'search' | 'list';
+
+/**
+ * Audit log resource types
+ */
+export type AuditResource = 'memory' | 'session' | 'apikey' | 'stats';
+
+/**
+ * Audit log entry stored in Redis
+ */
+export interface AuditEntry {
+  id: string;              // ULID
+  timestamp: number;       // Unix ms
+  action: AuditAction;
+  resource: AuditResource;
+  resourceId?: string;     // Memory ID, session ID, etc.
+  apiKeyId: string;        // Which API key was used
+  tenantId: string;
+  ip?: string;             // Client IP address
+  userAgent?: string;      // Client user agent
+  method: string;          // HTTP method
+  path: string;            // Request path
+  statusCode: number;      // Response status code
+  duration: number;        // Request duration in ms
+  details?: Record<string, unknown>;  // Additional context
 }
 
 /**

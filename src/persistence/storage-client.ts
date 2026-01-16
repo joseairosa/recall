@@ -24,6 +24,10 @@ export interface StorageClient {
   zremrangebyrank(key: string, start: number, stop: number): Promise<void>;
   zcard(key: string): Promise<number>;
   zscore(key: string, member: string): Promise<string | null>;
+  zcount(key: string, min: number | string, max: number | string): Promise<number>;
+
+  // Key Operations
+  expire(key: string, seconds: number): Promise<boolean>;
   
   // Pipeline Operations
   pipeline(): IPipelineOperations;

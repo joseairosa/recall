@@ -6,6 +6,7 @@
  */
 
 import { randomBytes } from 'crypto';
+import { ulid } from 'ulid';
 import { Response, NextFunction } from 'express';
 import { AuthenticatedRequest, ApiKeyRecord, PLAN_LIMITS } from './types.js';
 import { StorageClient } from '../persistence/storage-client.js';
@@ -60,28 +61,48 @@ export function createAuthMiddleware(storageClient: StorageClient) {
         return;
       }
 
+      // Check if key is revoked
+      if (keyData.status === 'revoked') {
+        res.status(401).json({
+          success: false,
+          error: {
+            code: 'API_KEY_REVOKED',
+            message: 'This API key has been revoked',
+          },
+        });
+        return;
+      }
+
       const record: ApiKeyRecord = {
-        tenantId: keyData.tenantId as string,
+        id: keyData.id || token.substring(3, 15), // Fallback for old keys without id
+        tenantId: keyData.tenantId,
         apiKey: token,
         plan: (keyData.plan as ApiKeyRecord['plan']) || 'free',
-        createdAt: parseInt(keyData.createdAt as string) || Date.now(),
+        createdAt: parseInt(keyData.createdAt) || Date.now(),
         lastUsedAt: keyData.lastUsedAt
-          ? parseInt(keyData.lastUsedAt as string)
+          ? parseInt(keyData.lastUsedAt)
           : undefined,
-        name: keyData.name as string | undefined,
+        name: keyData.name || undefined,
+        usageCount: parseInt(keyData.usageCount) || 0,
+        status: (keyData.status as ApiKeyRecord['status']) || 'active',
       };
 
-      // Update last used timestamp (fire and forget)
+      // Update last used timestamp and increment usage count (fire and forget)
+      const newUsageCount = record.usageCount + 1;
       storageClient
-        .hset(`apikey:${token}`, { lastUsedAt: Date.now().toString() })
+        .hset(`apikey:${token}`, {
+          lastUsedAt: Date.now().toString(),
+          usageCount: newUsageCount.toString(),
+        })
         .catch(() => {
-          // Ignore errors updating last used
+          // Ignore errors updating usage stats
         });
 
       // Attach tenant context to request
       req.tenant = {
         tenantId: record.tenantId,
         apiKey: token,
+        apiKeyId: record.id,
         plan: record.plan,
         limits: PLAN_LIMITS[record.plan],
       };
@@ -101,32 +122,215 @@ export function createAuthMiddleware(storageClient: StorageClient) {
 }
 
 /**
- * Creates or retrieves an API key for a tenant
+ * Creates a new API key for a tenant
  */
 export async function createApiKey(
   storageClient: StorageClient,
   tenantId: string,
   plan: ApiKeyRecord['plan'] = 'free',
   name?: string
-): Promise<string> {
+): Promise<{ apiKey: string; record: ApiKeyRecord }> {
+  const id = ulid();
   const apiKey = `sk-${generateSecureToken(32)}`;
+  const now = Date.now();
 
-  const record: Record<string, string> = {
+  const record: ApiKeyRecord = {
+    id,
+    tenantId,
+    apiKey,
+    plan,
+    createdAt: now,
+    name,
+    usageCount: 0,
+    status: 'active',
+  };
+
+  const redisRecord: Record<string, string> = {
+    id,
     tenantId,
     plan,
-    createdAt: Date.now().toString(),
+    createdAt: now.toString(),
+    usageCount: '0',
+    status: 'active',
   };
 
   if (name) {
-    record.name = name;
+    redisRecord.name = name;
   }
 
-  await storageClient.hset(`apikey:${apiKey}`, record);
+  await storageClient.hset(`apikey:${apiKey}`, redisRecord);
 
-  // Also store reference from tenant to API key
+  // Store reference from tenant to API key (for listing)
   await storageClient.sadd(`tenant:${tenantId}:apikeys`, apiKey);
 
-  return apiKey;
+  // Store mapping from id to apiKey (for management by id)
+  await storageClient.set(`apikey:id:${id}`, apiKey);
+
+  return { apiKey, record };
+}
+
+/**
+ * List all API keys for a tenant (without revealing full key values)
+ */
+export async function listApiKeys(
+  storageClient: StorageClient,
+  tenantId: string
+): Promise<Array<Omit<ApiKeyRecord, 'apiKey'> & { apiKeyPreview: string }>> {
+  const apiKeys = await storageClient.smembers(`tenant:${tenantId}:apikeys`);
+
+  const results: Array<Omit<ApiKeyRecord, 'apiKey'> & { apiKeyPreview: string }> = [];
+
+  for (const apiKey of apiKeys) {
+    const keyData = await storageClient.hgetall(`apikey:${apiKey}`);
+
+    if (keyData && keyData.tenantId === tenantId) {
+      results.push({
+        id: keyData.id || apiKey.substring(3, 15),
+        tenantId: keyData.tenantId,
+        apiKeyPreview: `${apiKey.substring(0, 7)}...${apiKey.substring(apiKey.length - 4)}`,
+        plan: (keyData.plan as ApiKeyRecord['plan']) || 'free',
+        createdAt: parseInt(keyData.createdAt) || 0,
+        lastUsedAt: keyData.lastUsedAt ? parseInt(keyData.lastUsedAt) : undefined,
+        name: keyData.name || undefined,
+        usageCount: parseInt(keyData.usageCount) || 0,
+        status: (keyData.status as ApiKeyRecord['status']) || 'active',
+      });
+    }
+  }
+
+  // Sort by createdAt descending (newest first)
+  return results.sort((a, b) => b.createdAt - a.createdAt);
+}
+
+/**
+ * Get a single API key record by ID (for the same tenant)
+ */
+export async function getApiKeyById(
+  storageClient: StorageClient,
+  tenantId: string,
+  keyId: string
+): Promise<(Omit<ApiKeyRecord, 'apiKey'> & { apiKeyPreview: string }) | null> {
+  // Look up the actual apiKey from the id
+  const apiKey = await storageClient.get(`apikey:id:${keyId}`);
+
+  if (!apiKey) {
+    return null;
+  }
+
+  const keyData = await storageClient.hgetall(`apikey:${apiKey}`);
+
+  if (!keyData || keyData.tenantId !== tenantId) {
+    return null;
+  }
+
+  return {
+    id: keyData.id || keyId,
+    tenantId: keyData.tenantId,
+    apiKeyPreview: `${apiKey.substring(0, 7)}...${apiKey.substring(apiKey.length - 4)}`,
+    plan: (keyData.plan as ApiKeyRecord['plan']) || 'free',
+    createdAt: parseInt(keyData.createdAt) || 0,
+    lastUsedAt: keyData.lastUsedAt ? parseInt(keyData.lastUsedAt) : undefined,
+    name: keyData.name || undefined,
+    usageCount: parseInt(keyData.usageCount) || 0,
+    status: (keyData.status as ApiKeyRecord['status']) || 'active',
+  };
+}
+
+/**
+ * Revoke an API key (marks as revoked, doesn't delete)
+ */
+export async function revokeApiKey(
+  storageClient: StorageClient,
+  tenantId: string,
+  keyId: string
+): Promise<boolean> {
+  // Look up the actual apiKey from the id
+  const apiKey = await storageClient.get(`apikey:id:${keyId}`);
+
+  if (!apiKey) {
+    return false;
+  }
+
+  const keyData = await storageClient.hgetall(`apikey:${apiKey}`);
+
+  if (!keyData || keyData.tenantId !== tenantId) {
+    return false;
+  }
+
+  // Mark as revoked
+  await storageClient.hset(`apikey:${apiKey}`, { status: 'revoked' });
+
+  return true;
+}
+
+/**
+ * Regenerate an API key (creates new key, revokes old one)
+ */
+export async function regenerateApiKey(
+  storageClient: StorageClient,
+  tenantId: string,
+  keyId: string
+): Promise<{ apiKey: string; record: ApiKeyRecord } | null> {
+  // Look up the actual apiKey from the id
+  const oldApiKey = await storageClient.get(`apikey:id:${keyId}`);
+
+  if (!oldApiKey) {
+    return null;
+  }
+
+  const oldKeyData = await storageClient.hgetall(`apikey:${oldApiKey}`);
+
+  if (!oldKeyData || oldKeyData.tenantId !== tenantId) {
+    return null;
+  }
+
+  // Create new key with same plan and name
+  const result = await createApiKey(
+    storageClient,
+    tenantId,
+    (oldKeyData.plan as ApiKeyRecord['plan']) || 'free',
+    oldKeyData.name
+  );
+
+  // Revoke old key
+  await storageClient.hset(`apikey:${oldApiKey}`, { status: 'revoked' });
+
+  // Update id mapping to point to new key
+  await storageClient.set(`apikey:id:${keyId}`, result.apiKey);
+
+  // Remove old key from tenant's key set and add new one
+  await storageClient.srem(`tenant:${tenantId}:apikeys`, oldApiKey);
+
+  return result;
+}
+
+/**
+ * Delete an API key permanently (admin only)
+ */
+export async function deleteApiKey(
+  storageClient: StorageClient,
+  tenantId: string,
+  keyId: string
+): Promise<boolean> {
+  // Look up the actual apiKey from the id
+  const apiKey = await storageClient.get(`apikey:id:${keyId}`);
+
+  if (!apiKey) {
+    return false;
+  }
+
+  const keyData = await storageClient.hgetall(`apikey:${apiKey}`);
+
+  if (!keyData || keyData.tenantId !== tenantId) {
+    return false;
+  }
+
+  // Delete all related keys
+  await storageClient.del(`apikey:${apiKey}`);
+  await storageClient.del(`apikey:id:${keyId}`);
+  await storageClient.srem(`tenant:${tenantId}:apikeys`, apiKey);
+
+  return true;
 }
 
 /**

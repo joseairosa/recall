@@ -32,6 +32,10 @@ view-memories.js
 # Build output
 dist/
 
+# Next.js build output
+web/.next/
+web/out/
+
 # Local config
 .claude/
 .mcp.json

@@ -172,6 +172,15 @@ export class RedisAdapter implements StorageClient {
     return score ? String(score) : null;
   }
 
+  async zcount(key: string, min: number | string, max: number | string): Promise<number> {
+    return this.client.zcount(key, min, max);
+  }
+
+  async expire(key: string, seconds: number): Promise<boolean> {
+    const result = await this.client.expire(key, seconds);
+    return result === 1;
+  }
+
   pipeline(): IPipelineOperations {
     const pipeline = this.client.pipeline();
     return new RedisPipelineOperations(pipeline);

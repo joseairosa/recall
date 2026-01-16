@@ -837,7 +837,8 @@ export function createHttpServer(storageClient: StorageClient) {
   // ============================================
 
   // Path to the static website (built with Next.js static export)
-  const webDistPath = path.resolve(__dirname, '../../web/out');
+  // From dist/server-http.js, go up to root then into web/out
+  const webDistPath = path.resolve(__dirname, '../web/out');
 
   // Serve static files from the web/out directory
   app.use(express.static(webDistPath, {

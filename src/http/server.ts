@@ -847,7 +847,8 @@ export function createHttpServer(storageClient: StorageClient) {
 
   // SPA fallback - serve index.html for unmatched routes
   // This handles client-side routing
-  app.get('*', (req: Request, res: Response) => {
+  // Note: Express 5 requires named wildcard params, hence '{*path}' instead of '*'
+  app.get('/{*path}', (req: Request, res: Response) => {
     // Don't serve index.html for API routes that weren't found
     if (req.path.startsWith('/api/') || req.path.startsWith('/mcp')) {
       res.status(404).json({

@@ -10,8 +10,12 @@ import {
 import {
   User,
   signInWithPopup,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
   signOut as firebaseSignOut,
   onAuthStateChanged,
+  updateProfile,
 } from "firebase/auth";
 import { auth, githubProvider, googleProvider } from "@/lib/firebase";
 
@@ -21,8 +25,12 @@ interface AuthContextType {
   apiKey: string | null;
   signInWithGitHub: () => Promise<void>;
   signInWithGoogle: () => Promise<void>;
+  signInWithEmail: (email: string, password: string) => Promise<void>;
+  signUpWithEmail: (email: string, password: string, name?: string) => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
   signOut: () => Promise<void>;
   error: string | null;
+  clearError: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -108,6 +116,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const clearError = () => setError(null);
+
+  // Helper to get user-friendly error messages
+  const getErrorMessage = (error: unknown): string => {
+    if (error instanceof Error) {
+      const message = error.message;
+      // Firebase error codes
+      if (message.includes("auth/invalid-credential") || message.includes("auth/wrong-password")) {
+        return "Invalid email or password";
+      }
+      if (message.includes("auth/user-not-found")) {
+        return "No account found with this email";
+      }
+      if (message.includes("auth/email-already-in-use")) {
+        return "An account with this email already exists";
+      }
+      if (message.includes("auth/weak-password")) {
+        return "Password should be at least 6 characters";
+      }
+      if (message.includes("auth/invalid-email")) {
+        return "Invalid email address";
+      }
+      if (message.includes("auth/too-many-requests")) {
+        return "Too many attempts. Please try again later";
+      }
+      if (message.includes("auth/popup-closed-by-user")) {
+        return "Sign-in was cancelled";
+      }
+      return message;
+    }
+    return "An unexpected error occurred";
+  };
+
   const signInWithGitHub = async () => {
     try {
       setError(null);
@@ -115,11 +156,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await signInWithPopup(auth, githubProvider);
     } catch (err: unknown) {
       console.error("GitHub sign-in error:", err);
-      if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError("Failed to sign in with GitHub");
-      }
+      setError(getErrorMessage(err));
       setLoading(false);
     }
   };
@@ -131,12 +168,48 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await signInWithPopup(auth, googleProvider);
     } catch (err: unknown) {
       console.error("Google sign-in error:", err);
-      if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError("Failed to sign in with Google");
-      }
+      setError(getErrorMessage(err));
       setLoading(false);
+    }
+  };
+
+  const signInWithEmail = async (email: string, password: string) => {
+    try {
+      setError(null);
+      setLoading(true);
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (err: unknown) {
+      console.error("Email sign-in error:", err);
+      setError(getErrorMessage(err));
+      setLoading(false);
+    }
+  };
+
+  const signUpWithEmail = async (email: string, password: string, name?: string) => {
+    try {
+      setError(null);
+      setLoading(true);
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+
+      // Update display name if provided
+      if (name && userCredential.user) {
+        await updateProfile(userCredential.user, { displayName: name });
+      }
+    } catch (err: unknown) {
+      console.error("Email sign-up error:", err);
+      setError(getErrorMessage(err));
+      setLoading(false);
+    }
+  };
+
+  const resetPassword = async (email: string) => {
+    try {
+      setError(null);
+      await sendPasswordResetEmail(auth, email);
+    } catch (err: unknown) {
+      console.error("Password reset error:", err);
+      setError(getErrorMessage(err));
+      throw err; // Re-throw so the component can handle success/failure
     }
   };
 
@@ -147,9 +220,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Don't remove the user-specific key so they can recover it if they sign in again
     } catch (err: unknown) {
       console.error("Sign-out error:", err);
-      if (err instanceof Error) {
-        setError(err.message);
-      }
+      setError(getErrorMessage(err));
     }
   };
 
@@ -161,8 +232,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         apiKey,
         signInWithGitHub,
         signInWithGoogle,
+        signInWithEmail,
+        signUpWithEmail,
+        resetPassword,
         signOut,
         error,
+        clearError,
       }}
     >
       {children}

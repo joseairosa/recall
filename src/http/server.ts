@@ -12,6 +12,7 @@ import { createAuthMiddleware, createApiKey } from './auth.middleware.js';
 import { StorageClient } from '../persistence/storage-client.js';
 import { MemoryStore } from '../persistence/memory-store.js';
 import { createMcpHandler } from './mcp-handler.js';
+import { getProviderInfo, listAvailableProviders } from '../embeddings/generator.js';
 
 /**
  * Creates and configures the Express HTTP server
@@ -31,6 +32,28 @@ export function createHttpServer(storageClient: StorageClient) {
         status: 'healthy',
         version: '1.7.0',
         timestamp: new Date().toISOString(),
+      },
+    });
+  });
+
+  // Embedding provider info (no auth required - useful for debugging)
+  app.get('/api/provider', (_req: Request, res: Response) => {
+    const currentProvider = getProviderInfo();
+    const availableProviders = listAvailableProviders();
+
+    res.json({
+      success: true,
+      data: {
+        current: currentProvider,
+        available: availableProviders,
+        priority: [
+          'voyage (VOYAGE_API_KEY)',
+          'cohere (COHERE_API_KEY)',
+          'openai (OPENAI_API_KEY)',
+          'deepseek (DEEPSEEK_API_KEY)',
+          'grok (GROK_API_KEY)',
+          'anthropic (ANTHROPIC_API_KEY)',
+        ],
       },
     });
   });
@@ -175,6 +198,46 @@ export function createHttpServer(storageClient: StorageClient) {
   );
 
   /**
+   * Update a memory
+   * PUT /api/memories/:id
+   */
+  app.put(
+    '/api/memories/:id',
+    authMiddleware,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const tenant = req.tenant!;
+        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
+
+        const { content, context_type, importance, tags, metadata } = req.body;
+
+        const memory = await store.updateMemory(req.params.id, {
+          content,
+          context_type,
+          importance,
+          tags,
+          metadata,
+        });
+
+        if (!memory) {
+          res.status(404).json({
+            success: false,
+            error: { code: 'NOT_FOUND', message: 'Memory not found' },
+          });
+          return;
+        }
+
+        res.json({
+          success: true,
+          data: memory,
+        });
+      } catch (error) {
+        handleError(res, error);
+      }
+    }
+  );
+
+  /**
    * Delete a memory
    * DELETE /api/memories/:id
    */
@@ -191,6 +254,164 @@ export function createHttpServer(storageClient: StorageClient) {
         res.json({
           success: true,
           data: { deleted: req.params.id },
+        });
+      } catch (error) {
+        handleError(res, error);
+      }
+    }
+  );
+
+  /**
+   * Get memories by context type
+   * GET /api/memories/by-type/:type
+   */
+  app.get(
+    '/api/memories/by-type/:type',
+    authMiddleware,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const tenant = req.tenant!;
+        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
+
+        const memories = await store.getMemoriesByType(req.params.type);
+
+        res.json({
+          success: true,
+          data: memories,
+        });
+      } catch (error) {
+        handleError(res, error);
+      }
+    }
+  );
+
+  /**
+   * Get memories by tag
+   * GET /api/memories/by-tag/:tag
+   */
+  app.get(
+    '/api/memories/by-tag/:tag',
+    authMiddleware,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const tenant = req.tenant!;
+        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
+
+        const memories = await store.getMemoriesByTag(req.params.tag);
+
+        res.json({
+          success: true,
+          data: memories,
+        });
+      } catch (error) {
+        handleError(res, error);
+      }
+    }
+  );
+
+  /**
+   * Get important memories (importance >= 8)
+   * GET /api/memories/important
+   */
+  app.get(
+    '/api/memories/important',
+    authMiddleware,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const tenant = req.tenant!;
+        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
+
+        const limit = parseInt(req.query.limit as string) || 50;
+        const memories = await store.getImportantMemories(limit);
+
+        res.json({
+          success: true,
+          data: memories,
+        });
+      } catch (error) {
+        handleError(res, error);
+      }
+    }
+  );
+
+  /**
+   * Get usage statistics
+   * GET /api/stats
+   */
+  app.get(
+    '/api/stats',
+    authMiddleware,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const tenant = req.tenant!;
+        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
+
+        const stats = await store.getSummaryStats();
+
+        res.json({
+          success: true,
+          data: {
+            tenantId: tenant.tenantId,
+            plan: tenant.plan,
+            limits: tenant.limits,
+            usage: stats,
+          },
+        });
+      } catch (error) {
+        handleError(res, error);
+      }
+    }
+  );
+
+  /**
+   * List all sessions
+   * GET /api/sessions
+   */
+  app.get(
+    '/api/sessions',
+    authMiddleware,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const tenant = req.tenant!;
+        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
+
+        const sessions = await store.getAllSessions();
+
+        res.json({
+          success: true,
+          data: sessions,
+        });
+      } catch (error) {
+        handleError(res, error);
+      }
+    }
+  );
+
+  /**
+   * Get session details
+   * GET /api/sessions/:id
+   */
+  app.get(
+    '/api/sessions/:id',
+    authMiddleware,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const tenant = req.tenant!;
+        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
+
+        const session = await store.getSession(req.params.id);
+
+        if (!session) {
+          res.status(404).json({
+            success: false,
+            error: { code: 'NOT_FOUND', message: 'Session not found' },
+          });
+          return;
+        }
+
+        res.json({
+          success: true,
+          data: session,
         });
       } catch (error) {
         handleError(res, error);

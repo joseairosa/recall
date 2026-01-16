@@ -4,8 +4,13 @@
  * Client for communicating with the Recall HTTP API.
  */
 
+// In production, use relative URLs since frontend and backend are on same domain
+// In development, default to localhost:8080
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+  process.env.NEXT_PUBLIC_API_URL ||
+  (typeof window !== "undefined" && window.location.hostname !== "localhost"
+    ? ""
+    : "http://localhost:8080");
 
 export interface ApiResponse<T> {
   success: boolean;

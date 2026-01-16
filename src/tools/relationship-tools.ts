@@ -13,7 +13,19 @@ import {
   type GetMemoryGraph,
 } from '../types.js';
 
-const memoryStore = await MemoryStore.create();
+// Injected memory store for multi-tenant support
+let memoryStore: MemoryStore | null = null;
+
+export function setRelationshipMemoryStore(store: MemoryStore): void {
+  memoryStore = store;
+}
+
+function getStore(): MemoryStore {
+  if (!memoryStore) {
+    throw new Error('MemoryStore not initialized');
+  }
+  return memoryStore;
+}
 
 export const relationshipTools = {
   link_memories: {
@@ -21,7 +33,7 @@ export const relationshipTools = {
     inputSchema: zodToJsonSchema(LinkMemoriesSchema),
     handler: async (args: z.infer<typeof LinkMemoriesSchema>) => {
       try {
-        const relationship = await memoryStore.createRelationship(
+        const relationship = await getStore().createRelationship(
           args.from_memory_id,
           args.to_memory_id,
           args.relationship_type,
@@ -55,7 +67,7 @@ export const relationshipTools = {
     inputSchema: zodToJsonSchema(GetRelatedMemoriesSchema),
     handler: async (args: z.infer<typeof GetRelatedMemoriesSchema>) => {
       try {
-        const results = await memoryStore.getRelatedMemories(args.memory_id, {
+        const results = await getStore().getRelatedMemories(args.memory_id, {
           relationshipTypes: args.relationship_types,
           depth: args.depth,
           direction: args.direction,
@@ -105,7 +117,7 @@ export const relationshipTools = {
     inputSchema: zodToJsonSchema(UnlinkMemoriesSchema),
     handler: async (args: z.infer<typeof UnlinkMemoriesSchema>) => {
       try {
-        const deleted = await memoryStore.deleteRelationship(args.relationship_id);
+        const deleted = await getStore().deleteRelationship(args.relationship_id);
 
         if (!deleted) {
           throw new McpError(ErrorCode.InvalidRequest, `Relationship not found: ${args.relationship_id}`);
@@ -134,7 +146,7 @@ export const relationshipTools = {
     inputSchema: zodToJsonSchema(GetMemoryGraphSchema),
     handler: async (args: z.infer<typeof GetMemoryGraphSchema>) => {
       try {
-        const graph = await memoryStore.getMemoryGraph(
+        const graph = await getStore().getMemoryGraph(
           args.memory_id,
           args.max_depth,
           args.max_nodes

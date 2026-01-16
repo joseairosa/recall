@@ -7,7 +7,16 @@ import {
   CreateFromTemplateSchema,
 } from '../types.js';
 
-const memoryStore = await MemoryStore.create();
+let memoryStore: MemoryStore | null = null;
+
+export function setTemplateMemoryStore(store: MemoryStore): void {
+  memoryStore = store;
+}
+
+function getStore(): MemoryStore {
+  if (!memoryStore) throw new Error('MemoryStore not initialized');
+  return memoryStore;
+}
 
 export const templateTools = {
   create_template: {
@@ -15,7 +24,7 @@ export const templateTools = {
     inputSchema: zodToJsonSchema(CreateTemplateSchema),
     handler: async (args: z.infer<typeof CreateTemplateSchema>) => {
       try {
-        const template = await memoryStore.createTemplate(args);
+        const template = await getStore().createTemplate(args);
 
         return {
           content: [{
@@ -49,7 +58,7 @@ export const templateTools = {
     inputSchema: zodToJsonSchema(CreateFromTemplateSchema),
     handler: async (args: z.infer<typeof CreateFromTemplateSchema>) => {
       try {
-        const memory = await memoryStore.createFromTemplate(
+        const memory = await getStore().createFromTemplate(
           args.template_id,
           args.variables,
           args.tags,
@@ -90,7 +99,7 @@ export const templateTools = {
     inputSchema: zodToJsonSchema(z.object({})),
     handler: async () => {
       try {
-        const templates = await memoryStore.getAllTemplates();
+        const templates = await getStore().getAllTemplates();
 
         return {
           content: [{

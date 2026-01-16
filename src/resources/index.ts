@@ -8,10 +8,39 @@ import { ValkeyClientProvider } from "../persistence/valkey-client.js";
 import { StorageClient } from "../persistence/storage-client.js";
 import { createStorageClient } from "../persistence/storage-client.factory.js";
 
+// Injected memory store for multi-tenant support
+let memoryStore: MemoryStore | null = null;
+let storageClient: StorageClient | null = null;
 
+export function setResourceMemoryStore(store: MemoryStore): void {
+  memoryStore = store;
+}
 
-const memoryStore = await MemoryStore.create();
-const storageClient = await createStorageClient()
+function getStore(): MemoryStore {
+  if (!memoryStore) throw new Error('MemoryStore not initialized');
+  return memoryStore;
+}
+
+async function getStorageClient(): Promise<StorageClient> {
+  if (!storageClient) {
+    storageClient = await createStorageClient();
+  }
+  return storageClient;
+}
+
+// Initialize defaults for stdio mode
+(async () => {
+  try {
+    if (!memoryStore) {
+      memoryStore = await MemoryStore.create();
+    }
+    if (!storageClient) {
+      storageClient = await createStorageClient();
+    }
+  } catch (err) {
+    console.error('[Resources] Failed to initialize:', err);
+  }
+})();
 
 export const resources = {
   "memory://recent": {
@@ -20,7 +49,7 @@ export const resources = {
     mimeType: "application/json",
     handler: async (uri: URL) => {
       const limit = parseInt(uri.searchParams.get("limit") || "50", 10);
-      const memories = await memoryStore.getRecentMemories(limit);
+      const memories = await getStore().getRecentMemories(limit);
 
       return {
         contents: [
@@ -60,7 +89,7 @@ export const resources = {
         ? parseInt(uri.searchParams.get("limit")!, 10)
         : undefined;
 
-      const memories = await memoryStore.getMemoriesByType(type, limit);
+      const memories = await getStore().getMemoriesByType(type, limit);
 
       return {
         contents: [
@@ -99,7 +128,7 @@ export const resources = {
         ? parseInt(uri.searchParams.get("limit")!, 10)
         : undefined;
 
-      const memories = await memoryStore.getMemoriesByTag(tag, limit);
+      const memories = await getStore().getMemoriesByTag(tag, limit);
 
       return {
         contents: [
@@ -139,7 +168,7 @@ export const resources = {
         ? parseInt(uri.searchParams.get("limit")!, 10)
         : undefined;
 
-      const memories = await memoryStore.getImportantMemories(
+      const memories = await getStore().getImportantMemories(
         minImportance,
         limit
       );
@@ -178,7 +207,7 @@ export const resources = {
     mimeType: "application/json",
     handler: async (uri: URL, params: { session_id: string }) => {
       const { session_id } = params;
-      const session = await memoryStore.getSession(session_id);
+      const session = await getStore().getSession(session_id);
 
       if (!session) {
         throw new McpError(
@@ -187,7 +216,7 @@ export const resources = {
         );
       }
 
-      const memories = await memoryStore.getSessionMemories(session_id);
+      const memories = await getStore().getSessionMemories(session_id);
 
       return {
         contents: [
@@ -225,7 +254,7 @@ export const resources = {
     description: "Get list of all sessions",
     mimeType: "application/json",
     handler: async (uri: URL) => {
-      const sessions = await memoryStore.getAllSessions();
+      const sessions = await getStore().getAllSessions();
 
       return {
         contents: [
@@ -257,7 +286,7 @@ export const resources = {
     description: "Get overall summary statistics of stored memories",
     mimeType: "application/json",
     handler: async (uri: URL) => {
-      const stats = await memoryStore.getSummaryStats();
+      const stats = await getStore().getSummaryStats();
 
       return {
         contents: [
@@ -289,7 +318,7 @@ export const resources = {
         ? parseInt(uri.searchParams.get("min_importance")!, 10)
         : undefined;
 
-      const results = await memoryStore.searchMemories(
+      const results = await getStore().searchMemories(
         query,
         limit,
         minImportance
@@ -363,7 +392,7 @@ export const resources = {
         0,
         limit - 1
       );
-      const memories = await memoryStore.getMemories(ids);
+      const memories = await getStore().getMemories(ids);
 
       return {
         contents: [
@@ -413,7 +442,7 @@ export const resources = {
         : undefined;
 
       const ids = await storageClient.smembers(StorageKeys.globalByType(type));
-      const allMemories = await memoryStore.getMemories(ids);
+      const allMemories = await getStore().getMemories(ids);
 
       // Sort by timestamp descending
       allMemories.sort((a, b) => b.timestamp - a.timestamp);
@@ -467,7 +496,7 @@ export const resources = {
         : undefined;
 
       const ids = await storageClient.smembers(StorageKeys.globalByTag(tag));
-      const allMemories = await memoryStore.getMemories(ids);
+      const allMemories = await getStore().getMemories(ids);
 
       // Sort by timestamp descending
       allMemories.sort((a, b) => b.timestamp - a.timestamp);
@@ -528,7 +557,7 @@ export const resources = {
         { offset: 0, count: limit || 100 }
       );
 
-      const memories = await memoryStore.getMemories(results);
+      const memories = await getStore().getMemories(results);
 
       return {
         contents: [
@@ -588,7 +617,7 @@ export const resources = {
       process.env.WORKSPACE_MODE = "global";
 
       try {
-        const results = await memoryStore.searchMemories(query, limit);
+        const results = await getStore().searchMemories(query, limit);
 
         return {
           contents: [
@@ -664,7 +693,7 @@ export const resources = {
       // Fetch relationships
       const relationships = await Promise.all(
         relationshipIds.map(async (id) => {
-          const rel = await memoryStore.getRelationship(id);
+          const rel = await getStore().getRelationship(id);
           return rel;
         })
       );
@@ -716,7 +745,7 @@ export const resources = {
         | "incoming"
         | "both";
 
-      const results = await memoryStore.getRelatedMemories(memoryId, {
+      const results = await getStore().getRelatedMemories(memoryId, {
         depth,
         direction,
       });
@@ -771,7 +800,7 @@ export const resources = {
       const maxDepth = parseInt(uri.searchParams.get("depth") || "2", 10);
       const maxNodes = parseInt(uri.searchParams.get("max_nodes") || "50", 10);
 
-      const graph = await memoryStore.getMemoryGraph(
+      const graph = await getStore().getMemoryGraph(
         memoryId,
         maxDepth,
         maxNodes

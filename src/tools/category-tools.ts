@@ -7,7 +7,16 @@ import {
   ListCategoriesSchema,
 } from '../types.js';
 
-const memoryStore = await MemoryStore.create();
+let memoryStore: MemoryStore | null = null;
+
+export function setCategoryMemoryStore(store: MemoryStore): void {
+  memoryStore = store;
+}
+
+function getStore(): MemoryStore {
+  if (!memoryStore) throw new Error('MemoryStore not initialized');
+  return memoryStore;
+}
 
 export const categoryTools = {
   set_memory_category: {
@@ -15,7 +24,7 @@ export const categoryTools = {
     inputSchema: zodToJsonSchema(SetMemoryCategorySchema),
     handler: async (args: z.infer<typeof SetMemoryCategorySchema>) => {
       try {
-        const memory = await memoryStore.setMemoryCategory(args.memory_id, args.category);
+        const memory = await getStore().setMemoryCategory(args.memory_id, args.category);
 
         if (!memory) {
           throw new McpError(ErrorCode.InvalidRequest, 'Memory not found');
@@ -48,7 +57,7 @@ export const categoryTools = {
     inputSchema: zodToJsonSchema(ListCategoriesSchema),
     handler: async (args: z.infer<typeof ListCategoriesSchema>) => {
       try {
-        const categories = await memoryStore.getAllCategories();
+        const categories = await getStore().getAllCategories();
 
         return {
           content: [{
@@ -81,7 +90,7 @@ export const categoryTools = {
     })),
     handler: async (args: { category: string; limit: number }) => {
       try {
-        const memories = await memoryStore.getMemoriesByCategory(args.category);
+        const memories = await getStore().getMemoriesByCategory(args.category);
         const limited = memories.slice(0, args.limit);
 
         return {

@@ -7,7 +7,16 @@ import {
   RollbackMemorySchema,
 } from '../types.js';
 
-const memoryStore = await MemoryStore.create();
+let memoryStore: MemoryStore | null = null;
+
+export function setVersionMemoryStore(store: MemoryStore): void {
+  memoryStore = store;
+}
+
+function getStore(): MemoryStore {
+  if (!memoryStore) throw new Error('MemoryStore not initialized');
+  return memoryStore;
+}
 
 export const versionTools = {
   get_memory_history: {
@@ -15,7 +24,7 @@ export const versionTools = {
     inputSchema: zodToJsonSchema(GetMemoryHistorySchema),
     handler: async (args: z.infer<typeof GetMemoryHistorySchema>) => {
       try {
-        const versions = await memoryStore.getMemoryHistory(args.memory_id, args.limit);
+        const versions = await getStore().getMemoryHistory(args.memory_id, args.limit);
 
         if (versions.length === 0) {
           return {
@@ -58,7 +67,7 @@ export const versionTools = {
     inputSchema: zodToJsonSchema(RollbackMemorySchema),
     handler: async (args: z.infer<typeof RollbackMemorySchema>) => {
       try {
-        const rolledBackMemory = await memoryStore.rollbackMemory(
+        const rolledBackMemory = await getStore().rollbackMemory(
           args.memory_id,
           args.version_id,
           args.preserve_relationships

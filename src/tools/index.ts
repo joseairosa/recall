@@ -16,12 +16,14 @@ import {
   analyze_and_remember,
   summarize_session,
   get_time_window_context,
+  setContextMemoryStore,
 } from './context-tools.js';
 import {
   exportMemories,
   importMemories,
   findDuplicates,
   consolidateMemories,
+  setExportImportMemoryStore,
 } from './export-import-tools.js';
 import {
   ExportMemoriesSchema,
@@ -29,12 +31,67 @@ import {
   FindDuplicatesSchema,
   ConsolidateMemoriesSchema,
 } from '../types.js';
-import { relationshipTools } from './relationship-tools.js';
-import { versionTools } from './version-tools.js';
-import { templateTools } from './template-tools.js';
-import { categoryTools } from './category-tools.js';
+import { relationshipTools, setRelationshipMemoryStore } from './relationship-tools.js';
+import { versionTools, setVersionMemoryStore } from './version-tools.js';
+import { templateTools, setTemplateMemoryStore } from './template-tools.js';
+import { categoryTools, setCategoryMemoryStore } from './category-tools.js';
 
-const memoryStore = await MemoryStore.create();
+// Default memory store for stdio mode (singleton)
+let defaultMemoryStore: MemoryStore | null = null;
+
+// Injected memory store for HTTP multi-tenant mode
+let injectedMemoryStore: MemoryStore | null = null;
+
+/**
+ * Gets the current memory store (injected or default)
+ */
+export function getMemoryStore(): MemoryStore {
+  if (injectedMemoryStore) {
+    return injectedMemoryStore;
+  }
+  if (!defaultMemoryStore) {
+    throw new Error('MemoryStore not initialized. Call initializeDefaultMemoryStore() first.');
+  }
+  return defaultMemoryStore;
+}
+
+/**
+ * Sets the memory store for the current request context (HTTP multi-tenant mode)
+ */
+export function setMemoryStore(store: MemoryStore): void {
+  injectedMemoryStore = store;
+  // Propagate to sub-modules
+  setContextMemoryStore(store);
+  setExportImportMemoryStore(store);
+  setRelationshipMemoryStore(store);
+  setVersionMemoryStore(store);
+  setTemplateMemoryStore(store);
+  setCategoryMemoryStore(store);
+}
+
+/**
+ * Clears the injected memory store (call after request completes)
+ */
+export function clearMemoryStore(): void {
+  injectedMemoryStore = null;
+}
+
+/**
+ * Initializes the default memory store for stdio mode
+ */
+export async function initializeDefaultMemoryStore(): Promise<void> {
+  if (!defaultMemoryStore) {
+    defaultMemoryStore = await MemoryStore.create();
+    // Set as the active store for sub-modules
+    setMemoryStore(defaultMemoryStore);
+  }
+}
+
+// For backward compatibility with stdio mode, initialize on import
+// This is a no-op in HTTP mode where setMemoryStore() is called per-request
+initializeDefaultMemoryStore().catch(err => {
+  console.error('[Tools] Failed to initialize default memory store:', err);
+});
 
 export const tools = {
   // Context management tools
@@ -110,7 +167,7 @@ export const tools = {
     inputSchema: zodToJsonSchema(CreateMemorySchema),
     handler: async (args: z.infer<typeof CreateMemorySchema>) => {
       try {
-        const memory = await memoryStore.createMemory(args);
+        const memory = await getMemoryStore().createMemory(args);
         return {
           content: [
             {
@@ -138,7 +195,7 @@ export const tools = {
     inputSchema: zodToJsonSchema(BatchCreateMemoriesSchema),
     handler: async (args: z.infer<typeof BatchCreateMemoriesSchema>) => {
       try {
-        const memories = await memoryStore.createMemories(args.memories);
+        const memories = await getMemoryStore().createMemories(args.memories);
         return {
           content: [
             {
@@ -166,7 +223,7 @@ export const tools = {
     handler: async (args: z.infer<typeof UpdateMemorySchema>) => {
       try {
         const { memory_id, ...updates } = args;
-        const memory = await memoryStore.updateMemory(memory_id, updates);
+        const memory = await getMemoryStore().updateMemory(memory_id, updates);
 
         if (!memory) {
           throw new McpError(ErrorCode.InvalidRequest, `Memory ${memory_id} not found`);
@@ -199,7 +256,7 @@ export const tools = {
     inputSchema: zodToJsonSchema(DeleteMemorySchema),
     handler: async (args: z.infer<typeof DeleteMemorySchema>) => {
       try {
-        const success = await memoryStore.deleteMemory(args.memory_id);
+        const success = await getMemoryStore().deleteMemory(args.memory_id);
 
         if (!success) {
           throw new McpError(ErrorCode.InvalidRequest, `Memory ${args.memory_id} not found`);
@@ -232,7 +289,7 @@ export const tools = {
     inputSchema: zodToJsonSchema(SearchMemorySchema),
     handler: async (args: z.infer<typeof SearchMemorySchema>) => {
       try {
-        const results = await memoryStore.searchMemories(
+        const results = await getMemoryStore().searchMemories(
           args.query,
           args.limit,
           args.min_importance,
@@ -285,7 +342,7 @@ export const tools = {
     inputSchema: zodToJsonSchema(OrganizeSessionSchema),
     handler: async (args: z.infer<typeof OrganizeSessionSchema>) => {
       try {
-        const session = await memoryStore.createSession(
+        const session = await getMemoryStore().createSession(
           args.session_name,
           args.memory_ids,
           args.summary
@@ -320,7 +377,7 @@ export const tools = {
     inputSchema: zodToJsonSchema(ConvertToGlobalSchema),
     handler: async (args: z.infer<typeof ConvertToGlobalSchema>) => {
       try {
-        const result = await memoryStore.convertToGlobal(args.memory_id);
+        const result = await getMemoryStore().convertToGlobal(args.memory_id);
 
         if (!result) {
           throw new McpError(
@@ -358,7 +415,7 @@ export const tools = {
     inputSchema: zodToJsonSchema(ConvertToWorkspaceSchema),
     handler: async (args: z.infer<typeof ConvertToWorkspaceSchema>) => {
       try {
-        const result = await memoryStore.convertToWorkspace(
+        const result = await getMemoryStore().convertToWorkspace(
           args.memory_id,
           args.workspace_id
         );

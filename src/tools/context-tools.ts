@@ -11,8 +11,23 @@ import {
   type MemoryEntry,
 } from '../types.js';
 
-const memoryStore = await MemoryStore.create();
+// Injected memory store for multi-tenant support
+let memoryStore: MemoryStore | null = null;
 const analyzer = new ConversationAnalyzer();
+
+/**
+ * Sets the memory store for this module (called from tools/index.ts)
+ */
+export function setContextMemoryStore(store: MemoryStore): void {
+  memoryStore = store;
+}
+
+function getStore(): MemoryStore {
+  if (!memoryStore) {
+    throw new Error('MemoryStore not initialized. Call setContextMemoryStore() first.');
+  }
+  return memoryStore;
+}
 
 /**
  * recall_relevant_context - Proactively retrieve relevant memories for current task
@@ -26,7 +41,7 @@ export const recall_relevant_context = {
       const enhancedQuery = await analyzer.enhanceQuery(args.current_task, args.query);
 
       // Semantic search with filters
-      const results = await memoryStore.searchMemories(
+      const results = await getStore().searchMemories(
         enhancedQuery,
         args.limit,
         args.min_importance
@@ -81,7 +96,7 @@ export const analyze_and_remember = {
 
       // Auto-store if requested
       if (args.auto_store && extracted.length > 0) {
-        const memories = await memoryStore.createMemories(
+        const memories = await getStore().createMemories(
           extracted.map(e => ({
             content: e.content,
             context_type: e.context_type,
@@ -145,7 +160,7 @@ export const summarize_session = {
       const lookbackMs = args.lookback_minutes * 60 * 1000;
       const cutoffTime = Date.now() - lookbackMs;
 
-      const allRecent = await memoryStore.getRecentMemories(100);
+      const allRecent = await getStore().getRecentMemories(100);
       const sessionMemories = allRecent.filter(m => m.timestamp >= cutoffTime);
 
       if (sessionMemories.length === 0) {
@@ -177,7 +192,7 @@ export const summarize_session = {
       // Create session snapshot if requested
       if (args.auto_create_snapshot) {
         const sessionName = args.session_name || `Session ${new Date().toISOString().split('T')[0]}`;
-        sessionInfo = await memoryStore.createSession(
+        sessionInfo = await getStore().createSession(
           sessionName,
           sessionMemories.map(m => m.id),
           summary
@@ -323,7 +338,7 @@ export const get_time_window_context = {
       }
 
       // Get memories in time window
-      const memories = await memoryStore.getMemoriesByTimeWindow(
+      const memories = await getStore().getMemoriesByTimeWindow(
         startTime,
         endTime,
         args.min_importance,

@@ -11,6 +11,7 @@ import { AuthenticatedRequest } from './types.js';
 import { createAuthMiddleware, createApiKey } from './auth.middleware.js';
 import { StorageClient } from '../persistence/storage-client.js';
 import { MemoryStore } from '../persistence/memory-store.js';
+import { createMcpHandler } from './mcp-handler.js';
 
 /**
  * Creates and configures the Express HTTP server
@@ -281,6 +282,19 @@ export function createHttpServer(storageClient: StorageClient) {
       }
     }
   );
+
+  // ============================================
+  // MCP Protocol Endpoint
+  // ============================================
+
+  /**
+   * MCP HTTP Transport
+   * POST /mcp - Handle MCP JSON-RPC requests
+   * GET /mcp - Handle SSE connections for streaming
+   * DELETE /mcp - Close MCP session
+   */
+  const mcpHandler = createMcpHandler(storageClient);
+  app.all('/mcp', authMiddleware, mcpHandler as any);
 
   // 404 handler
   app.use((_req: Request, res: Response) => {

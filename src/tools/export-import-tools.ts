@@ -15,6 +15,25 @@ import {
 } from '../types.js';
 import { cosineSimilarity } from '../embeddings/generator.js';
 
+// Injected memory store for multi-tenant support
+let injectedStore: MemoryStore | null = null;
+
+/**
+ * Sets the memory store for this module (called from tools/index.ts)
+ */
+export function setExportImportMemoryStore(store: MemoryStore): void {
+  injectedStore = store;
+}
+
+async function getStore(workspacePath?: string): Promise<MemoryStore> {
+  // If a store was injected (HTTP mode), use it
+  if (injectedStore) {
+    return injectedStore;
+  }
+  // Otherwise create one (stdio mode)
+  return MemoryStore.create(workspacePath);
+}
+
 /**
  * Export memories to JSON format
  */
@@ -22,7 +41,7 @@ export async function exportMemories(
   args: ExportMemories,
   workspacePath?: string
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
-  const store = await MemoryStore.create(workspacePath);
+  const store = await getStore(workspacePath);
 
   // Get all memories or filtered subset
   let memories: MemoryEntry[];
@@ -85,7 +104,7 @@ export async function importMemories(
   args: ImportMemories,
   workspacePath?: string
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
-  const store = await MemoryStore.create(workspacePath);
+  const store = await getStore(workspacePath);
 
   let importData: any;
   try {
@@ -336,7 +355,7 @@ export async function consolidateMemories(
   args: ConsolidateMemories,
   workspacePath?: string
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
-  const store = await MemoryStore.create(workspacePath);
+  const store = await getStore(workspacePath);
 
   const result = await store.mergeMemories(args.memory_ids, args.keep_id);
 

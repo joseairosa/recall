@@ -8,12 +8,20 @@ WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
+COPY tsup.config.ts ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install ALL dependencies (including dev for building)
+RUN npm ci
 
-# Copy built files
-COPY dist/ ./dist/
+# Copy source files
+COPY src/ ./src/
+COPY tsconfig.json ./
+
+# Build the project
+RUN npm run build
+
+# Remove dev dependencies to reduce image size
+RUN npm prune --production
 
 # Expose port (Railway uses PORT env var)
 EXPOSE 8080

@@ -259,13 +259,18 @@ async function handleSubscriptionChange(
   let plan = 'free';
   const priceId = subscription.items.data[0]?.price?.id;
 
+  console.log(`[Billing] Processing subscription for tenant ${tenantId}, priceId: ${priceId}`);
+
   if (priceId) {
-    if (priceId.includes('pro') || priceId === PRICE_IDS.price_pro_monthly) {
+    // Check against actual price IDs
+    if (priceId === 'price_1SqGK8LUbfmx8MWFMzZ2WTsz' || priceId.includes('pro')) {
       plan = 'pro';
-    } else if (priceId.includes('team') || priceId === PRICE_IDS.price_team_monthly) {
+    } else if (priceId === 'price_1SqGL4LUbfmx8MWFjxlB3B7F' || priceId.includes('team')) {
       plan = 'team';
     }
   }
+
+  console.log(`[Billing] Determined plan: ${plan}`);
 
   // Update customer record
   await storageClient.hset(`customer:${tenantId}`, {
@@ -277,8 +282,11 @@ async function handleSubscriptionChange(
 
   // Update API key record with new plan
   const apiKeys = await storageClient.smembers(`tenant:${tenantId}:apikeys`);
-  for (const keyId of apiKeys) {
-    await storageClient.hset(`apikey:${keyId}`, {
+  console.log(`[Billing] Found ${apiKeys.length} API keys for tenant: ${JSON.stringify(apiKeys.map(k => k.substring(0, 10) + '...'))}`);
+
+  for (const apiKey of apiKeys) {
+    console.log(`[Billing] Updating apikey:${apiKey.substring(0, 10)}... to plan: ${plan}`);
+    await storageClient.hset(`apikey:${apiKey}`, {
       plan,
     });
   }

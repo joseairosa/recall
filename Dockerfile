@@ -11,7 +11,8 @@ COPY package*.json ./
 COPY tsup.config.ts ./
 
 # Install ALL dependencies (including dev for building)
-RUN npm ci
+# --ignore-scripts prevents 'prepare' from running before src/ is copied
+RUN npm ci --ignore-scripts
 
 # Copy source files
 COPY src/ ./src/

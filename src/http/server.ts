@@ -154,7 +154,8 @@ export function createHttpServer(storageClient: StorageClient) {
         const store = createTenantMemoryStore(storageClient, tenant.tenantId);
 
         const limit = parseInt(req.query.limit as string) || 50;
-        const memories = await store.getImportantMemories(limit);
+        const minImportance = parseInt(req.query.min as string) || 8;
+        const memories = await store.getImportantMemories(minImportance, limit);
 
         res.json({
           success: true,

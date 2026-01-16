@@ -64,6 +64,7 @@ export function createHttpServer(storageClient: StorageClient) {
   // ============================================
   // Memory CRUD Operations
   // ============================================
+  // IMPORTANT: Route order matters! Specific paths must come before :id params
 
   /**
    * Store a memory
@@ -106,39 +107,7 @@ export function createHttpServer(storageClient: StorageClient) {
   );
 
   /**
-   * Get a memory by ID
-   * GET /api/memories/:id
-   */
-  app.get(
-    '/api/memories/:id',
-    authMiddleware,
-    async (req: AuthenticatedRequest, res: Response) => {
-      try {
-        const tenant = req.tenant!;
-        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
-
-        const memory = await store.getMemory(req.params.id);
-
-        if (!memory) {
-          res.status(404).json({
-            success: false,
-            error: { code: 'NOT_FOUND', message: 'Memory not found' },
-          });
-          return;
-        }
-
-        res.json({
-          success: true,
-          data: memory,
-        });
-      } catch (error) {
-        handleError(res, error);
-      }
-    }
-  );
-
-  /**
-   * Search memories
+   * Search memories (must be before :id route)
    * GET /api/memories/search?q=query&limit=10
    */
   app.get(
@@ -173,6 +142,79 @@ export function createHttpServer(storageClient: StorageClient) {
   );
 
   /**
+   * Get important memories (must be before :id route)
+   * GET /api/memories/important
+   */
+  app.get(
+    '/api/memories/important',
+    authMiddleware,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const tenant = req.tenant!;
+        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
+
+        const limit = parseInt(req.query.limit as string) || 50;
+        const memories = await store.getImportantMemories(limit);
+
+        res.json({
+          success: true,
+          data: memories,
+        });
+      } catch (error) {
+        handleError(res, error);
+      }
+    }
+  );
+
+  /**
+   * Get memories by context type (must be before :id route)
+   * GET /api/memories/by-type/:type
+   */
+  app.get(
+    '/api/memories/by-type/:type',
+    authMiddleware,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const tenant = req.tenant!;
+        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
+
+        const memories = await store.getMemoriesByType(req.params.type);
+
+        res.json({
+          success: true,
+          data: memories,
+        });
+      } catch (error) {
+        handleError(res, error);
+      }
+    }
+  );
+
+  /**
+   * Get memories by tag (must be before :id route)
+   * GET /api/memories/by-tag/:tag
+   */
+  app.get(
+    '/api/memories/by-tag/:tag',
+    authMiddleware,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const tenant = req.tenant!;
+        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
+
+        const memories = await store.getMemoriesByTag(req.params.tag);
+
+        res.json({
+          success: true,
+          data: memories,
+        });
+      } catch (error) {
+        handleError(res, error);
+      }
+    }
+  );
+
+  /**
    * Get recent memories
    * GET /api/memories?limit=50
    */
@@ -190,6 +232,38 @@ export function createHttpServer(storageClient: StorageClient) {
         res.json({
           success: true,
           data: memories,
+        });
+      } catch (error) {
+        handleError(res, error);
+      }
+    }
+  );
+
+  /**
+   * Get a memory by ID (must be after specific routes like /search, /important)
+   * GET /api/memories/:id
+   */
+  app.get(
+    '/api/memories/:id',
+    authMiddleware,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const tenant = req.tenant!;
+        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
+
+        const memory = await store.getMemory(req.params.id);
+
+        if (!memory) {
+          res.status(404).json({
+            success: false,
+            error: { code: 'NOT_FOUND', message: 'Memory not found' },
+          });
+          return;
+        }
+
+        res.json({
+          success: true,
+          data: memory,
         });
       } catch (error) {
         handleError(res, error);
@@ -254,79 +328,6 @@ export function createHttpServer(storageClient: StorageClient) {
         res.json({
           success: true,
           data: { deleted: req.params.id },
-        });
-      } catch (error) {
-        handleError(res, error);
-      }
-    }
-  );
-
-  /**
-   * Get memories by context type
-   * GET /api/memories/by-type/:type
-   */
-  app.get(
-    '/api/memories/by-type/:type',
-    authMiddleware,
-    async (req: AuthenticatedRequest, res: Response) => {
-      try {
-        const tenant = req.tenant!;
-        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
-
-        const memories = await store.getMemoriesByType(req.params.type);
-
-        res.json({
-          success: true,
-          data: memories,
-        });
-      } catch (error) {
-        handleError(res, error);
-      }
-    }
-  );
-
-  /**
-   * Get memories by tag
-   * GET /api/memories/by-tag/:tag
-   */
-  app.get(
-    '/api/memories/by-tag/:tag',
-    authMiddleware,
-    async (req: AuthenticatedRequest, res: Response) => {
-      try {
-        const tenant = req.tenant!;
-        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
-
-        const memories = await store.getMemoriesByTag(req.params.tag);
-
-        res.json({
-          success: true,
-          data: memories,
-        });
-      } catch (error) {
-        handleError(res, error);
-      }
-    }
-  );
-
-  /**
-   * Get important memories (importance >= 8)
-   * GET /api/memories/important
-   */
-  app.get(
-    '/api/memories/important',
-    authMiddleware,
-    async (req: AuthenticatedRequest, res: Response) => {
-      try {
-        const tenant = req.tenant!;
-        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
-
-        const limit = parseInt(req.query.limit as string) || 50;
-        const memories = await store.getImportantMemories(limit);
-
-        res.json({
-          success: true,
-          data: memories,
         });
       } catch (error) {
         handleError(res, error);

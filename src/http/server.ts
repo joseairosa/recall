@@ -46,7 +46,14 @@ export function createHttpServer(storageClient: StorageClient) {
 
   // Middleware
   app.use(cors());
-  app.use(express.json());
+  // Parse JSON for all routes EXCEPT the Stripe webhook (needs raw body for signature verification)
+  app.use((req, res, next) => {
+    if (req.originalUrl === '/api/webhooks/stripe') {
+      next();
+    } else {
+      express.json()(req, res, next);
+    }
+  });
 
   // Health check (no auth required)
   app.get('/health', (_req: Request, res: Response) => {

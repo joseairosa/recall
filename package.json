@@ -45,6 +45,7 @@
     "express": "^5.2.1",
     "firebase-admin": "^13.6.0",
     "ioredis": "^5.4.2",
+    "stripe": "^20.1.2",
     "ulid": "^2.3.0",
     "zod": "^3.24.1"
   },

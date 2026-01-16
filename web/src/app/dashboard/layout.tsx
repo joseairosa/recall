@@ -11,6 +11,7 @@ import {
   Database,
   FileText,
   Settings,
+  CreditCard,
   LogOut,
   Menu,
   X,
@@ -25,6 +26,7 @@ const navigation = [
   { name: "API Keys", href: "/dashboard/keys", icon: Key },
   { name: "Memories", href: "/dashboard/memories", icon: Database },
   { name: "Audit Log", href: "/dashboard/audit", icon: FileText },
+  { name: "Billing", href: "/dashboard/billing", icon: CreditCard },
   { name: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
 

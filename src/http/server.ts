@@ -25,6 +25,13 @@ import { createMcpHandler } from './mcp-handler.js';
 import { getProviderInfo, listAvailableProviders } from '../embeddings/generator.js';
 import { AuditService, parseRequestForAudit } from './audit.service.js';
 import { verifyFirebaseToken } from './firebase-admin.js';
+import {
+  createCheckoutSession,
+  createPortalSession,
+  handleWebhookEvent,
+  verifyWebhookSignature,
+  isStripeConfigured,
+} from './billing.service.js';
 
 // ESM __dirname equivalent
 const __filename = fileURLToPath(import.meta.url);
@@ -906,6 +913,177 @@ export function createHttpServer(storageClient: StorageClient) {
    */
   const mcpHandler = createMcpHandler(storageClient);
   app.all('/mcp', authMiddleware, mcpHandler as any);
+
+  // ============================================
+  // Billing Endpoints (Stripe)
+  // ============================================
+
+  /**
+   * Create Stripe Checkout session
+   * POST /api/billing/checkout
+   *
+   * Requires Firebase authentication.
+   */
+  app.post('/api/billing/checkout', async (req: Request, res: Response) => {
+    try {
+      // Verify Firebase token
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' },
+        });
+        return;
+      }
+
+      const idToken = authHeader.substring(7);
+      const decodedToken = await verifyFirebaseToken(idToken);
+
+      if (!decodedToken) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Invalid Firebase token' },
+        });
+        return;
+      }
+
+      if (!isStripeConfigured()) {
+        res.status(503).json({
+          success: false,
+          error: { code: 'SERVICE_UNAVAILABLE', message: 'Billing is not configured' },
+        });
+        return;
+      }
+
+      const { priceId, successUrl, cancelUrl } = req.body;
+
+      if (!priceId) {
+        res.status(400).json({
+          success: false,
+          error: { code: 'BAD_REQUEST', message: 'priceId is required' },
+        });
+        return;
+      }
+
+      const session = await createCheckoutSession(
+        storageClient,
+        decodedToken.uid,
+        priceId,
+        decodedToken.email,
+        decodedToken.name,
+        successUrl,
+        cancelUrl
+      );
+
+      res.json({
+        success: true,
+        data: {
+          url: session.url,
+          sessionId: session.sessionId,
+        },
+      });
+    } catch (error) {
+      handleError(res, error);
+    }
+  });
+
+  /**
+   * Create Stripe Customer Portal session
+   * POST /api/billing/portal
+   *
+   * Requires Firebase authentication.
+   */
+  app.post('/api/billing/portal', async (req: Request, res: Response) => {
+    try {
+      // Verify Firebase token
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' },
+        });
+        return;
+      }
+
+      const idToken = authHeader.substring(7);
+      const decodedToken = await verifyFirebaseToken(idToken);
+
+      if (!decodedToken) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Invalid Firebase token' },
+        });
+        return;
+      }
+
+      if (!isStripeConfigured()) {
+        res.status(503).json({
+          success: false,
+          error: { code: 'SERVICE_UNAVAILABLE', message: 'Billing is not configured' },
+        });
+        return;
+      }
+
+      const { returnUrl } = req.body;
+
+      const session = await createPortalSession(
+        storageClient,
+        decodedToken.uid,
+        returnUrl
+      );
+
+      res.json({
+        success: true,
+        data: {
+          url: session.url,
+        },
+      });
+    } catch (error) {
+      handleError(res, error);
+    }
+  });
+
+  /**
+   * Stripe Webhook handler
+   * POST /api/webhooks/stripe
+   *
+   * Handles subscription lifecycle events from Stripe.
+   */
+  app.post(
+    '/api/webhooks/stripe',
+    express.raw({ type: 'application/json' }),
+    async (req: Request, res: Response) => {
+      try {
+        const signature = req.headers['stripe-signature'];
+
+        if (!signature || typeof signature !== 'string') {
+          res.status(400).json({
+            success: false,
+            error: { code: 'BAD_REQUEST', message: 'Missing stripe-signature header' },
+          });
+          return;
+        }
+
+        let event;
+        try {
+          event = verifyWebhookSignature(req.body, signature);
+        } catch (err) {
+          console.error('[Webhook] Signature verification failed:', err);
+          res.status(400).json({
+            success: false,
+            error: { code: 'BAD_REQUEST', message: 'Invalid signature' },
+          });
+          return;
+        }
+
+        await handleWebhookEvent(storageClient, event);
+
+        res.json({ success: true, received: true });
+      } catch (error) {
+        handleError(res, error);
+      }
+    }
+  );
 
   // ============================================
   // Static Website Serving

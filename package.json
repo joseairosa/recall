@@ -5,11 +5,14 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "recall": "dist/index.js"
+    "recall": "dist/index.js",
+    "recall-http": "dist/server-http.js"
   },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
+    "start": "node dist/index.js",
+    "start:http": "node dist/server-http.js",
     "prepare": "npm run build"
   },
   "keywords": [
@@ -38,11 +41,15 @@
     "@anthropic-ai/sdk": "^0.32.1",
     "@modelcontextprotocol/sdk": "^1.0.4",
     "@valkey/valkey-glide": "^2.1.2",
+    "cors": "^2.8.5",
+    "express": "^5.2.1",
     "ioredis": "^5.4.2",
     "ulid": "^2.3.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
     "@types/node": "^22.10.2",
     "ts-node": "^10.9.2",
     "tsup": "^8.3.5",

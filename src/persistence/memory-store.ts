@@ -11,9 +11,11 @@ export class MemoryStore {
   private workspaceId: string;
   private workspacePath: string;
 
-  private constructor(storageClient: StorageClient, workspacePath?: string) {
-      
-    
+  /**
+   * Create a MemoryStore with an existing storage client.
+   * Use this constructor for HTTP server (multi-tenant) scenarios.
+   */
+  constructor(storageClient: StorageClient, workspacePath?: string) {
     this.workspacePath = workspacePath || process.cwd();
     this.workspaceId = createWorkspaceId(this.workspacePath);
     this.storageClient = storageClient;
@@ -22,6 +24,10 @@ export class MemoryStore {
     console.error(`[MemoryStore] Workspace ID: ${this.workspaceId}`);
   }
 
+  /**
+   * Create a MemoryStore with a new storage client.
+   * Use this factory method for stdio server (single-tenant) scenarios.
+   */
   static async create(workspacePath?: string): Promise<MemoryStore> {
     const storageClient = await createStorageClient();
     return new MemoryStore(storageClient, workspacePath);

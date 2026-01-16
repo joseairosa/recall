@@ -239,13 +239,21 @@ async function handleSubscriptionChange(
       ? subscription.customer
       : subscription.customer.id;
 
-  // Get tenant ID from reverse lookup
-  const tenantId = await storageClient.get(`stripe_customer:${customerId}`);
+  // Get tenant ID from subscription metadata first (most reliable)
+  // Fall back to reverse lookup if not in metadata
+  let tenantId = subscription.metadata?.tenantId;
+
+  if (!tenantId) {
+    tenantId = await storageClient.get(`stripe_customer:${customerId}`);
+  }
 
   if (!tenantId) {
     console.error(`[Billing] No tenant found for Stripe customer ${customerId}`);
     return;
   }
+
+  // Ensure reverse lookup exists for future use
+  await storageClient.set(`stripe_customer:${customerId}`, tenantId);
 
   // Determine plan from price
   let plan = 'free';
@@ -290,8 +298,12 @@ async function handleSubscriptionCanceled(
       ? subscription.customer
       : subscription.customer.id;
 
-  // Get tenant ID from reverse lookup
-  const tenantId = await storageClient.get(`stripe_customer:${customerId}`);
+  // Get tenant ID from subscription metadata first, then reverse lookup
+  let tenantId = subscription.metadata?.tenantId;
+
+  if (!tenantId) {
+    tenantId = await storageClient.get(`stripe_customer:${customerId}`);
+  }
 
   if (!tenantId) {
     console.error(`[Billing] No tenant found for Stripe customer ${customerId}`);

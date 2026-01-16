@@ -318,11 +318,10 @@ export default function BillingPage() {
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
           {pricingTiers.map((tier) => {
             const isCurrentPlan = tier.name.toLowerCase() === currentPlan;
-            const isUpgrade =
-              !isCurrentPlan &&
-              tier.priceId &&
-              pricingTiers.findIndex((t) => t.name.toLowerCase() === currentPlan) <
-                pricingTiers.findIndex((t) => t.name === tier.name);
+            const currentPlanIndex = pricingTiers.findIndex((t) => t.name.toLowerCase() === currentPlan);
+            const tierIndex = pricingTiers.findIndex((t) => t.name === tier.name);
+            const isUpgrade = !isCurrentPlan && tier.priceId && currentPlanIndex < tierIndex;
+            const isDowngrade = !isCurrentPlan && currentPlanIndex > tierIndex;
 
             return (
               <Card
@@ -394,6 +393,10 @@ export default function BillingPage() {
                         ) : (
                           tier.buttonText
                         )}
+                      </Button>
+                    ) : isDowngrade ? (
+                      <Button variant="outline" className="w-full" disabled>
+                        Included in your plan
                       </Button>
                     ) : (
                       <Button variant="outline" className="w-full" disabled>

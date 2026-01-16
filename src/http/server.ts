@@ -550,17 +550,20 @@ export function createHttpServer(storageClient: StorageClient) {
       const plan = 'free'; // Default to free plan
 
       // Check if user already has an API key
-      const existingKeys = await listApiKeys(storageClient, tenantId);
-      if (existingKeys.length > 0) {
-        // Return existing key info (but not the actual key for security)
+      const existingKeysList = await storageClient.smembers(`tenant:${tenantId}:apikeys`);
+      if (existingKeysList.length > 0) {
+        // Return the existing API key (safe since Firebase auth verified)
+        const existingApiKey = existingKeysList[0];
+        const keyData = await storageClient.hgetall(`apikey:${existingApiKey}`);
+
         res.json({
           success: true,
           data: {
-            id: existingKeys[0].id,
+            apiKey: existingApiKey,
+            id: keyData?.id || existingApiKey.substring(3, 15),
             tenantId,
-            plan: existingKeys[0].plan,
-            hasExistingKey: true,
-            message: 'You already have an API key. Use the dashboard to manage it.',
+            plan: keyData?.plan || 'free',
+            message: 'Existing API key retrieved.',
           },
         });
         return;

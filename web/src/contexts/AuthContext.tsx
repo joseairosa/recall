@@ -115,20 +115,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const data = await response.json();
 
-      if (data.success) {
-        if (data.data.apiKey) {
-          // New key created
-          const newKey = data.data.apiKey;
-          setApiKey(newKey);
-          localStorage.setItem("recall_api_key", newKey);
-          localStorage.setItem(userKeyId, newKey);
-        } else if (data.data.hasExistingKey) {
-          // User already has a key but we don't have it locally
-          // They'll need to use the dashboard to manage/regenerate it
-          console.log("User has existing API key on server");
-          setError("You have an existing API key. Check the API Keys page to manage it.");
-        }
-      } else {
+      if (data.success && data.data.apiKey) {
+        // API key created or retrieved
+        const key = data.data.apiKey;
+        setApiKey(key);
+        localStorage.setItem("recall_api_key", key);
+        localStorage.setItem(userKeyId, key);
+        console.log("API key set successfully");
+      } else if (!data.success) {
         console.error("Failed to create API key:", data);
         setError(data.error?.message || "Failed to create API key");
       }

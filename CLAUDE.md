@@ -1,118 +1,80 @@
-# CLAUDE.md - MCP Memory Server
+# CLAUDE.md
 
-Project-specific instructions for Claude when working with this codebase.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ---
 
 ## Project Context
 
-This is an MCP (Model Context Protocol) server that provides **long-term memory** for Claude conversations. It stores context in Redis or Valkey with semantic search capabilities to survive context window limitations.
+**Recall** is an MCP (Model Context Protocol) server providing persistent memory for Claude conversations. Stores context in Redis or Valkey with semantic search to survive context window limitations.
 
-**Key Principle**: This server IS the solution to context loss - treat it with care and always maintain backward compatibility.
+**Version**: 1.7.0 | **Author**: José Airosa | **License**: MIT
 
----
-
-## Using Recall Efficiently (Context Bloat Prevention)
-
-**IMPORTANT: Be selective with memory storage to avoid context bloat.**
-
-### When to Store Memories
-
-Store **HIGH-SIGNAL** context only:
-- ✅ High-level decisions and reasoning ("We chose PostgreSQL over MongoDB because...")
-- ✅ Project preferences (coding style, tech stack, architecture patterns)
-- ✅ Critical constraints (API limits, business rules, security requirements)
-- ✅ Learned patterns from bugs/solutions ("Avoid X because it causes Y")
-
-### When NOT to Store
-
-Don't store **LOW-SIGNAL** content:
-- ❌ Code snippets or implementations (put those in files)
-- ❌ Obvious facts or general knowledge
-- ❌ Temporary context (only needed in current session)
-- ❌ Duplicates of what's already in documentation
-
-### Keep Memories Concise
-
-**Examples:**
-- ✅ GOOD: "API rate limit is 1000 req/min, prefer caching for frequently accessed data"
-- ❌ BAD: "Here's the entire implementation of our caching layer: [50 lines of code]"
-
-- ✅ GOOD: "Team prefers Tailwind CSS over styled-components for consistency"
-- ❌ BAD: "Tailwind is a utility-first CSS framework that..."
-
-**Remember:** Recall is for high-level context, not a code repository. Quality over quantity.
+**Key Principle**: This server IS the solution to context loss - maintain backward compatibility at all costs.
 
 ---
 
-## Time Window Context Retrieval (v1.6.0+)
+## Build & Test Commands
 
-### When to Use `get_time_window_context`
+```bash
+npm run build          # Production build (tsup)
+npm run dev            # Watch mode
 
-Use this tool to retrieve consolidated context from specific time periods:
+# Static checks (no Redis required)
+./tests/test-v1.5.0-simple.sh
 
-**Perfect for:**
-- 📋 Building context files from work sessions ("Give me everything from the last 2 hours as markdown")
-- 🔄 Session handoffs ("Show me what we worked on in the last hour")
-- 📊 Progress summaries ("Get all decisions from today")
-- 📝 Documentation ("Export the last 4 hours as a context file")
+# Runtime tests (requires Redis + API key)
+ANTHROPIC_API_KEY="your-key" node tests/test-runtime.js
 
-**How to use:**
-```
-"Give me the context for the last 2 hours"
-"Show me all high-importance memories from the last hour, grouped by type"
-"Export the last 30 minutes as JSON"
+# Manual verification
+redis-cli ping                    # Check Redis
+node dist/index.js                # Run server manually
 ```
 
-### Output Format Options
+---
 
-- **Markdown** (default): Clean formatted context ready to paste
-- **JSON**: Structured data for processing
-- **Text**: Simple plain text summary
+## Architecture Overview
 
-### Grouping Options
+### Storage Abstraction Layer (v1.7.0)
 
-- **Chronological**: Time-ordered (default, oldest to newest)
-- **By type**: Grouped by context_type (decisions, patterns, etc.)
-- **By importance**: High to low priority
-- **By tags**: Organized by tag categories
+```
+src/persistence/
+├── storage-client.interface.ts   # StorageClient interface
+├── storage-client.factory.ts     # Factory for Redis/Valkey selection
+├── redis-adapter.ts              # Redis implementation
+├── redis-client.ts               # Redis connection
+├── valkey-adapter.ts             # Valkey implementation
+├── valkey-client.ts              # Valkey connection
+└── memory-store.ts               # Core storage logic (uses StorageClient)
+```
 
-### Best Practices
+**Backend Selection**: Set `BACKEND_TYPE=valkey` for Valkey, defaults to Redis.
 
-**DO:**
-- ✅ Use for building context files after work sessions
-- ✅ Filter by importance (>= 8) for critical context only
-- ✅ Group by type when exporting for specific purposes
-- ✅ Use markdown format for human-readable output
-- ✅ Use JSON format when passing to external tools
+### Tool Modules
 
-**DON'T:**
-- ❌ Retrieve huge time windows (>24 hours) without filtering
-- ❌ Use when semantic search would be better (use `search_memories` instead)
-- ❌ Store the output as another memory (creates redundancy)
+| Module                          | Purpose                                   |
+| ------------------------------- | ----------------------------------------- |
+| `tools/index.ts`                | Core memory CRUD                          |
+| `tools/context-tools.ts`        | Smart context (recall, analyze, summarize)|
+| `tools/relationship-tools.ts`   | Knowledge graphs                          |
+| `tools/version-tools.ts`        | Version history & rollback                |
+| `tools/template-tools.ts`       | Memory templates                          |
+| `tools/category-tools.ts`       | Categories                                |
+| `tools/export-import-tools.ts`  | Backup/restore                            |
+
+### Request Flow
+
+```
+Claude → MCP SDK → src/index.ts → tools/*.ts → memory-store.ts → StorageClient → Redis/Valkey
+```
 
 ---
 
-## Development Guidelines
+## Critical Constraints
 
-### Code Style
+### NEVER Change Without Migration
 
-- **TypeScript**: Strict mode, full type safety
-- **ESM Modules**: Use `.js` extensions in imports (even for `.ts` files)
-- **Naming**: camelCase for variables/functions, PascalCase for types/classes
-- **Files**: kebab-case for filenames (e.g., `memory-store.ts`)
-
-### Architecture Principles
-
-1. **Immutable Memory IDs**: Never change ULID generation - memories must remain accessible
-2. **Backward Compatible**: New context types OK, removing types breaks existing memories
-3. **Index Integrity**: Always update ALL indexes when modifying/deleting memories
-4. **Atomic Operations**: Use Redis/Valkey pipelines for multi-step updates
-5. **Error Handling**: Use MCP error codes (`ErrorCode.InvalidRequest`, `ErrorCode.InternalError`)
-
-### Redis/Valkey Data Model
-
-**NEVER** change these key patterns without migration:
+**Redis Key Patterns:**
 ```
 memory:{id}              → Hash
 memories:all             → Set
@@ -120,25 +82,24 @@ memories:timeline        → Sorted Set (score = timestamp)
 memories:type:{type}     → Set
 memories:tag:{tag}       → Set
 memories:important       → Sorted Set (score = importance)
-session:{id}             → Hash
-sessions:all             → Set
 ```
 
-### Context Types (Do Not Remove)
+**10 Core Context Types** (never remove):
+`directive`, `information`, `heading`, `decision`, `code_pattern`, `requirement`, `error`, `todo`, `insight`, `preference`
 
-These 10 types are core to the system:
-- `directive`, `information`, `heading`, `decision`, `code_pattern`, `requirement`, `error`, `todo`, `insight`, `preference`
+**Importance Threshold**: ≥8 for `memories:important` index
 
-**Adding new types**: OK, add to enum in [types.ts](src/types.ts)
-**Removing types**: NO - breaks existing memories
+**Memory IDs**: ULID-based, must remain stable forever
 
-### Importance Scale
+---
 
-- **1-3**: Low (transient)
-- **4-7**: Medium (general)
-- **8-10**: High (critical, auto-indexed)
+## Code Style
 
-**Do not change**: The ≥8 threshold for `memories:important` index
+- **ESM Modules**: Use `.js` extensions in imports (even for `.ts` files)
+- **Files**: kebab-case (`memory-store.ts`)
+- **Variables/Functions**: camelCase
+- **Types/Classes**: PascalCase
+- **Error Handling**: Use MCP `ErrorCode.InvalidRequest`, `ErrorCode.InternalError`
 
 ---
 
@@ -147,280 +108,82 @@ These 10 types are core to the system:
 ### Adding a New Tool
 
 1. Add Zod schema to [types.ts](src/types.ts)
-2. Add method to `MemoryStore` class in [memory-store.ts](src/persistence/memory-store.ts)
-3. Add tool handler to [tools/index.ts](src/tools/index.ts)
-4. Update documentation in [README.md](README.md)
-
-### Adding a New Resource
-
-1. Add resource handler to [resources/index.ts](src/resources/index.ts)
-2. Add routing in [index.ts](src/index.ts) `ReadResourceRequestSchema` handler
-3. Add to resource list in `ListResourcesRequestSchema` handler
-4. Update documentation
+2. Add method to `MemoryStore` in [memory-store.ts](src/persistence/memory-store.ts)
+3. Add handler in [tools/index.ts](src/tools/index.ts)
+4. Update [README.md](README.md)
 
 ### Modifying Storage Logic
 
-**CRITICAL**: If changing `MemoryStore` methods:
 1. Ensure index updates are atomic (use pipelines)
-2. Test with existing Redis/Valkey data
-3. Document migration path if needed
-4. Update version in [package.json](package.json)
-
-### Adding Dependencies
-
-- Keep bundle size small (currently 35KB)
-- Prefer native Node.js APIs when possible
-- Check for ESM compatibility
-- Update [package.json](package.json)
+2. Test with existing data
+3. Document migration path
+4. Update version in package.json
 
 ---
 
-## Build & Test
+## Environment Variables
 
-### Build
-```bash
-npm run build      # Production build
-npm run dev        # Watch mode
-```
-
-### Manual Testing
-```bash
-# Start Redis
-redis-server
-
-# Run server (manual test)
-REDIS_URL=redis://localhost:6379 OPENAI_API_KEY=sk-... node dist/index.js
-
-# In another terminal, test Redis
-redis-cli
-> KEYS *
-```
-
-### Verify MCP Config
-```bash
-# Check Claude Desktop config
-cat ~/Library/Application\ Support/Claude/claude_desktop_config.json
-
-# Check logs
-tail -f ~/Library/Logs/Claude/mcp*.log
-```
+| Variable            | Default                  | Purpose                      |
+| ------------------- | ------------------------ | ---------------------------- |
+| `REDIS_URL`         | `redis://localhost:6379` | Redis connection             |
+| `BACKEND_TYPE`      | `redis`                  | Backend: `redis` or `valkey` |
+| `VALKEY_HOST`       | `localhost`              | Valkey host                  |
+| `VALKEY_PORT`       | `6379`                   | Valkey port                  |
+| `ANTHROPIC_API_KEY` | -                        | Claude API for embeddings    |
+| `WORKSPACE_MODE`    | `isolated`               | Memory isolation mode        |
 
 ---
 
-## Common Tasks
+## Slash Commands
 
-### Update OpenAI Model
+Located in `.claude/commands/`:
 
-Edit [embeddings/generator.ts](src/embeddings/generator.ts):
-```typescript
-model: 'text-embedding-3-small',  // Current
-// Change to: 'text-embedding-3-large' for better quality
-```
-
-⚠️ **Warning**: Changing model invalidates existing embeddings! Need migration.
-
-### Add New Context Type
-
-1. Edit [types.ts](src/types.ts):
-```typescript
-export const ContextType = z.enum([
-  // existing...
-  'your_new_type',
-]);
-```
-
-2. Update documentation in [README.md](README.md)
-
-### Increase Embedding Dimensions
-
-If switching to larger embedding model:
-1. Update `embedding` field handling in [memory-store.ts](src/persistence/memory-store.ts)
-2. Existing memories will have wrong dimensions - need migration
-3. Consider versioning: `embedding_v1`, `embedding_v2`
-
----
-
-## Database Migrations
-
-**Current**: No formal migration system
-
-**If Redis/Valkey Schema Changes**:
-1. Create migration script in `scripts/migrate-{version}.ts`
-2. Document in `MIGRATIONS.md`
-3. Provide rollback instructions
-4. Test on copy of production data first
-
-**Never** delete old keys without migration path!
-
----
-
-## Performance Considerations
-
-### Semantic Search Bottlenecks
-
-**Current**: O(n) cosine similarity in-app
-- Fine for <10k memories (~2s)
-- Slow for >50k memories
-
-**Future**: Use RediSearch with vector similarity
-- O(log n) with HNSW index
-- Requires Redis Stack
-- Need migration for index creation
-
-### OpenAI API Costs
-
-- `text-embedding-3-small`: ~$0.0001 per 1k tokens
-- Average memory: ~100 tokens = $0.00001
-- 10k memories: ~$0.10
-- Use batch API when storing >5 memories
-
-### Redis Memory Usage
-
-- Per memory: ~2KB (content + embedding + indexes)
-- 10k memories: ~20MB
-- 100k memories: ~200MB
-- Redis can handle this easily in-memory
-
----
-
-## Security
-
-### Current (Local Use)
-
-- ✅ Runs on localhost
-- ✅ No network exposure
-- ✅ Uses local Redis
-
-### For Production
-
-Would need:
-- [ ] Redis AUTH password
-- [ ] TLS for Redis connection
-- [ ] Rate limiting on tools
-- [ ] User namespacing
-- [ ] API key rotation
-- [ ] Audit logging
+| Command             | Purpose                            |
+| ------------------- | ---------------------------------- |
+| `/init`             | Initialize session with context    |
+| `/commit-push-pr`   | Commit, push, and create PR        |
+| `/verify-app`       | Build and test verification        |
+| `/code-simplifier`  | Clean up code after implementation |
+| `/review-pr`        | Thorough PR code review            |
 
 ---
 
 ## Debugging
 
-### Server Not Starting
-
 ```bash
-# Check Redis
-redis-cli ping
-
-# Check env vars
-echo $REDIS_URL
-echo $OPENAI_API_KEY
-
-# Check logs
-tail -f ~/Library/Logs/Claude/mcp*.log
+redis-cli ping                              # Check Redis
+redis-cli KEYS memory:*                     # List memories
+tail -f ~/Library/Logs/Claude/mcp*.log      # MCP logs
 ```
 
-### Memory Not Storing
-
-1. Check OpenAI API key validity
-2. Check Redis connection
-3. Look for errors in Claude Desktop logs
-4. Test Redis directly: `redis-cli KEYS memory:*`
-
-### Search Not Working
-
-1. Verify embeddings are generated (check `embedding` field length)
-2. Check OpenAI API quota
-3. Verify cosine similarity calculation
-4. Test with exact content match first
-
 ---
 
-## Documentation Updates
+## Using Recall Efficiently
 
-When modifying functionality:
+**Store HIGH-SIGNAL context only:**
 
-1. Update [README.md](README.md) - User-facing docs
-2. Update [QUICKSTART.md](QUICKSTART.md) - If setup changes
-3. Update [ai_docs/learnings/README.md](ai_docs/learnings/README.md) - Technical insights
-4. Update [ai_docs/plans/README.md](ai_docs/plans/README.md) - Architecture changes
-5. Update this file - Development guidelines
+- ✅ Decisions and reasoning ("Chose X because...")
+- ✅ Project preferences, constraints
+- ✅ Learned patterns from bugs
 
----
+**Don't store:**
 
-## Version Management
-
-**Current**: 1.0.0
-
-**Semantic Versioning**:
-- **Major (2.0.0)**: Breaking changes (schema changes, removed tools/resources)
-- **Minor (1.1.0)**: New features (new tools, resources, context types)
-- **Patch (1.0.1)**: Bug fixes, performance improvements
-
-**Before Publishing**:
-- Test with real Redis instance
-- Verify all tools work
-- Check bundle size
-- Update CHANGELOG.md
-
----
-
-## Don't Break
-
-### Critical Files (Change with Extreme Care)
-
-- [types.ts](src/types.ts) - Schema changes break existing data
-- [memory-store.ts](src/redis/memory-store.ts) - Storage logic changes need migration
-- [package.json](package.json) - Dependency changes affect bundle
-
-### Safe to Modify
-
-- [README.md](README.md) - Documentation only
-- [resources/index.ts](src/resources/index.ts) - Adding resources is safe
-- [tools/index.ts](src/tools/index.ts) - Adding tools is safe
+- ❌ Code snippets (put in files)
+- ❌ Obvious facts
+- ❌ Temporary session context
 
 ---
 
 ## Testing Checklist
 
-Before committing major changes:
+Before committing:
 
-- [ ] TypeScript compiles (`npm run build`)
-- [ ] Bundle size reasonable (`ls -lh dist/index.js`)
-- [ ] Shebang present (`head -1 dist/index.js`)
-- [ ] Can store memory
-- [ ] Can retrieve memory
-- [ ] Can search memories
-- [ ] Sessions work
+- [ ] `npm run build` passes
+- [ ] `head -1 dist/index.js` shows shebang
+- [ ] Store/retrieve/search memories work
 - [ ] All indexes update correctly
-- [ ] Error handling works
 - [ ] Documentation updated
 
 ---
 
-## Emergency Rollback
-
-If production Redis has issues:
-
-```bash
-# Backup Redis
-redis-cli SAVE
-cp /var/lib/redis/dump.rdb dump.rdb.backup
-
-# Restore from backup
-redis-cli SHUTDOWN
-cp dump.rdb.backup /var/lib/redis/dump.rdb
-redis-server
-```
-
----
-
-## Support
-
-**Maintainer**: José Airosa
-**Issues**: File in GitHub (once published)
-**Logs**: `~/Library/Logs/Claude/`
-
----
-
-**Last Updated**: 2025-10-02
-**Version**: 1.0.0
+**Last Updated**: 2026-01-16

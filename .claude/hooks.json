@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-hooks.json",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "description": "Format TypeScript files with Prettier after writing",
+        "matcher": {
+          "tool": "Write",
+          "glob": "**/*.ts"
+        },
+        "command": "npx prettier --write \"$CLAUDE_FILE_PATH\""
+      },
+      {
+        "description": "Format JSON files with Prettier after writing",
+        "matcher": {
+          "tool": "Write",
+          "glob": "**/*.json"
+        },
+        "command": "npx prettier --write \"$CLAUDE_FILE_PATH\""
+      }
+    ],
+    "PostCommit": [
+      {
+        "description": "Run build verification after commits",
+        "command": "npm run build --silent"
+      }
+    ]
+  }
+}

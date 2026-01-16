@@ -33,8 +33,18 @@ view-memories.js
 dist/
 
 # Local config
-.claude/
 .mcp.json
+
+# Claude Code - local only (don't track)
+.claude/settings.local.json
+.claude/todo.json
+
+# Claude Code - team shareable (DO track)
+# .claude/commands/
+# .claude/settings.json
+# .claude/agents/
+# .claude/globals.md
+# .claude/hooks.json
 
 #test build files
 tests/test_dist/

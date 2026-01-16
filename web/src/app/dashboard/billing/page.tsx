@@ -54,7 +54,7 @@ const pricingTiers: PricingTier[] = [
   {
     name: "Pro",
     price: "$9",
-    priceId: "price_pro_monthly",
+    priceId: "price_1SqGK8LUbfmx8MWFMzZ2WTsz",
     description: "For individuals and power users",
     icon: <Sparkles className="w-5 h-5" />,
     buttonText: "Upgrade to Pro",
@@ -71,7 +71,7 @@ const pricingTiers: PricingTier[] = [
   {
     name: "Team",
     price: "$29",
-    priceId: "price_team_monthly",
+    priceId: "price_1SqGL4LUbfmx8MWFjxlB3B7F",
     description: "For teams and organizations",
     icon: <Building2 className="w-5 h-5" />,
     buttonText: "Upgrade to Team",

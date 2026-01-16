@@ -14,10 +14,13 @@ const stripe = stripeSecretKey
   ? new Stripe(stripeSecretKey, { apiVersion: '2025-01-27.acacia' })
   : null;
 
-// Price IDs from Stripe Dashboard
+// Price IDs from Stripe Dashboard (test mode)
 const PRICE_IDS: Record<string, string> = {
-  price_pro_monthly: process.env.STRIPE_PRICE_PRO || 'price_pro_monthly',
-  price_team_monthly: process.env.STRIPE_PRICE_TEAM || 'price_team_monthly',
+  price_pro_monthly: process.env.STRIPE_PRICE_PRO || 'price_1SqGK8LUbfmx8MWFMzZ2WTsz',
+  price_team_monthly: process.env.STRIPE_PRICE_TEAM || 'price_1SqGL4LUbfmx8MWFjxlB3B7F',
+  // Direct price IDs (frontend sends these)
+  'price_1SqGK8LUbfmx8MWFMzZ2WTsz': 'price_1SqGK8LUbfmx8MWFMzZ2WTsz',
+  'price_1SqGL4LUbfmx8MWFjxlB3B7F': 'price_1SqGL4LUbfmx8MWFjxlB3B7F',
 };
 
 // Plan limits

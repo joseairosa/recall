@@ -73,8 +73,8 @@ EXPOSE 8080
 ENV NODE_ENV=production
 ENV PORT=8080
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+# Health check (longer start period to allow Redis connection)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=5 \
   CMD curl -f http://localhost:${PORT}/health || exit 1
 
 # Run the HTTP server

@@ -215,13 +215,30 @@ export default function DashboardPage() {
         <CardHeader>
           <CardTitle className="text-lg">Quick Setup</CardTitle>
         </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground mb-4">
-            Add this to your Claude Desktop configuration to enable AI memory:
-          </p>
-          <div className="bg-muted rounded-lg p-4 font-mono text-sm overflow-x-auto">
-            <pre>
-              {`{
+        <CardContent className="space-y-6">
+          <div>
+            <h4 className="font-medium mb-2">REST API</h4>
+            <p className="text-sm text-muted-foreground mb-3">
+              Use the REST API directly:
+            </p>
+            <div className="bg-muted rounded-lg p-4 font-mono text-sm overflow-x-auto">
+              <pre>
+                {`curl -X POST ${apiUrl}/api/memories \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"content": "Remember this important fact"}'`}
+              </pre>
+            </div>
+          </div>
+
+          <div>
+            <h4 className="font-medium mb-2">Claude Desktop (MCP Configuration)</h4>
+            <p className="text-sm text-muted-foreground mb-3">
+              Add this to your Claude Desktop configuration file:
+            </p>
+            <div className="bg-muted rounded-lg p-4 font-mono text-sm overflow-x-auto">
+              <pre>
+                {`{
   "mcpServers": {
     "recall": {
       "url": "${apiUrl}/mcp",
@@ -231,7 +248,21 @@ export default function DashboardPage() {
     }
   }
 }`}
-            </pre>
+              </pre>
+            </div>
+          </div>
+
+          <div>
+            <h4 className="font-medium mb-2">Claude Code (Terminal)</h4>
+            <p className="text-sm text-muted-foreground mb-3">
+              Run this command in your terminal:
+            </p>
+            <div className="bg-muted rounded-lg p-4 font-mono text-sm overflow-x-auto">
+              <pre>
+                {`claude mcp add --transport http recall ${apiUrl}/mcp \\
+  --header "Authorization: Bearer YOUR_API_KEY"`}
+              </pre>
+            </div>
           </div>
         </CardContent>
       </Card>

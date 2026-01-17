@@ -291,23 +291,23 @@ export default function HomePage() {
             />
             <PricingCard
               name="Pro"
-              price="$9"
+              price="$4.99"
               description="For individual developers"
               features={[
-                "10,000 memories",
-                "5 workspaces",
+                "5,000 memories",
+                "3 workspaces",
                 "Advanced search",
                 "REST API access",
-                "Email support",
+                "Priority support",
               ]}
               highlighted
             />
             <PricingCard
               name="Team"
-              price="$29"
+              price="$9.99"
               description="For teams and production apps"
               features={[
-                "50,000 memories",
+                "25,000 memories",
                 "Unlimited workspaces",
                 "Shared memories",
                 "Priority support",

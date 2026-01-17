@@ -6,13 +6,27 @@ import { Database, Key, Activity, Clock } from "lucide-react";
 import { api, TenantInfo, Memory, AuditEntry } from "@/lib/api";
 import { formatRelativeTime } from "@/lib/utils";
 
+// Compute API URL at runtime (not build time)
+function getApiUrl(): string {
+  if (typeof window === "undefined") return "";
+  if (window.location.hostname === "localhost") {
+    return "http://localhost:8080";
+  }
+  // Production: use the same domain
+  return `${window.location.protocol}//${window.location.host}`;
+}
+
 export default function DashboardPage() {
   const [tenantInfo, setTenantInfo] = useState<TenantInfo | null>(null);
   const [recentMemories, setRecentMemories] = useState<Memory[]>([]);
   const [recentActivity, setRecentActivity] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [apiUrl, setApiUrl] = useState("");
 
   useEffect(() => {
+    // Set API URL at runtime
+    setApiUrl(getApiUrl());
+
     const loadData = async () => {
       const apiKey = localStorage.getItem("recall_api_key");
       if (!apiKey) return;
@@ -210,9 +224,9 @@ export default function DashboardPage() {
               {`{
   "mcpServers": {
     "recall": {
-      "url": "${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"}/mcp",
+      "url": "${apiUrl}/mcp",
       "headers": {
-        "Authorization": "Bearer ${localStorage.getItem("recall_api_key")?.substring(0, 10)}..."
+        "Authorization": "Bearer YOUR_API_KEY"
       }
     }
   }

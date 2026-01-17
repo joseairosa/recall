@@ -7,6 +7,16 @@ import { Key, RefreshCw, Trash2, Copy, Check, AlertCircle } from "lucide-react";
 import { api, ApiKey } from "@/lib/api";
 import { formatDate, formatRelativeTime } from "@/lib/utils";
 
+// Compute API URL at runtime (not build time)
+function getApiUrl(): string {
+  if (typeof window === "undefined") return "";
+  if (window.location.hostname === "localhost") {
+    return "http://localhost:8080";
+  }
+  // Production: use the same domain
+  return `${window.location.protocol}//${window.location.host}`;
+}
+
 export default function ApiKeysPage() {
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
@@ -14,6 +24,7 @@ export default function ApiKeysPage() {
   const [newKey, setNewKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [apiUrl, setApiUrl] = useState("");
 
   const loadKeys = async () => {
     const apiKey = localStorage.getItem("recall_api_key");
@@ -29,6 +40,7 @@ export default function ApiKeysPage() {
   };
 
   useEffect(() => {
+    setApiUrl(getApiUrl());
     loadKeys();
   }, []);
 
@@ -245,9 +257,9 @@ export default function ApiKeysPage() {
         <CardContent className="space-y-4">
           <div>
             <h4 className="font-medium mb-2">REST API</h4>
-            <div className="bg-muted rounded-lg p-4 font-mono text-sm">
+            <div className="bg-muted rounded-lg p-4 font-mono text-sm overflow-x-auto">
               <pre>
-                {`curl -X POST ${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"}/api/memories \\
+                {`curl -X POST ${apiUrl}/api/memories \\
   -H "Authorization: Bearer YOUR_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"content": "Remember this important fact"}'`}
@@ -256,19 +268,31 @@ export default function ApiKeysPage() {
           </div>
 
           <div>
-            <h4 className="font-medium mb-2">MCP Configuration</h4>
-            <div className="bg-muted rounded-lg p-4 font-mono text-sm">
+            <h4 className="font-medium mb-2">Claude Desktop (MCP Configuration)</h4>
+            <div className="bg-muted rounded-lg p-4 font-mono text-sm overflow-x-auto">
               <pre>
                 {`{
   "mcpServers": {
     "recall": {
-      "url": "${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"}/mcp",
+      "url": "${apiUrl}/mcp",
       "headers": {
         "Authorization": "Bearer YOUR_API_KEY"
       }
     }
   }
 }`}
+              </pre>
+            </div>
+          </div>
+
+          <div>
+            <h4 className="font-medium mb-2">Claude Code (Terminal)</h4>
+            <div className="bg-muted rounded-lg p-4 font-mono text-sm overflow-x-auto">
+              <pre>
+                {`claude mcp add recall \\
+  --transport http \\
+  --url ${apiUrl}/mcp \\
+  --header "Authorization: Bearer YOUR_API_KEY"`}
               </pre>
             </div>
           </div>

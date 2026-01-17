@@ -1540,11 +1540,11 @@ function handleError(res: Response, error: unknown): void {
  * This page handles Firebase authentication and then redirects back to the OAuth flow.
  */
 function getOAuthLoginPage(state: string): string {
-  // Firebase config from environment or defaults for the production app
+  // Firebase config from environment variables (same as dashboard)
   const firebaseConfig = {
-    apiKey: process.env.FIREBASE_API_KEY || 'AIzaSyDZWsMjKjHHrv7VRLkrfphOr49Yb4bY48M',
-    authDomain: process.env.FIREBASE_AUTH_DOMAIN || 'recall-mcp.firebaseapp.com',
-    projectId: process.env.FIREBASE_PROJECT_ID || 'recall-mcp',
+    apiKey: process.env.FIREBASE_API_KEY,
+    authDomain: process.env.FIREBASE_AUTH_DOMAIN,
+    projectId: process.env.FIREBASE_PROJECT_ID,
   };
 
   return `<!DOCTYPE html>

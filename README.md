@@ -54,16 +54,87 @@ By using Recall, you acknowledge that you understand these risks and accept full
 
 ## What is This?
 
-Recall is a **brain extension** for Claude that stores memories in Redis or Valkey. It solves the context window problem by:
+Recall is a **brain extension** for Claude that stores memories persistently. It solves the context window problem by:
 
-- 📝 **Remembering** directives, decisions, code patterns, and important information  
-- 🔍 **Retrieving** relevant context automatically when you need it  
-- 🔄 **Persisting** across sessions – memories survive restarts and context compaction  
+- 📝 **Remembering** directives, decisions, code patterns, and important information
+- 🔍 **Retrieving** relevant context automatically when you need it
+- 🔄 **Persisting** across sessions – memories survive restarts and context compaction
 - 🗂️ **Organizing** by workspace – Project A memories don't pollute Project B
 
 ---
 
-## Quick Start (5 Minutes)
+## Recall Cloud (Easiest Setup)
+
+**No Redis setup required!** Get started in 2 minutes with the managed cloud service.
+
+### 1. Sign Up
+
+Go to **[recallmcp.com](https://recallmcp.com)** and create a free account.
+
+### 2. Get Your API Key
+
+1. Sign in to your dashboard at [recallmcp.com/dashboard](https://recallmcp.com/dashboard)
+2. Go to **API Keys** section
+3. Copy your API key (starts with `sk-recall-`)
+
+### 3. Configure Claude Desktop
+
+Add to your Claude Desktop configuration file:
+
+**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+
+**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "recall": {
+      "url": "https://recallmcp.com/mcp",
+      "headers": {
+        "Authorization": "Bearer sk-recall-your-api-key-here"
+      }
+    }
+  }
+}
+```
+
+> **Note**: Replace `sk-recall-your-api-key-here` with your actual API key from the dashboard.
+
+### 4. Restart Claude Desktop
+
+Quit and reopen Claude Desktop to load the MCP server.
+
+### 5. Test It
+
+Ask Claude:
+
+```text
+"Store a memory that I prefer TypeScript for all projects"
+```
+
+Then in a new conversation:
+
+```text
+"What do you know about my coding preferences?"
+```
+
+**It remembers across all your devices!**
+
+---
+
+### Cloud Plans
+
+| Plan       | Price   | Memories | Features                                  |
+| ---------- | ------- | -------- | ----------------------------------------- |
+| **Free**   | $0/mo   | 500      | 1 workspace, basic search                 |
+| **Pro**    | $9/mo   | 10,000   | 5 workspaces, API access, semantic search |
+| **Team**   | $29/mo  | 50,000   | Unlimited workspaces, shared memories     |
+
+Upgrade anytime at [recallmcp.com/dashboard/billing](https://recallmcp.com/dashboard/billing)
+
+---
+
+## Self-Hosted Setup (5 Minutes)
 
 ### 1. Prerequisites
 
@@ -229,19 +300,21 @@ or for Valkey:
 
 Restart Claude Code or Claude Desktop to load the MCP server.
 
-### 5. Test It!
+### 5. Verify It Works
 
 Ask Claude:
-```
+
+```text
 "Store a memory that I prefer using TypeScript for all new projects"
 ```
 
 Then in a new conversation:
-```
+
+```text
 "What do you know about my coding preferences?"
 ```
 
-✨ **It remembers!**
+**It remembers!**
 
 ---
 

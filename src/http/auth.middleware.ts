@@ -1,8 +1,10 @@
 /**
  * Authentication Middleware
  *
- * Validates API keys and attaches tenant context to requests.
- * API keys are stored in Redis with format: apikey:{key} -> ApiKeyRecord
+ * Validates API keys and OAuth tokens, attaching tenant context to requests.
+ * Supports two authentication methods:
+ * 1. API keys: Bearer sk-xxx (stored in Redis as apikey:{key})
+ * 2. OAuth tokens: Bearer xxx (stored in Redis as oauth:access:{token})
  */
 
 import { randomBytes } from 'crypto';
@@ -10,11 +12,13 @@ import { ulid } from 'ulid';
 import { Response, NextFunction } from 'express';
 import { AuthenticatedRequest, ApiKeyRecord, PLAN_LIMITS } from './types.js';
 import { StorageClient } from '../persistence/storage-client.js';
+import { OAuthService } from './oauth.service.js';
 
 /**
  * Creates an authentication middleware with the given storage client
+ * Supports both API keys (sk-xxx) and OAuth access tokens
  */
-export function createAuthMiddleware(storageClient: StorageClient) {
+export function createAuthMiddleware(storageClient: StorageClient, oauthService?: OAuthService) {
   return async (
     req: AuthenticatedRequest,
     res: Response,
@@ -47,74 +51,133 @@ export function createAuthMiddleware(storageClient: StorageClient) {
     }
 
     try {
-      // Look up API key in Redis
-      const keyData = await storageClient.hgetall(`apikey:${token}`);
+      // Check if this is an API key (starts with sk-) or an OAuth token
+      const isApiKey = token.startsWith('sk-');
 
-      if (!keyData || !keyData.tenantId) {
-        res.status(401).json({
-          success: false,
-          error: {
-            code: 'INVALID_API_KEY',
-            message: 'Invalid API key',
-          },
-        });
-        return;
+      if (isApiKey) {
+        // Validate API key
+        const keyData = await storageClient.hgetall(`apikey:${token}`);
+
+        if (!keyData || !keyData.tenantId) {
+          res.status(401).json({
+            success: false,
+            error: {
+              code: 'INVALID_API_KEY',
+              message: 'Invalid API key',
+            },
+          });
+          return;
+        }
+
+        // Check if key is revoked
+        if (keyData.status === 'revoked') {
+          res.status(401).json({
+            success: false,
+            error: {
+              code: 'API_KEY_REVOKED',
+              message: 'This API key has been revoked',
+            },
+          });
+          return;
+        }
+
+        const record: ApiKeyRecord = {
+          id: keyData.id || token.substring(3, 15), // Fallback for old keys without id
+          tenantId: keyData.tenantId,
+          apiKey: token,
+          plan: (keyData.plan as ApiKeyRecord['plan']) || 'free',
+          createdAt: parseInt(keyData.createdAt) || Date.now(),
+          lastUsedAt: keyData.lastUsedAt
+            ? parseInt(keyData.lastUsedAt)
+            : undefined,
+          name: keyData.name || undefined,
+          usageCount: parseInt(keyData.usageCount) || 0,
+          status: (keyData.status as ApiKeyRecord['status']) || 'active',
+        };
+
+        // Update last used timestamp and increment usage count (fire and forget)
+        const newUsageCount = record.usageCount + 1;
+        storageClient
+          .hset(`apikey:${token}`, {
+            lastUsedAt: Date.now().toString(),
+            usageCount: newUsageCount.toString(),
+          })
+          .catch(() => {
+            // Ignore errors updating usage stats
+          });
+
+        // Attach tenant context to request
+        req.tenant = {
+          tenantId: record.tenantId,
+          apiKey: token,
+          apiKeyId: record.id,
+          plan: record.plan,
+          limits: PLAN_LIMITS[record.plan],
+        };
+
+        next();
+      } else {
+        // Validate OAuth access token
+        if (!oauthService) {
+          res.status(401).json({
+            success: false,
+            error: {
+              code: 'OAUTH_NOT_CONFIGURED',
+              message: 'OAuth authentication is not configured',
+            },
+          });
+          return;
+        }
+
+        const tokenData = await oauthService.validateAccessToken(token);
+
+        if (!tokenData) {
+          res.status(401).json({
+            success: false,
+            error: {
+              code: 'INVALID_ACCESS_TOKEN',
+              message: 'Invalid or expired access token',
+            },
+          });
+          return;
+        }
+
+        // Get tenant's plan from their API keys (use the best plan they have)
+        const apiKeys = await storageClient.smembers(`tenant:${tokenData.tenantId}:apikeys`);
+        let bestPlan: ApiKeyRecord['plan'] = 'free';
+
+        for (const apiKey of apiKeys) {
+          const keyData = await storageClient.hgetall(`apikey:${apiKey}`);
+          if (keyData && keyData.plan) {
+            const plan = keyData.plan as ApiKeyRecord['plan'];
+            // Upgrade plan if this key has a better plan
+            if (plan === 'enterprise' ||
+                (plan === 'team' && bestPlan !== 'enterprise') ||
+                (plan === 'pro' && bestPlan === 'free')) {
+              bestPlan = plan;
+            }
+          }
+        }
+
+        // Attach tenant context to request (OAuth auth)
+        req.tenant = {
+          tenantId: tokenData.tenantId,
+          apiKey: `oauth:${token.substring(0, 8)}`, // OAuth identifier
+          apiKeyId: 'oauth', // OAuth sessions don't have API key IDs
+          plan: bestPlan,
+          limits: PLAN_LIMITS[bestPlan],
+        };
+
+        console.log(`[Auth] OAuth token validated for tenant ${tokenData.tenantId}`);
+        next();
       }
-
-      // Check if key is revoked
-      if (keyData.status === 'revoked') {
-        res.status(401).json({
-          success: false,
-          error: {
-            code: 'API_KEY_REVOKED',
-            message: 'This API key has been revoked',
-          },
-        });
-        return;
-      }
-
-      const record: ApiKeyRecord = {
-        id: keyData.id || token.substring(3, 15), // Fallback for old keys without id
-        tenantId: keyData.tenantId,
-        apiKey: token,
-        plan: (keyData.plan as ApiKeyRecord['plan']) || 'free',
-        createdAt: parseInt(keyData.createdAt) || Date.now(),
-        lastUsedAt: keyData.lastUsedAt
-          ? parseInt(keyData.lastUsedAt)
-          : undefined,
-        name: keyData.name || undefined,
-        usageCount: parseInt(keyData.usageCount) || 0,
-        status: (keyData.status as ApiKeyRecord['status']) || 'active',
-      };
-
-      // Update last used timestamp and increment usage count (fire and forget)
-      const newUsageCount = record.usageCount + 1;
-      storageClient
-        .hset(`apikey:${token}`, {
-          lastUsedAt: Date.now().toString(),
-          usageCount: newUsageCount.toString(),
-        })
-        .catch(() => {
-          // Ignore errors updating usage stats
-        });
-
-      // Attach tenant context to request
-      req.tenant = {
-        tenantId: record.tenantId,
-        apiKey: token,
-        apiKeyId: record.id,
-        plan: record.plan,
-        limits: PLAN_LIMITS[record.plan],
-      };
-
-      next();
     } catch (error) {
-      console.error('[Auth] Error validating API key:', error);
+      console.error('[Auth] Error validating credentials:', error);
       res.status(500).json({
         success: false,
         error: {
           code: 'INTERNAL_ERROR',
-          message: 'Failed to validate API key',
+          message: 'Failed to validate credentials',
         },
       });
     }

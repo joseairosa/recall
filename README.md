@@ -134,6 +134,48 @@ Upgrade anytime at [recallmcp.com/dashboard/billing](https://recallmcp.com/dashb
 
 ---
 
+### Claude Desktop Custom Connector (OAuth)
+
+**Alternative Setup**: Claude Desktop supports native OAuth connections, so you don't need to edit config files manually.
+
+#### 1. Open Claude Desktop Settings
+
+1. Open Claude Desktop
+2. Click on your profile icon → **Settings**
+3. Go to **Integrations** → **Custom Connectors**
+
+#### 2. Add Recall Connector
+
+Click **"Add custom connector"** and enter:
+
+| Field                      | Value                                  |
+| -------------------------- | -------------------------------------- |
+| **Name**                   | `Recall`                               |
+| **Remote MCP server URL**  | `https://recallmcp.com/mcp`            |
+| **OAuth Client ID**        | `claude-desktop`                       |
+| **OAuth Client Secret**    | *(leave empty)*                        |
+
+#### 3. Authenticate
+
+1. Click **Add** to save the connector
+2. Claude Desktop will open a browser window to **recallmcp.com**
+3. Sign in with your Google or GitHub account
+4. Grant access to connect your Recall account
+
+#### 4. Start Using Recall
+
+Once authenticated, Recall tools are automatically available in Claude Desktop. Ask Claude:
+
+```text
+"Store a memory that I prefer dark mode for all applications"
+```
+
+Your memories sync across all sessions and devices!
+
+> **Note**: The OAuth connection refreshes automatically. If you see authentication errors, remove and re-add the connector.
+
+---
+
 ## Self-Hosted Setup (5 Minutes)
 
 ### 1. Prerequisites

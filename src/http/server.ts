@@ -32,6 +32,8 @@ import {
   verifyWebhookSignature,
   isStripeConfigured,
 } from './billing.service.js';
+import { OAuthService, OAUTH_CLIENTS, isValidRedirectUri } from './oauth.service.js';
+import { randomBytes } from 'crypto';
 
 // ESM __dirname equivalent
 const __filename = fileURLToPath(import.meta.url);
@@ -43,6 +45,7 @@ const __dirname = path.dirname(__filename);
 export function createHttpServer(storageClient: StorageClient) {
   const app = express();
   const auditService = new AuditService(storageClient);
+  const oauthService = new OAuthService(storageClient);
 
   // Middleware
   app.use(cors());
@@ -54,6 +57,8 @@ export function createHttpServer(storageClient: StorageClient) {
       express.json()(req, res, next);
     }
   });
+  // Parse URL-encoded bodies (for OAuth token endpoint)
+  app.use(express.urlencoded({ extended: true }));
 
   // Health check (no auth required)
   app.get('/health', (_req: Request, res: Response) => {
@@ -89,8 +94,8 @@ export function createHttpServer(storageClient: StorageClient) {
     });
   });
 
-  // Auth middleware for protected routes
-  const authMiddleware = createAuthMiddleware(storageClient);
+  // Auth middleware for protected routes (supports both API keys and OAuth tokens)
+  const authMiddleware = createAuthMiddleware(storageClient, oauthService);
 
   // Audit logging middleware (logs after response)
   const auditMiddleware = (
@@ -1096,6 +1101,361 @@ export function createHttpServer(storageClient: StorageClient) {
   );
 
   // ============================================
+  // OAuth 2.0 Endpoints (for Claude Desktop integration)
+  // ============================================
+
+  /**
+   * OAuth 2.0 Authorization Server Metadata
+   * GET /.well-known/oauth-authorization-server
+   *
+   * Returns OAuth 2.0 server configuration for automatic discovery.
+   * See RFC 8414: OAuth 2.0 Authorization Server Metadata
+   */
+  app.get('/.well-known/oauth-authorization-server', (req: Request, res: Response) => {
+    // Determine the base URL from the request
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+    const host = req.headers['x-forwarded-host'] || req.headers.host || 'recallmcp.com';
+    const baseUrl = `${protocol}://${host}`;
+
+    res.json({
+      // RFC 8414 required fields
+      issuer: baseUrl,
+      authorization_endpoint: `${baseUrl}/oauth/authorize`,
+      token_endpoint: `${baseUrl}/oauth/token`,
+
+      // Supported response types
+      response_types_supported: ['code'],
+
+      // Supported grant types
+      grant_types_supported: ['authorization_code', 'refresh_token'],
+
+      // Token endpoint authentication methods
+      token_endpoint_auth_methods_supported: ['none'], // Public clients only
+
+      // PKCE support (required for public clients)
+      code_challenge_methods_supported: ['S256', 'plain'],
+
+      // Scopes
+      scopes_supported: ['memories'],
+
+      // Service documentation
+      service_documentation: 'https://github.com/joseairosa/recall-mcp',
+    });
+  });
+
+  /**
+   * OAuth Authorization Endpoint
+   * GET /oauth/authorize
+   *
+   * Starts the OAuth flow. Redirects to login page or shows login form.
+   * Query params:
+   * - client_id: OAuth client ID (required)
+   * - redirect_uri: Callback URL (required)
+   * - response_type: Must be "code" (required)
+   * - state: CSRF token (required)
+   * - scope: Requested scopes (optional)
+   * - code_challenge: PKCE challenge (optional)
+   * - code_challenge_method: PKCE method (optional, default S256)
+   */
+  app.get('/oauth/authorize', async (req: Request, res: Response) => {
+    try {
+      const {
+        client_id,
+        redirect_uri,
+        response_type,
+        state,
+        scope = 'memories',
+        code_challenge,
+        code_challenge_method,
+      } = req.query as Record<string, string>;
+
+      // Validate required parameters
+      if (!client_id) {
+        res.status(400).json({
+          error: 'invalid_request',
+          error_description: 'client_id is required',
+        });
+        return;
+      }
+
+      if (!redirect_uri) {
+        res.status(400).json({
+          error: 'invalid_request',
+          error_description: 'redirect_uri is required',
+        });
+        return;
+      }
+
+      if (response_type !== 'code') {
+        res.status(400).json({
+          error: 'unsupported_response_type',
+          error_description: 'Only response_type=code is supported',
+        });
+        return;
+      }
+
+      if (!state) {
+        res.status(400).json({
+          error: 'invalid_request',
+          error_description: 'state is required for CSRF protection',
+        });
+        return;
+      }
+
+      // Validate client
+      const client = oauthService.getClient(client_id);
+      if (!client) {
+        res.status(400).json({
+          error: 'invalid_client',
+          error_description: 'Unknown client_id',
+        });
+        return;
+      }
+
+      // Validate redirect URI
+      if (!isValidRedirectUri(client, redirect_uri)) {
+        res.status(400).json({
+          error: 'invalid_request',
+          error_description: 'Invalid redirect_uri for this client',
+        });
+        return;
+      }
+
+      // Store pending authorization request
+      await oauthService.storePendingAuth(state, {
+        clientId: client_id,
+        redirectUri: redirect_uri,
+        scope,
+        codeChallenge: code_challenge,
+        codeChallengeMethod: code_challenge_method || 'S256',
+      });
+
+      // Redirect to login page with state parameter
+      const loginUrl = `/oauth/login?state=${encodeURIComponent(state)}`;
+      res.redirect(loginUrl);
+    } catch (error) {
+      console.error('[OAuth] Authorize error:', error);
+      res.status(500).json({
+        error: 'server_error',
+        error_description: 'Internal server error',
+      });
+    }
+  });
+
+  /**
+   * OAuth Token Endpoint
+   * POST /oauth/token
+   *
+   * Exchanges authorization code for access tokens.
+   * Supports:
+   * - grant_type=authorization_code (exchange code for tokens)
+   * - grant_type=refresh_token (refresh access token)
+   */
+  app.post('/oauth/token', async (req: Request, res: Response) => {
+    try {
+      const {
+        grant_type,
+        code,
+        redirect_uri,
+        client_id,
+        code_verifier,
+        refresh_token,
+      } = req.body;
+
+      if (grant_type === 'authorization_code') {
+        if (!code || !redirect_uri || !client_id) {
+          res.status(400).json({
+            error: 'invalid_request',
+            error_description: 'code, redirect_uri, and client_id are required',
+          });
+          return;
+        }
+
+        const tokens = await oauthService.exchangeCodeForTokens({
+          code,
+          clientId: client_id,
+          redirectUri: redirect_uri,
+          codeVerifier: code_verifier,
+        });
+
+        if (!tokens) {
+          res.status(400).json({
+            error: 'invalid_grant',
+            error_description: 'Invalid or expired authorization code',
+          });
+          return;
+        }
+
+        res.json({
+          access_token: tokens.accessToken,
+          token_type: tokens.tokenType,
+          expires_in: tokens.expiresIn,
+          refresh_token: tokens.refreshToken,
+          scope: tokens.scope,
+        });
+      } else if (grant_type === 'refresh_token') {
+        if (!refresh_token) {
+          res.status(400).json({
+            error: 'invalid_request',
+            error_description: 'refresh_token is required',
+          });
+          return;
+        }
+
+        const tokens = await oauthService.refreshAccessToken(refresh_token);
+
+        if (!tokens) {
+          res.status(400).json({
+            error: 'invalid_grant',
+            error_description: 'Invalid or expired refresh token',
+          });
+          return;
+        }
+
+        res.json({
+          access_token: tokens.accessToken,
+          token_type: tokens.tokenType,
+          expires_in: tokens.expiresIn,
+          refresh_token: tokens.refreshToken,
+          scope: tokens.scope,
+        });
+      } else {
+        res.status(400).json({
+          error: 'unsupported_grant_type',
+          error_description: 'Only authorization_code and refresh_token are supported',
+        });
+      }
+    } catch (error) {
+      console.error('[OAuth] Token error:', error);
+      res.status(500).json({
+        error: 'server_error',
+        error_description: 'Internal server error',
+      });
+    }
+  });
+
+  /**
+   * OAuth Callback from Firebase
+   * POST /oauth/callback
+   *
+   * Called after Firebase authentication. Generates authorization code
+   * and redirects back to the client's redirect_uri.
+   */
+  app.post('/oauth/callback', async (req: Request, res: Response) => {
+    try {
+      const { idToken, state } = req.body;
+
+      if (!idToken || !state) {
+        res.status(400).json({
+          error: 'invalid_request',
+          error_description: 'idToken and state are required',
+        });
+        return;
+      }
+
+      // Verify Firebase token
+      const decodedToken = await verifyFirebaseToken(idToken);
+      if (!decodedToken) {
+        res.status(401).json({
+          error: 'invalid_token',
+          error_description: 'Invalid Firebase token',
+        });
+        return;
+      }
+
+      // Get pending auth request
+      const pendingAuth = await oauthService.getPendingAuth(state);
+      if (!pendingAuth) {
+        res.status(400).json({
+          error: 'invalid_request',
+          error_description: 'Invalid or expired state parameter',
+        });
+        return;
+      }
+
+      // Use Firebase UID as tenant ID
+      const tenantId = decodedToken.uid;
+
+      // Ensure tenant exists and has an API key
+      const existingKeys = await storageClient.smembers(`tenant:${tenantId}:apikeys`);
+      if (existingKeys.length === 0) {
+        // Create API key for new user (same logic as /api/auth/keys)
+        const apiKey = 'sk-recall-' + randomBytes(24).toString('base64url');
+        const keyId = randomBytes(8).toString('hex');
+
+        await storageClient.hset(`apikey:${apiKey}`, {
+          id: keyId,
+          tenantId,
+          plan: 'free',
+          createdAt: Date.now().toString(),
+          status: 'active',
+        });
+
+        await storageClient.sadd(`tenant:${tenantId}:apikeys`, apiKey);
+
+        // Initialize customer record
+        await storageClient.hset(`customer:${tenantId}`, {
+          email: decodedToken.email || '',
+          name: decodedToken.name || '',
+          firebaseUid: tenantId,
+          plan: 'free',
+          createdAt: Date.now().toString(),
+        });
+
+        console.log(`[OAuth] Created new tenant: ${tenantId}`);
+      }
+
+      // Generate authorization code
+      const authCode = await oauthService.generateAuthorizationCode({
+        clientId: pendingAuth.clientId,
+        tenantId,
+        redirectUri: pendingAuth.redirectUri,
+        scope: pendingAuth.scope,
+        codeChallenge: pendingAuth.codeChallenge,
+        codeChallengeMethod: pendingAuth.codeChallengeMethod,
+      });
+
+      // Build redirect URL with code
+      const redirectUrl = new URL(pendingAuth.redirectUri);
+      redirectUrl.searchParams.set('code', authCode);
+      redirectUrl.searchParams.set('state', state);
+
+      res.json({
+        success: true,
+        redirectUrl: redirectUrl.toString(),
+      });
+    } catch (error) {
+      console.error('[OAuth] Callback error:', error);
+      res.status(500).json({
+        error: 'server_error',
+        error_description: 'Internal server error',
+      });
+    }
+  });
+
+  /**
+   * OAuth Login Page
+   * GET /oauth/login
+   *
+   * Shows the Firebase login page for OAuth flow.
+   * This is a simple HTML page that handles Firebase auth and then
+   * posts the result to /oauth/callback.
+   */
+  app.get('/oauth/login', (req: Request, res: Response) => {
+    const state = req.query.state as string;
+
+    if (!state) {
+      res.status(400).send('Missing state parameter');
+      return;
+    }
+
+    // Serve the OAuth login page
+    const loginHtml = getOAuthLoginPage(state);
+    res.setHeader('Content-Type', 'text/html');
+    res.send(loginHtml);
+  });
+
+  // ============================================
   // Static Website Serving
   // ============================================
 
@@ -1173,4 +1533,235 @@ function handleError(res: Response, error: unknown): void {
       message,
     },
   });
+}
+
+/**
+ * Generate OAuth login page HTML
+ * This page handles Firebase authentication and then redirects back to the OAuth flow.
+ */
+function getOAuthLoginPage(state: string): string {
+  // Firebase config from environment or defaults for the production app
+  const firebaseConfig = {
+    apiKey: process.env.FIREBASE_API_KEY || 'AIzaSyDZWsMjKjHHrv7VRLkrfphOr49Yb4bY48M',
+    authDomain: process.env.FIREBASE_AUTH_DOMAIN || 'recall-mcp.firebaseapp.com',
+    projectId: process.env.FIREBASE_PROJECT_ID || 'recall-mcp',
+  };
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign in to Recall</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+    }
+    .container {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      padding: 40px;
+      max-width: 400px;
+      width: 100%;
+      text-align: center;
+      backdrop-filter: blur(10px);
+    }
+    .logo {
+      font-size: 48px;
+      margin-bottom: 16px;
+    }
+    h1 {
+      font-size: 24px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .subtitle {
+      color: rgba(255, 255, 255, 0.7);
+      margin-bottom: 32px;
+      font-size: 14px;
+    }
+    .btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      width: 100%;
+      padding: 14px 20px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.05);
+      color: #fff;
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-bottom: 12px;
+    }
+    .btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.3);
+    }
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .btn svg {
+      width: 20px;
+      height: 20px;
+    }
+    .error {
+      background: rgba(239, 68, 68, 0.2);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #fca5a5;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      font-size: 14px;
+      display: none;
+    }
+    .loading {
+      display: none;
+      margin: 20px 0;
+    }
+    .loading.active {
+      display: block;
+    }
+    .spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid rgba(255, 255, 255, 0.2);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 12px;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .footer {
+      margin-top: 24px;
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.5);
+    }
+    .footer a {
+      color: rgba(255, 255, 255, 0.7);
+      text-decoration: none;
+    }
+    .footer a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">🧠</div>
+    <h1>Sign in to Recall</h1>
+    <p class="subtitle">Connect your memory to Claude Desktop</p>
+
+    <div id="error" class="error"></div>
+
+    <div id="loading" class="loading">
+      <div class="spinner"></div>
+      <p>Signing you in...</p>
+    </div>
+
+    <div id="buttons">
+      <button class="btn" onclick="signInWithGoogle()">
+        <svg viewBox="0 0 24 24" fill="currentColor">
+          <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+          <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+          <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+          <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+        </svg>
+        Continue with Google
+      </button>
+
+      <button class="btn" onclick="signInWithGitHub()">
+        <svg viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+        </svg>
+        Continue with GitHub
+      </button>
+    </div>
+
+    <div class="footer">
+      <p>By signing in, you agree to our <a href="https://recallmcp.com/terms">Terms</a> and <a href="https://recallmcp.com/privacy">Privacy Policy</a></p>
+    </div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+    import { getAuth, signInWithPopup, GoogleAuthProvider, GithubAuthProvider } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+
+    // Initialize Firebase
+    const firebaseConfig = ${JSON.stringify(firebaseConfig)};
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+
+    const state = ${JSON.stringify(state)};
+
+    function showError(message) {
+      const errorEl = document.getElementById('error');
+      errorEl.textContent = message;
+      errorEl.style.display = 'block';
+      document.getElementById('buttons').style.display = 'block';
+      document.getElementById('loading').classList.remove('active');
+    }
+
+    function showLoading() {
+      document.getElementById('buttons').style.display = 'none';
+      document.getElementById('loading').classList.add('active');
+      document.getElementById('error').style.display = 'none';
+    }
+
+    async function handleSignIn(provider) {
+      showLoading();
+
+      try {
+        const result = await signInWithPopup(auth, provider);
+        const idToken = await result.user.getIdToken();
+
+        // Send token to backend
+        const response = await fetch('/oauth/callback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ idToken, state }),
+        });
+
+        const data = await response.json();
+
+        if (data.success && data.redirectUrl) {
+          window.location.href = data.redirectUrl;
+        } else {
+          showError(data.error_description || 'Authentication failed');
+        }
+      } catch (error) {
+        console.error('Sign-in error:', error);
+        if (error.code === 'auth/popup-closed-by-user') {
+          showError('Sign-in was cancelled');
+        } else if (error.code === 'auth/popup-blocked') {
+          showError('Pop-up was blocked. Please allow pop-ups for this site.');
+        } else {
+          showError(error.message || 'Failed to sign in');
+        }
+      }
+    }
+
+    window.signInWithGoogle = () => handleSignIn(new GoogleAuthProvider());
+    window.signInWithGitHub = () => handleSignIn(new GithubAuthProvider());
+  </script>
+</body>
+</html>`;
 }

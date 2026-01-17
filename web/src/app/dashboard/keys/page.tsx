@@ -289,9 +289,7 @@ export default function ApiKeysPage() {
             <h4 className="font-medium mb-2">Claude Code (Terminal)</h4>
             <div className="bg-muted rounded-lg p-4 font-mono text-sm overflow-x-auto">
               <pre>
-                {`claude mcp add recall \\
-  --transport http \\
-  --url ${apiUrl}/mcp \\
+                {`claude mcp add --transport http recall ${apiUrl}/mcp \\
   --header "Authorization: Bearer YOUR_API_KEY"`}
               </pre>
             </div>

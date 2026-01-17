@@ -1731,25 +1731,45 @@ function getOAuthLoginPage(state: string): string {
 
       try {
         const result = await signInWithPopup(auth, provider);
+        console.log('[OAuth] Firebase sign-in successful, getting ID token...');
         const idToken = await result.user.getIdToken();
+        console.log('[OAuth] Got ID token, calling callback...');
 
-        // Send token to backend
+        // Send token to backend with timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000);
+
         const response = await fetch('/oauth/callback', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ idToken, state }),
+          signal: controller.signal,
         });
+        clearTimeout(timeoutId);
+
+        console.log('[OAuth] Callback response status:', response.status);
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error('[OAuth] Callback error:', errorText);
+          showError('Server error: ' + response.status);
+          return;
+        }
 
         const data = await response.json();
+        console.log('[OAuth] Callback data:', data);
 
         if (data.success && data.redirectUrl) {
+          console.log('[OAuth] Redirecting to:', data.redirectUrl);
           window.location.href = data.redirectUrl;
         } else {
-          showError(data.error_description || 'Authentication failed');
+          showError(data.error_description || data.error || 'Authentication failed');
         }
       } catch (error) {
-        console.error('Sign-in error:', error);
-        if (error.code === 'auth/popup-closed-by-user') {
+        console.error('[OAuth] Sign-in error:', error);
+        if (error.name === 'AbortError') {
+          showError('Request timed out. Please try again.');
+        } else if (error.code === 'auth/popup-closed-by-user') {
           showError('Sign-in was cancelled');
         } else if (error.code === 'auth/popup-blocked') {
           showError('Pop-up was blocked. Please allow pop-ups for this site.');

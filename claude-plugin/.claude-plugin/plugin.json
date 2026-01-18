@@ -1,70 +1,8 @@
 {
   "name": "recall-rlm",
-  "version": "1.0.0",
-  "description": "RLM (Recursive Language Model) support for Claude Code using Recall MCP. Enables processing of large contexts that exceed context window limits.",
-  "author": "Jose Airosa",
-  "repository": "https://github.com/joseairosa/recall",
-  "license": "MIT",
-  "keywords": [
-    "rlm",
-    "context-window",
-    "recall",
-    "mcp",
-    "memory",
-    "large-context"
-  ],
-  "mcpServers": {
-    "_comment": "Choose ONE of the following configurations:",
-
-    "recall-cloud": {
-      "_description": "Use Recall Cloud (recallmcp.com) - No Redis required",
-      "url": "https://recallmcp.com/mcp",
-      "headers": {
-        "Authorization": "Bearer ${RECALL_API_KEY}"
-      }
-    },
-
-    "recall-local": {
-      "_description": "Self-hosted with local Redis/Valkey",
-      "command": "npx",
-      "args": ["@joseairosa/recall"],
-      "env": {
-        "REDIS_URL": "${REDIS_URL:-redis://localhost:6379}",
-        "VOYAGE_API_KEY": "${VOYAGE_API_KEY}",
-        "RLM_ENABLED": "true"
-      }
-    }
-  },
-  "agents": [
-    "agents/context-loader.md",
-    "agents/task-decomposer.md",
-    "agents/result-aggregator.md"
-  ],
-  "commands": [
-    "commands/load-context.md",
-    "commands/decompose.md",
-    "commands/rlm-status.md"
-  ],
-  "hooks": "hooks/hooks.json",
-
-  "configuration": {
-    "cloudSetup": {
-      "description": "For Recall Cloud (easiest)",
-      "steps": [
-        "1. Sign up at https://recallmcp.com",
-        "2. Get your API key from the dashboard",
-        "3. Set RECALL_API_KEY environment variable",
-        "4. Use the 'recall-cloud' server config"
-      ]
-    },
-    "selfHostedSetup": {
-      "description": "For self-hosted Redis/Valkey",
-      "steps": [
-        "1. Install Redis: brew install redis && brew services start redis",
-        "2. Set REDIS_URL (default: redis://localhost:6379)",
-        "3. Optionally set VOYAGE_API_KEY for semantic search",
-        "4. Use the 'recall-local' server config"
-      ]
-    }
+  "description": "RLM (Recursive Language Model) support for processing large contexts using Recall MCP memory",
+  "author": {
+    "name": "Jose Airosa",
+    "email": "me@joseairosa.com"
   }
 }

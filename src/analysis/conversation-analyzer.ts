@@ -9,6 +9,11 @@ export class ConversationAnalyzer {
     if (!apiKey) {
       throw new Error('ANTHROPIC_API_KEY environment variable is required');
     }
+    // Debug: log key info (masked)
+    const maskedKey = apiKey.length > 20
+      ? `${apiKey.substring(0, 10)}...${apiKey.substring(apiKey.length - 4)} (${apiKey.length} chars)`
+      : `[too short: ${apiKey.length} chars]`;
+    console.log(`[ConversationAnalyzer] Initializing with key: ${maskedKey}`);
     this.client = new Anthropic({ apiKey });
   }
 
@@ -77,7 +82,15 @@ Output ONLY the JSON objects, one per line, no other text:`
 
       return extracted;
     } catch (error) {
-      console.error('Error analyzing conversation:', error);
+      console.error('[ConversationAnalyzer] Error analyzing conversation:', error);
+      // Log more details for debugging
+      if (error instanceof Error) {
+        console.error('[ConversationAnalyzer] Error name:', error.name);
+        console.error('[ConversationAnalyzer] Error message:', error.message);
+        if ('status' in error) {
+          console.error('[ConversationAnalyzer] HTTP status:', (error as any).status);
+        }
+      }
       throw error;
     }
   }

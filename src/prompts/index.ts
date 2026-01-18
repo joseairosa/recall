@@ -3,6 +3,121 @@ import { formatWorkspaceContext } from './formatters.js';
 
 const memoryStore = await MemoryStore.create();
 
+const SESSION_MANAGEMENT_TEXT = `# Long Session Memory Management
+
+## The Problem: Context Accumulation
+
+During long work sessions:
+- Context grows with every message
+- Token costs increase linearly
+- Important decisions get buried
+- You repeat explanations and context
+
+## The Solution: External Memory
+
+Use Recall to store important information externally. Claude retrieves only what's relevant for the current task.
+
+## Proactive Memory Workflow
+
+### During Work: Store Important Bits
+
+After significant decisions or learnings:
+\`\`\`
+store_memory(
+  content="Decided to use PostgreSQL for user data because...",
+  context_type="decision",
+  importance=8,
+  tags=["architecture", "database"]
+)
+\`\`\`
+
+**What to Store (High Signal):**
+- Decisions with reasoning
+- User preferences discovered
+- Code patterns established
+- Constraints/requirements learned
+- Bugs fixed and root causes
+
+**What NOT to Store (Low Signal):**
+- Code implementations (they're in files)
+- General knowledge
+- Temporary debugging info
+
+### Periodically: Analyze Conversation
+
+When the conversation has valuable context to preserve:
+\`\`\`
+analyze_and_remember(conversation_text="<recent important discussion>")
+→ Automatically extracts and stores decisions, patterns, insights
+\`\`\`
+
+### Before New Tasks: Recall Context
+
+Start tasks by getting relevant memories:
+\`\`\`
+recall_relevant_context(
+  current_task="Implement user authentication",
+  query="authentication security patterns"
+)
+→ Returns relevant decisions, patterns, preferences
+\`\`\`
+
+### End of Session: Checkpoint
+
+Before ending a long session:
+\`\`\`
+summarize_session(session_name="Feature X implementation")
+→ Creates snapshot of session context
+\`\`\`
+
+## Context Types
+
+| Type | Use For | Example |
+|------|---------|---------|
+| \`directive\` | User instructions | "Always use TypeScript" |
+| \`decision\` | Choices made | "Chose Redis over Memcached because..." |
+| \`code_pattern\` | Established patterns | "Error handling uses Result type" |
+| \`preference\` | User preferences | "Prefers concise responses" |
+| \`requirement\` | Project constraints | "Must support IE11" |
+| \`insight\` | Learnings | "API rate limit is 100/min" |
+
+## Importance Scale
+
+- **8-10**: Critical (always recalled) - Architecture decisions, user directives
+- **5-7**: Important (recalled when relevant) - Patterns, preferences
+- **1-4**: Low (rarely recalled) - Minor notes, temporary context
+
+## Example Session Flow
+
+\`\`\`
+Session Start:
+→ recall_relevant_context(current_task="Continue feature X")
+→ Get previous decisions, patterns, constraints
+
+During Work:
+→ Make decision about auth approach
+→ store_memory(content="Using JWT because...", context_type="decision", importance=8)
+
+After Complex Discussion:
+→ analyze_and_remember(conversation_text="<auth discussion>")
+
+Session End:
+→ summarize_session(session_name="Auth implementation day 1")
+\`\`\`
+
+## Token Savings
+
+| Without Recall | With Recall |
+|----------------|-------------|
+| Repeat context every message | Retrieve only what's needed |
+| 100K+ tokens over long session | ~5K tokens per task retrieval |
+| Context window overflow | Unlimited session length |
+
+## Key Principle
+
+**Store high-signal, retrieve on-demand.** Don't store everything - store decisions, patterns, and constraints that would otherwise need repeating.
+`;
+
 const RLM_WORKFLOW_TEXT = `# RLM (Recursive Language Model) Workflow
 
 ## When to Use RLM
@@ -136,6 +251,26 @@ export const prompts = {
             content: {
               type: 'text' as const,
               text: RLM_WORKFLOW_TEXT,
+            },
+          },
+        ],
+      };
+    },
+  },
+
+  session_management: {
+    name: 'session_management',
+    description: 'Learn how to manage long work sessions efficiently using external memory to reduce token usage',
+    arguments: [],
+    handler: async () => {
+      return {
+        description: 'Session memory management for long work sessions',
+        messages: [
+          {
+            role: 'user' as const,
+            content: {
+              type: 'text' as const,
+              text: SESSION_MANAGEMENT_TEXT,
             },
           },
         ],

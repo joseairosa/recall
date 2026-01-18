@@ -482,6 +482,44 @@ EOF
   print_success "Settings configured"
 }
 
+register_plugin() {
+  local installed_plugins_file="$HOME/.claude/plugins/installed_plugins.json"
+
+  if [ -f "$installed_plugins_file" ]; then
+    if command -v jq &> /dev/null; then
+      jq --arg path "$PLUGIN_DIR" '.plugins["recall-rlm"] = {"source": "local", "installLocation": $path}' "$installed_plugins_file" > "${installed_plugins_file}.tmp"
+      mv "${installed_plugins_file}.tmp" "$installed_plugins_file"
+    else
+      # Fallback without jq
+      cat > "$installed_plugins_file" << EOF
+{
+  "version": 2,
+  "plugins": {
+    "recall-rlm": {
+      "source": "local",
+      "installLocation": "$PLUGIN_DIR"
+    }
+  }
+}
+EOF
+    fi
+  else
+    cat > "$installed_plugins_file" << EOF
+{
+  "version": 2,
+  "plugins": {
+    "recall-rlm": {
+      "source": "local",
+      "installLocation": "$PLUGIN_DIR"
+    }
+  }
+}
+EOF
+  fi
+
+  print_success "Plugin registered"
+}
+
 add_to_profile() {
   if [ "$ADD_TO_PROFILE" = "yes" ] && [ -n "$API_KEY" ]; then
     local profile="$HOME/.zshrc"
@@ -562,6 +600,7 @@ main() {
 
   backup_existing
   download_plugin
+  register_plugin
   save_version "$latest_version"
   configure_settings
   add_to_profile

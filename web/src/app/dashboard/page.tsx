@@ -294,7 +294,7 @@ export default function DashboardPage() {
                 </li>
                 <li className="flex gap-2">
                   <Check className="w-3 h-3 text-green-500 mt-1 flex-shrink-0" />
-                  <span><strong className="text-foreground">Team collaboration</strong> — Share across 10s-1000s of Claude instances</span>
+                  <span><strong className="text-foreground">Real-time collaboration</strong> — One Claude learns, all others know instantly</span>
                 </li>
                 <li className="flex gap-2">
                   <Check className="w-3 h-3 text-green-500 mt-1 flex-shrink-0" />
@@ -333,12 +333,13 @@ export default function DashboardPage() {
           <div className="bg-muted/50 rounded-lg p-4 border">
             <h4 className="font-medium mb-2 flex items-center gap-2">
               <Users className="w-4 h-4 text-primary" />
-              Key Feature: Multi-Claude Collaboration
+              Key Feature: Real-Time Knowledge Sharing
             </h4>
             <p className="text-sm text-muted-foreground">
-              Share memories across your entire organization. When one Claude instance learns something,
-              all others can retrieve it. Perfect for teams running multiple Claude sessions, CI/CD pipelines,
-              or distributed AI workflows.
+              <strong className="text-foreground">One Claude learns, all others know instantly.</strong> Share knowledge
+              across your entire organization in real-time. No syncing, no waiting — when any Claude instance stores
+              a memory, it&apos;s immediately available to 10s, 100s, or 1000s of other instances. Perfect for teams,
+              CI/CD pipelines, or distributed AI workflows.
             </p>
           </div>
 

@@ -255,7 +255,7 @@ export default function HomePage() {
                 <div className="flex gap-3">
                   <Check className="w-4 h-4 text-green-500 mt-1 flex-shrink-0" />
                   <p className="text-sm text-muted-foreground">
-                    <strong className="text-foreground">Team collaboration</strong> — Share memories across 10s, 100s, or 1000s of Claude instances in your organization.
+                    <strong className="text-foreground">Real-time team collaboration</strong> — One Claude learns something, all others know instantly. Share across 10s-1000s of instances.
                   </p>
                 </div>
                 <div className="flex gap-3">
@@ -354,8 +354,8 @@ export default function HomePage() {
             />
             <FeatureCard
               icon={<Users className="w-6 h-6" />}
-              title="Multi-Claude Collaboration"
-              description="Share memories across 10s, 100s, or 1000s of Claude instances. Perfect for teams and organizations."
+              title="Real-Time Knowledge Sharing"
+              description="One Claude learns, all others know instantly. Share knowledge across 10s-1000s of instances in real-time."
             />
             <FeatureCard
               icon={<RefreshCw className="w-6 h-6" />}

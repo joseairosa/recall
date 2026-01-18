@@ -124,11 +124,11 @@ Then in a new conversation:
 
 ### Cloud Plans
 
-| Plan       | Price   | Memories | Features                                  |
-| ---------- | ------- | -------- | ----------------------------------------- |
-| **Free**   | $0/mo   | 500      | 1 workspace, basic search                 |
-| **Pro**    | $9/mo   | 10,000   | 5 workspaces, API access, semantic search |
-| **Team**   | $29/mo  | 50,000   | Unlimited workspaces, shared memories     |
+| Plan       | Price    | Memories | Features                                  |
+| ---------- | -------- | -------- | ----------------------------------------- |
+| **Free**   | $0/mo    | 500      | 1 workspace, basic search                 |
+| **Pro**    | $4.99/mo | 5,000    | 3 workspaces, API access, semantic search |
+| **Team**   | $9.99/mo | 25,000   | Unlimited workspaces, shared memories     |
 
 Upgrade anytime at [recallmcp.com/dashboard/billing](https://recallmcp.com/dashboard/billing)
 
@@ -357,6 +357,82 @@ Then in a new conversation:
 ```
 
 **It remembers!**
+
+---
+
+## Claude Code Plugin (One-Liner Install)
+
+Install the Recall plugin for Claude Code with a single command. This gives you enhanced commands, agents, and hooks for working with large files and RLM (Recursive Language Model) features.
+
+### Quick Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/joseairosa/recall/main/scripts/install-plugin.sh | bash
+```
+
+This script will:
+- Download the Recall plugin to `~/.claude/plugins/recall-rlm/`
+- Configure the MCP server in `~/.claude/settings.json`
+- Support updates (re-run the same command to update)
+- Create backups before updates
+
+### After Installation
+
+1. **Get your API key** from [recallmcp.com](https://recallmcp.com)
+
+2. **Set the environment variable:**
+   ```bash
+   export RECALL_API_KEY=sk-recall-your-key-here
+
+   # Add to your shell profile for persistence:
+   echo 'export RECALL_API_KEY=sk-recall-your-key-here' >> ~/.zshrc
+   ```
+
+3. **Restart Claude Code** to load the plugin
+
+### Plugin Features
+
+The plugin adds:
+
+| Feature | Description |
+|---------|-------------|
+| `/load-context <file>` | Load large files into RLM system for chunk-based analysis |
+| `/decompose <chain_id>` | Break tasks into subtasks with strategies (filter, chunk, recursive) |
+| `/rlm-status <chain_id>` | Check execution progress and results |
+
+**Hooks (automatic behaviors):**
+- Context injection before each prompt
+- Large file detection (suggests RLM for >100KB files)
+- Session summarization reminders
+- Decision storage prompts
+
+### Self-Hosted Configuration
+
+If you prefer Redis locally instead of Recall Cloud, edit `~/.claude/settings.json` after installation:
+
+```json
+{
+  "mcpServers": {
+    "recall": {
+      "command": "npx",
+      "args": ["-y", "@joseairosa/recall"],
+      "env": {
+        "REDIS_URL": "redis://localhost:6379"
+      }
+    }
+  }
+}
+```
+
+### Update & Uninstall
+
+```bash
+# Update to latest version
+curl -fsSL https://raw.githubusercontent.com/joseairosa/recall/main/scripts/install-plugin.sh | bash
+
+# Uninstall
+curl -fsSL https://raw.githubusercontent.com/joseairosa/recall/main/scripts/uninstall-plugin.sh | bash
+```
 
 ---
 

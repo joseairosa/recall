@@ -1,0 +1,80 @@
+{
+  "hooks": [
+    {
+      "name": "recall-context-injection",
+      "description": "Automatically inject relevant context from Recall before each prompt",
+      "type": "pre-prompt",
+      "enabled": true,
+      "matcher": {
+        "type": "always"
+      },
+      "action": {
+        "type": "mcp-tool",
+        "tool": "mcp__recall__recall_relevant_context",
+        "params": {
+          "current_task": "{{user_message}}",
+          "limit": 5,
+          "min_importance": 6
+        },
+        "inject_as": "system_context",
+        "silent": true
+      }
+    },
+    {
+      "name": "recall-rlm-active-chain",
+      "description": "Check for active RLM execution chains and remind user of progress",
+      "type": "pre-prompt",
+      "enabled": true,
+      "matcher": {
+        "type": "keyword",
+        "keywords": ["analyze", "error", "log", "find", "search", "process"]
+      },
+      "action": {
+        "type": "prompt",
+        "prompt": "Before proceeding, check if there are any active RLM execution chains that might be relevant. If the user is working with large files or continuing previous analysis, consider using /rlm-status to check progress."
+      }
+    },
+    {
+      "name": "recall-session-summarize",
+      "description": "Remind to summarize session at end of complex work",
+      "type": "post-response",
+      "enabled": true,
+      "matcher": {
+        "type": "keyword",
+        "keywords": ["done", "finished", "complete", "that's all", "thanks"]
+      },
+      "action": {
+        "type": "prompt",
+        "prompt": "Consider using mcp__recall__summarize_session to capture key learnings from this session for future reference."
+      }
+    },
+    {
+      "name": "recall-large-file-detector",
+      "description": "Suggest RLM for large file operations",
+      "type": "pre-prompt",
+      "enabled": true,
+      "matcher": {
+        "type": "pattern",
+        "pattern": "(?i)(analyze|read|process|examine).*\\.(log|txt|json|csv|md)\\b"
+      },
+      "action": {
+        "type": "prompt",
+        "prompt": "If the file is large (>100KB), consider using /load-context to load it into the RLM system for efficient chunk-based processing."
+      }
+    },
+    {
+      "name": "recall-store-decision",
+      "description": "Prompt to store important decisions",
+      "type": "post-response",
+      "enabled": true,
+      "matcher": {
+        "type": "keyword",
+        "keywords": ["decided", "chose", "will use", "going with", "selected"]
+      },
+      "action": {
+        "type": "prompt",
+        "prompt": "If this was an important decision, consider storing it with mcp__recall__store_memory using context_type='decision' for future reference."
+      }
+    }
+  ]
+}

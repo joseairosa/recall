@@ -383,9 +383,10 @@ download_plugin() {
     exit 1
   fi
 
-  # Copy plugin files
+  # Copy plugin files (including hidden directories like .claude-plugin)
   mkdir -p "$PLUGIN_DIR"
   cp -r "$extracted_dir/claude-plugin/"* "$PLUGIN_DIR/"
+  cp -r "$extracted_dir/claude-plugin/".* "$PLUGIN_DIR/" 2>/dev/null || true
 
   echo -e "  ${GREEN}✓${NC} Downloaded and extracted"
 }

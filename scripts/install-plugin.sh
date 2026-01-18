@@ -8,6 +8,7 @@ set -e
 
 # Configuration
 REPO="joseairosa/recall"
+BRANCH="feature/1768545187-saas-http-server"  # TODO: Change to "main" before merging
 PLUGIN_DIR="$HOME/.claude/plugins/recall-rlm"
 SETTINGS_FILE="$HOME/.claude/settings.json"
 VERSION_FILE="$PLUGIN_DIR/.version"
@@ -225,10 +226,10 @@ get_latest_version() {
   version=$(curl -s "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/' || echo "")
 
   if [ -z "$version" ]; then
-    version=$(curl -s "https://api.github.com/repos/$REPO/commits/main" 2>/dev/null | grep '"sha"' | head -1 | sed -E 's/.*"([^"]+)".*/\1/' | cut -c1-7 || echo "main")
+    version=$(curl -s "https://api.github.com/repos/$REPO/commits/$BRANCH" 2>/dev/null | grep '"sha"' | head -1 | sed -E 's/.*"([^"]+)".*/\1/' | cut -c1-7 || echo "$BRANCH")
   fi
 
-  echo "${version:-main}"
+  echo "${version:-$BRANCH}"
 }
 
 get_current_version() {
@@ -348,7 +349,7 @@ download_plugin() {
   echo -e "  ${CYAN}⠋${NC} Downloading from GitHub..."
 
   # Download archive
-  local download_url="https://github.com/$REPO/archive/refs/heads/main.tar.gz"
+  local download_url="https://github.com/$REPO/archive/refs/heads/$BRANCH.tar.gz"
   if ! curl -fsSL "$download_url" -o "$TEMP_DIR/plugin.tar.gz" 2>"$TEMP_DIR/curl_error.log"; then
     echo -e "  ${RED}✗${NC} Failed to download from GitHub"
     [ -f "$TEMP_DIR/curl_error.log" ] && cat "$TEMP_DIR/curl_error.log" > /dev/tty
@@ -363,9 +364,9 @@ download_plugin() {
     exit 1
   fi
 
-  # Find extracted directory (could be recall-main or mem-main depending on repo name)
+  # Find extracted directory (name based on repo and branch, e.g., recall-main or recall-feature-xxx)
   local extracted_dir
-  extracted_dir=$(ls -d "$TEMP_DIR"/*-main 2>/dev/null | head -1)
+  extracted_dir=$(ls -d "$TEMP_DIR"/recall-* 2>/dev/null | head -1)
 
   if [ -z "$extracted_dir" ]; then
     echo -e "  ${RED}✗${NC} Could not find extracted directory"

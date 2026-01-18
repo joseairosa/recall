@@ -17,20 +17,35 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { Request, Response } from 'express';
 import { randomUUID } from 'crypto';
-import { AuthenticatedRequest } from './types.js';
+import { AuthenticatedRequest, PLAN_LIMITS } from './types.js';
 import { StorageClient } from '../persistence/storage-client.js';
 import { MemoryStore } from '../persistence/memory-store.js';
 import { tools, setMemoryStore } from '../tools/index.js';
 import { resources, setResourceMemoryStore } from '../resources/index.js';
 import { listPrompts, getPrompt } from '../prompts/index.js';
+import { WorkspaceService } from './workspace.service.js';
+import { createWorkspaceId } from '../types.js';
+import { AuditService } from './audit.service.js';
 
-// Session storage: sessionId -> { server, transport, tenantId }
+/**
+ * Mutable state for a session's workspace
+ * This allows the set_workspace tool to change the active workspace
+ */
+interface SessionState {
+  memoryStore: MemoryStore;
+  workspaceId: string;
+  workspacePath: string;
+}
+
+// Session storage: sessionId -> { server, transport, tenantId, state, plan }
 const sessions = new Map<
   string,
   {
     server: Server;
     transport: StreamableHTTPServerTransport;
     tenantId: string;
+    state: SessionState;
+    plan: string;
     lastAccess: number;
   }
 >();
@@ -49,14 +64,27 @@ setInterval(() => {
 }, 60 * 1000); // Check every minute
 
 /**
- * Creates a tenant-scoped MCP Server instance
+ * Creates a tenant and workspace-scoped MCP Server instance
+ * Returns both the server and mutable state for workspace switching
  */
 function createTenantMcpServer(
   storageClient: StorageClient,
-  tenantId: string
-): Server {
-  // Create tenant-scoped memory store
-  const memoryStore = new MemoryStore(storageClient, `tenant:${tenantId}`);
+  tenantId: string,
+  workspaceId: string,
+  workspacePath: string,
+  plan: string,
+  auditService: AuditService,
+  apiKeyId: string
+): { server: Server; state: SessionState } {
+  // Create mutable state for workspace (allows set_workspace tool to change it)
+  const state: SessionState = {
+    memoryStore: new MemoryStore(
+      storageClient,
+      `tenant:${tenantId}:workspace:${workspaceId}`
+    ),
+    workspaceId,
+    workspacePath,
+  };
 
   // Create MCP server
   const server = new Server(
@@ -73,35 +101,197 @@ function createTenantMcpServer(
     }
   );
 
-  // List available tools
+  // Define the set_workspace tool schema
+  const setWorkspaceTool = {
+    name: 'set_workspace',
+    description:
+      'Set the current workspace/project for memory isolation. Call this at the start of a session with your current working directory to isolate memories per project. Example: set_workspace({ path: "/Users/jose/projects/my-app" })',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        path: {
+          type: 'string',
+          description:
+            'The workspace path (typically process.cwd() or project directory). This will be hashed for storage.',
+        },
+      },
+      required: ['path'],
+    },
+  };
+
+  // Define the get_workspace tool schema
+  const getWorkspaceTool = {
+    name: 'get_workspace',
+    description: 'Get the current workspace path and ID.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {},
+    },
+  };
+
+  // List available tools (including set_workspace and get_workspace)
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    // Set the memory store for this request context
-    setMemoryStore(memoryStore);
+    setMemoryStore(state.memoryStore);
     return {
-      tools: Object.entries(tools).map(([name, tool]) => ({
-        name,
-        description: tool.description,
-        inputSchema: tool.inputSchema,
-      })),
+      tools: [
+        setWorkspaceTool,
+        getWorkspaceTool,
+        ...Object.entries(tools).map(([name, tool]) => ({
+          name,
+          description: tool.description,
+          inputSchema: tool.inputSchema,
+        })),
+      ],
     };
   });
 
-  // Handle tool calls
+  // Handle tool calls (including set_workspace)
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    // Set the memory store for this request context
-    setMemoryStore(memoryStore);
-
     const { name, arguments: args } = request.params;
+    const startTime = Date.now();
+
+    // Helper to log audit entry for tool calls
+    const logAudit = (toolName: string, isError: boolean) => {
+      const duration = Date.now() - startTime;
+      auditService.log({
+        tenantId,
+        apiKeyId,
+        action: 'mcp_call',
+        resource: 'mcp_tool',
+        resourceId: toolName,
+        method: 'MCP',
+        path: `/mcp/tools/${toolName}`,
+        statusCode: isError ? 500 : 200,
+        duration,
+        details: { tool: toolName, args: typeof args === 'object' ? Object.keys(args as object) : [] },
+      }).catch(err => console.error('[MCP] Audit log error:', err));
+    };
+
+    // Handle set_workspace tool
+    if (name === 'set_workspace') {
+      const { path } = args as { path: string };
+
+      if (!path || typeof path !== 'string') {
+        logAudit('set_workspace', true);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: 'Error: path is required and must be a string',
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const newWorkspaceId = createWorkspaceId(path);
+
+      // If same workspace, no change needed
+      if (newWorkspaceId === state.workspaceId) {
+        logAudit('set_workspace', false);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Workspace already set to: ${path} (ID: ${newWorkspaceId})`,
+            },
+          ],
+        };
+      }
+
+      // Validate/register workspace with plan limits
+      const workspaceService = new WorkspaceService(storageClient);
+      const workspaceResult = await workspaceService.getOrRegisterWorkspace(
+        tenantId,
+        path,
+        plan
+      );
+
+      if (!workspaceResult) {
+        const limit =
+          PLAN_LIMITS[plan as keyof typeof PLAN_LIMITS]?.maxWorkspaces ?? 1;
+        logAudit('set_workspace', true);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Error: Workspace limit exceeded. Your ${plan} plan allows ${limit} workspace(s). Upgrade to add more.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // Update state with new workspace
+      state.memoryStore = new MemoryStore(
+        storageClient,
+        `tenant:${tenantId}:workspace:${newWorkspaceId}`
+      );
+      state.workspaceId = newWorkspaceId;
+      state.workspacePath = path;
+
+      console.log(
+        `[MCP] Workspace changed for tenant ${tenantId}: ${path} -> ${newWorkspaceId}`
+      );
+
+      logAudit('set_workspace', false);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Workspace set to: ${path}\nWorkspace ID: ${newWorkspaceId}\nAll memories will now be isolated to this workspace.`,
+          },
+        ],
+      };
+    }
+
+    // Handle get_workspace tool
+    if (name === 'get_workspace') {
+      logAudit('get_workspace', false);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                path: state.workspacePath,
+                id: state.workspaceId,
+                isDefault: state.workspacePath === 'default',
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    }
+
+    // Handle regular tools
+    setMemoryStore(state.memoryStore);
+
     const tool = tools[name as keyof typeof tools];
     if (!tool) {
       throw new Error(`Unknown tool: ${name}`);
     }
-    return await tool.handler(args as any);
+
+    let isError = false;
+    let result;
+    try {
+      result = await tool.handler(args as any);
+      isError = result?.isError === true;
+    } catch (err) {
+      isError = true;
+      throw err;
+    } finally {
+      logAudit(name, isError);
+    }
+
+    return result;
   });
 
   // List available resources
   server.setRequestHandler(ListResourcesRequestSchema, async () => {
-    setResourceMemoryStore(memoryStore);
+    setResourceMemoryStore(state.memoryStore);
     return {
       resources: [
         {
@@ -160,7 +350,7 @@ function createTenantMcpServer(
 
   // Handle resource reads
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-    setResourceMemoryStore(memoryStore);
+    setResourceMemoryStore(state.memoryStore);
 
     const uriString = request.params.uri;
     const uri = new URL(uriString);
@@ -220,13 +410,15 @@ function createTenantMcpServer(
     return await getPrompt(request.params.name);
   });
 
-  return server;
+  return { server, state };
 }
 
 /**
  * Creates the MCP HTTP request handler
  */
 export function createMcpHandler(storageClient: StorageClient) {
+  const auditService = new AuditService(storageClient);
+
   return async (req: AuthenticatedRequest, res: Response) => {
     const tenant = req.tenant!;
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
@@ -248,25 +440,38 @@ export function createMcpHandler(storageClient: StorageClient) {
           return;
         }
 
+        // Note: We don't validate workspace here anymore since it can change dynamically
+        // via the set_workspace tool. The session's state.workspaceId tracks the current workspace.
+
         session.lastAccess = Date.now();
         await session.transport.handleRequest(req, res, req.body);
         return;
       }
 
       // For new sessions or initialization requests, create new server + transport
-      const server = createTenantMcpServer(storageClient, tenant.tenantId);
+      const { server, state } = createTenantMcpServer(
+        storageClient,
+        tenant.tenantId,
+        tenant.workspace.id,
+        tenant.workspace.path,
+        tenant.plan,
+        auditService,
+        tenant.apiKeyId
+      );
 
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         enableJsonResponse: true, // Allow simple JSON responses
         onsessioninitialized: (newSessionId) => {
           console.log(
-            `[MCP] Session initialized: ${newSessionId} for tenant ${tenant.tenantId}`
+            `[MCP] Session initialized: ${newSessionId} for tenant ${tenant.tenantId}, workspace ${state.workspacePath}`
           );
           sessions.set(newSessionId, {
             server,
             transport,
             tenantId: tenant.tenantId,
+            state,
+            plan: tenant.plan,
             lastAccess: Date.now(),
           });
         },

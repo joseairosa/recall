@@ -7,17 +7,27 @@
 import { Request } from 'express';
 
 /**
+ * Workspace context for request scoping
+ */
+export interface WorkspaceContext {
+  id: string; // Hashed workspace ID
+  path: string; // Original path from header
+  isDefault: boolean; // True if no header was provided
+}
+
+/**
  * Tenant information attached to authenticated requests
  */
 export interface TenantContext {
   tenantId: string;
   apiKey: string;
-  apiKeyId: string;       // Key ID for audit logging
+  apiKeyId: string; // Key ID for audit logging
   plan: 'free' | 'pro' | 'team' | 'enterprise';
   limits: {
     maxMemories: number;
     maxWorkspaces: number;
   };
+  workspace: WorkspaceContext;
 }
 
 /**
@@ -45,12 +55,12 @@ export interface ApiKeyRecord {
 /**
  * Audit log action types
  */
-export type AuditAction = 'create' | 'read' | 'update' | 'delete' | 'search' | 'list';
+export type AuditAction = 'create' | 'read' | 'update' | 'delete' | 'search' | 'list' | 'mcp_call';
 
 /**
  * Audit log resource types
  */
-export type AuditResource = 'memory' | 'session' | 'apikey' | 'stats';
+export type AuditResource = 'memory' | 'session' | 'apikey' | 'stats' | 'mcp_tool';
 
 /**
  * Audit log entry stored in Redis
@@ -93,11 +103,11 @@ export const PLAN_LIMITS = {
     maxWorkspaces: 1,
   },
   pro: {
-    maxMemories: 10000,
-    maxWorkspaces: 5,
+    maxMemories: 5000,
+    maxWorkspaces: 3,
   },
   team: {
-    maxMemories: 50000,
+    maxMemories: 25000,
     maxWorkspaces: -1, // unlimited
   },
   enterprise: {

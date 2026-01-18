@@ -9,11 +9,61 @@ import {
   GetTimeWindowContextSchema,
   type AnalysisResult,
   type MemoryEntry,
+  type ContextType,
 } from '../types.js';
+
+// ============================================================================
+// Auto-Hook Schemas (v1.8.0)
+// ============================================================================
+
+/**
+ * Schema for auto_session_start - automatically retrieves relevant context at session start
+ */
+export const AutoSessionStartSchema = z.object({
+  workspace_path: z.string().optional().describe('Current workspace path for context'),
+  task_hint: z.string().optional().describe('Optional hint about what you will be working on'),
+  include_recent_decisions: z.boolean().default(true).describe('Include recent decisions (last 24h)'),
+  include_directives: z.boolean().default(true).describe('Include active directives'),
+  include_patterns: z.boolean().default(true).describe('Include code patterns'),
+  max_context_tokens: z.number().default(2000).describe('Maximum tokens of context to return'),
+});
+
+export type AutoSessionStart = z.infer<typeof AutoSessionStartSchema>;
+
+/**
+ * Schema for quick_store_decision - streamlined decision storage
+ */
+export const QuickStoreDecisionSchema = z.object({
+  decision: z.string().min(1).describe('The decision that was made'),
+  reasoning: z.string().optional().describe('Why this decision was made'),
+  alternatives_considered: z.array(z.string()).optional().describe('Alternatives that were considered'),
+  tags: z.array(z.string()).default([]).describe('Tags for categorization'),
+  importance: z.number().min(1).max(10).default(7).describe('Importance (default 7 for decisions)'),
+});
+
+export type QuickStoreDecision = z.infer<typeof QuickStoreDecisionSchema>;
+
+/**
+ * Schema for should_use_rlm - checks if content needs RLM processing
+ */
+export const ShouldUseRLMSchema = z.object({
+  content: z.string().describe('Content to analyze'),
+  task: z.string().describe('What you want to do with this content'),
+});
+
+export type ShouldUseRLM = z.infer<typeof ShouldUseRLMSchema>;
 
 // Injected memory store for multi-tenant support
 let memoryStore: MemoryStore | null = null;
-const analyzer = new ConversationAnalyzer();
+
+// Lazy-loaded analyzer - only initialized when needed (requires ANTHROPIC_API_KEY)
+let _analyzer: ConversationAnalyzer | null = null;
+function getAnalyzer(): ConversationAnalyzer {
+  if (!_analyzer) {
+    _analyzer = new ConversationAnalyzer();
+  }
+  return _analyzer;
+}
 
 /**
  * Sets the memory store for this module (called from tools/index.ts)
@@ -38,7 +88,7 @@ export const recall_relevant_context = {
   handler: async (args: z.infer<typeof RecallContextSchema>) => {
     try {
       // Enhance the search query
-      const enhancedQuery = await analyzer.enhanceQuery(args.current_task, args.query);
+      const enhancedQuery = await getAnalyzer().enhanceQuery(args.current_task, args.query);
 
       // Semantic search with filters
       const results = await getStore().searchMemories(
@@ -87,7 +137,7 @@ export const analyze_and_remember = {
   handler: async (args: z.infer<typeof AnalyzeConversationSchema>) => {
     try {
       // Analyze conversation to extract memories
-      const extracted = await analyzer.analyzeConversation(args.conversation_text);
+      const extracted = await getAnalyzer().analyzeConversation(args.conversation_text);
 
       const result: AnalysisResult = {
         extracted_memories: extracted,
@@ -179,7 +229,7 @@ export const summarize_session = {
       }
 
       // Generate summary using Claude
-      const summary = await analyzer.summarizeSession(
+      const summary = await getAnalyzer().summarizeSession(
         sessionMemories.map(m => ({
           content: m.content,
           context_type: m.context_type,
@@ -538,4 +588,354 @@ function formatAsText(
   }
 
   return lines.join('\n');
+}
+
+// ============================================================================
+// Automatic Hooks (v1.8.0)
+// These tools make Recall automatic - no manual intervention needed
+// ============================================================================
+
+/**
+ * auto_session_start - CALL THIS AT THE START OF EVERY SESSION
+ *
+ * Automatically retrieves relevant context based on:
+ * - Recent decisions (last 24h)
+ * - Active directives
+ * - Code patterns
+ * - High-importance memories
+ *
+ * This solves the "NOT automatic" limitation by providing a single tool
+ * that Claude should call at the start of every conversation.
+ */
+export const auto_session_start = {
+  description:
+    'AUTOMATIC: Call this at the START of every session to load relevant context. ' +
+    'Returns recent decisions, active directives, and code patterns. ' +
+    'This makes recall automatic - no manual searching needed.',
+  inputSchema: zodToJsonSchema(AutoSessionStartSchema),
+  handler: async (args: z.infer<typeof AutoSessionStartSchema>) => {
+    try {
+      const store = getStore();
+      const contextParts: string[] = [];
+      let totalTokens = 0;
+      const maxTokens = args.max_context_tokens;
+
+      // Helper to estimate tokens (rough: 4 chars per token)
+      const estimateTokens = (text: string) => Math.ceil(text.length / 4);
+
+      // 1. Get active directives (always important)
+      if (args.include_directives) {
+        const directives = await store.getMemoriesByType('directive' as ContextType);
+        const activeDirectives = directives.filter(d => d.importance >= 7);
+
+        if (activeDirectives.length > 0) {
+          const directivesText = activeDirectives
+            .slice(0, 5) // Max 5 directives
+            .map(d => `- ${d.content}`)
+            .join('\n');
+
+          const section = `## Active Directives\n${directivesText}`;
+          const sectionTokens = estimateTokens(section);
+
+          if (totalTokens + sectionTokens < maxTokens) {
+            contextParts.push(section);
+            totalTokens += sectionTokens;
+          }
+        }
+      }
+
+      // 2. Get recent decisions (last 24h)
+      if (args.include_recent_decisions) {
+        const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
+        const decisions = await store.getMemoriesByType('decision' as ContextType);
+        const recentDecisions = decisions
+          .filter(d => d.timestamp >= oneDayAgo)
+          .sort((a, b) => b.importance - a.importance)
+          .slice(0, 5);
+
+        if (recentDecisions.length > 0) {
+          const decisionsText = recentDecisions
+            .map(d => `- ${d.content}`)
+            .join('\n');
+
+          const section = `## Recent Decisions (last 24h)\n${decisionsText}`;
+          const sectionTokens = estimateTokens(section);
+
+          if (totalTokens + sectionTokens < maxTokens) {
+            contextParts.push(section);
+            totalTokens += sectionTokens;
+          }
+        }
+      }
+
+      // 3. Get code patterns
+      if (args.include_patterns) {
+        const patterns = await store.getMemoriesByType('code_pattern' as ContextType);
+        const importantPatterns = patterns
+          .filter(p => p.importance >= 6)
+          .sort((a, b) => b.importance - a.importance)
+          .slice(0, 3);
+
+        if (importantPatterns.length > 0) {
+          const patternsText = importantPatterns
+            .map(p => `- ${p.content}`)
+            .join('\n');
+
+          const section = `## Code Patterns\n${patternsText}`;
+          const sectionTokens = estimateTokens(section);
+
+          if (totalTokens + sectionTokens < maxTokens) {
+            contextParts.push(section);
+            totalTokens += sectionTokens;
+          }
+        }
+      }
+
+      // 4. If task hint provided, do a targeted search
+      if (args.task_hint && totalTokens < maxTokens) {
+        try {
+          const enhancedQuery = await getAnalyzer().enhanceQuery(args.task_hint, args.task_hint);
+          const relevant = await store.searchMemories(enhancedQuery, 5, 6);
+
+          if (relevant.length > 0) {
+            const relevantText = relevant
+              .map(r => `- [${r.context_type}] ${r.content}`)
+              .join('\n');
+
+            const section = `## Relevant to "${args.task_hint}"\n${relevantText}`;
+            const sectionTokens = estimateTokens(section);
+
+            if (totalTokens + sectionTokens < maxTokens) {
+              contextParts.push(section);
+              totalTokens += sectionTokens;
+            }
+          }
+        } catch {
+          // Analyzer may not be available, skip targeted search
+        }
+      }
+
+      // 5. Get high-importance items if space remains
+      if (totalTokens < maxTokens * 0.8) {
+        const important = await store.getImportantMemories(9, 3);
+        const criticalItems = important.filter(
+          i => !contextParts.some(p => p.includes(i.content))
+        );
+
+        if (criticalItems.length > 0) {
+          const criticalText = criticalItems
+            .map(i => `- [${i.context_type}] ${i.content}`)
+            .join('\n');
+
+          const section = `## Critical Items (importance 9+)\n${criticalText}`;
+          const sectionTokens = estimateTokens(section);
+
+          if (totalTokens + sectionTokens < maxTokens) {
+            contextParts.push(section);
+            totalTokens += sectionTokens;
+          }
+        }
+      }
+
+      // Build final context
+      const hasContext = contextParts.length > 0;
+      const contextOutput = hasContext
+        ? `# Session Context\n\n${contextParts.join('\n\n')}`
+        : 'No relevant context found. This appears to be a fresh start.';
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({
+              success: true,
+              has_context: hasContext,
+              sections_loaded: contextParts.length,
+              estimated_tokens: totalTokens,
+              context: contextOutput,
+              tip: hasContext
+                ? 'Context loaded! Refer to these decisions and patterns as you work.'
+                : 'No prior context found. Important decisions and patterns will be stored for next time.',
+            }, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to load session context: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  },
+};
+
+/**
+ * quick_store_decision - Streamlined decision storage
+ *
+ * Use this after making important decisions. It formats the decision
+ * with reasoning and alternatives for better recall later.
+ */
+export const quick_store_decision = {
+  description:
+    'AUTOMATIC: Quickly store a decision after making it. ' +
+    'Automatically formats with reasoning and alternatives. ' +
+    'Use this after any significant architectural, design, or implementation choice.',
+  inputSchema: zodToJsonSchema(QuickStoreDecisionSchema),
+  handler: async (args: z.infer<typeof QuickStoreDecisionSchema>) => {
+    try {
+      const store = getStore();
+
+      // Format decision with structured content
+      let content = `DECISION: ${args.decision}`;
+
+      if (args.reasoning) {
+        content += `\n\nREASONING: ${args.reasoning}`;
+      }
+
+      if (args.alternatives_considered && args.alternatives_considered.length > 0) {
+        content += `\n\nALTERNATIVES CONSIDERED:\n${args.alternatives_considered.map(a => `- ${a}`).join('\n')}`;
+      }
+
+      // Store with appropriate metadata
+      const memory = await store.createMemory({
+        content,
+        context_type: 'decision',
+        importance: args.importance,
+        tags: [...args.tags, 'decision', 'auto-stored'],
+        summary: `Decision: ${args.decision.substring(0, 80)}${args.decision.length > 80 ? '...' : ''}`,
+        is_global: false,
+      });
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({
+              success: true,
+              memory_id: memory.id,
+              message: 'Decision stored! It will be recalled in future sessions.',
+              stored_content: content.substring(0, 200) + (content.length > 200 ? '...' : ''),
+            }, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to store decision: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  },
+};
+
+/**
+ * should_use_rlm - Check if content needs RLM processing
+ *
+ * Call this before processing large content to determine if you should
+ * use the RLM tools (create_execution_context, decompose_task, etc.)
+ */
+export const should_use_rlm = {
+  description:
+    'AUTOMATIC: Check if content is too large for direct processing. ' +
+    'Returns recommendation on whether to use RLM tools. ' +
+    'Call this before attempting to analyze large files, logs, or documents.',
+  inputSchema: zodToJsonSchema(ShouldUseRLMSchema),
+  handler: async (args: z.infer<typeof ShouldUseRLMSchema>) => {
+    try {
+      // Estimate token count (rough: 4 chars per token)
+      const estimatedTokens = Math.ceil(args.content.length / 4);
+
+      // Thresholds
+      const SAFE_THRESHOLD = 4000;      // Under this: process directly
+      const WARNING_THRESHOLD = 8000;    // This range: consider RLM
+      const RLM_REQUIRED_THRESHOLD = 15000; // Above this: must use RLM
+
+      // Determine recommendation
+      let recommendation: 'direct' | 'consider_rlm' | 'use_rlm';
+      let reason: string;
+      let suggestedStrategy: string | null = null;
+
+      if (estimatedTokens <= SAFE_THRESHOLD) {
+        recommendation = 'direct';
+        reason = `Content is ~${estimatedTokens} tokens. Safe to process directly.`;
+      } else if (estimatedTokens <= WARNING_THRESHOLD) {
+        recommendation = 'consider_rlm';
+        reason = `Content is ~${estimatedTokens} tokens. Consider using RLM for better accuracy.`;
+        suggestedStrategy = detectSuggestedStrategy(args.content, args.task);
+      } else {
+        recommendation = 'use_rlm';
+        reason = `Content is ~${estimatedTokens} tokens. RLM strongly recommended to avoid context overflow.`;
+        suggestedStrategy = detectSuggestedStrategy(args.content, args.task);
+      }
+
+      // Build guidance
+      const guidance = recommendation === 'direct'
+        ? 'Process the content directly in your analysis.'
+        : `To use RLM:\n1. Call create_execution_context(task="${args.task}", context=<content>)\n2. Call decompose_task(chain_id, strategy="${suggestedStrategy || 'chunk'}")\n3. Process each subtask with inject_context_snippet\n4. Call merge_results when done`;
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({
+              estimated_tokens: estimatedTokens,
+              content_length_chars: args.content.length,
+              recommendation,
+              reason,
+              suggested_strategy: suggestedStrategy,
+              guidance,
+              thresholds: {
+                safe: `<${SAFE_THRESHOLD} tokens`,
+                consider_rlm: `${SAFE_THRESHOLD}-${WARNING_THRESHOLD} tokens`,
+                use_rlm: `>${RLM_REQUIRED_THRESHOLD} tokens`,
+              },
+            }, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to analyze content size: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  },
+};
+
+/**
+ * Helper to suggest RLM strategy based on content and task
+ */
+function detectSuggestedStrategy(content: string, task: string): string {
+  const taskLower = task.toLowerCase();
+  const contentSample = content.substring(0, 1000).toLowerCase();
+
+  // Filter strategy indicators
+  if (
+    taskLower.includes('find') ||
+    taskLower.includes('search') ||
+    taskLower.includes('error') ||
+    taskLower.includes('warning') ||
+    contentSample.includes('error') ||
+    contentSample.includes('[error]') ||
+    contentSample.includes('exception')
+  ) {
+    return 'filter';
+  }
+
+  // Aggregate strategy indicators
+  if (
+    taskLower.includes('summarize') ||
+    taskLower.includes('overview') ||
+    taskLower.includes('combine')
+  ) {
+    return 'aggregate';
+  }
+
+  // Recursive for very complex content
+  if (content.length > 200000) {
+    return 'recursive';
+  }
+
+  // Default: chunk
+  return 'chunk';
 }

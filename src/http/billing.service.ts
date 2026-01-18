@@ -16,18 +16,18 @@ const stripe = stripeSecretKey
 
 // Price IDs from Stripe Dashboard (test mode)
 const PRICE_IDS: Record<string, string> = {
-  price_pro_monthly: process.env.STRIPE_PRICE_PRO || 'price_1SqGK8LUbfmx8MWFMzZ2WTsz',
-  price_team_monthly: process.env.STRIPE_PRICE_TEAM || 'price_1SqGL4LUbfmx8MWFjxlB3B7F',
+  price_pro_monthly: process.env.STRIPE_PRICE_PRO || 'price_1SqTaOLUbfmx8MWFecrr4ng8',
+  price_team_monthly: process.env.STRIPE_PRICE_TEAM || 'price_1SqTaOLUbfmx8MWFdxHsCoPz',
   // Direct price IDs (frontend sends these)
-  'price_1SqGK8LUbfmx8MWFMzZ2WTsz': 'price_1SqGK8LUbfmx8MWFMzZ2WTsz',
-  'price_1SqGL4LUbfmx8MWFjxlB3B7F': 'price_1SqGL4LUbfmx8MWFjxlB3B7F',
+  'price_1SqTaOLUbfmx8MWFecrr4ng8': 'price_1SqTaOLUbfmx8MWFecrr4ng8',
+  'price_1SqTaOLUbfmx8MWFdxHsCoPz': 'price_1SqTaOLUbfmx8MWFdxHsCoPz',
 };
 
 // Plan limits
 const PLAN_LIMITS: Record<string, { maxMemories: number; maxWorkspaces: number }> = {
   free: { maxMemories: 500, maxWorkspaces: 1 },
-  pro: { maxMemories: 10000, maxWorkspaces: 5 },
-  team: { maxMemories: 50000, maxWorkspaces: -1 },
+  pro: { maxMemories: 5000, maxWorkspaces: 3 },
+  team: { maxMemories: 25000, maxWorkspaces: -1 },
   enterprise: { maxMemories: -1, maxWorkspaces: -1 },
 };
 
@@ -263,9 +263,9 @@ async function handleSubscriptionChange(
 
   if (priceId) {
     // Check against actual price IDs
-    if (priceId === 'price_1SqGK8LUbfmx8MWFMzZ2WTsz' || priceId.includes('pro')) {
+    if (priceId === 'price_1SqTaOLUbfmx8MWFecrr4ng8' || priceId.includes('pro')) {
       plan = 'pro';
-    } else if (priceId === 'price_1SqGL4LUbfmx8MWFjxlB3B7F' || priceId.includes('team')) {
+    } else if (priceId === 'price_1SqTaOLUbfmx8MWFdxHsCoPz' || priceId.includes('team')) {
       plan = 'team';
     }
   }

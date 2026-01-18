@@ -195,6 +195,98 @@ User: "Find all errors in this 500KB log file"
 - **Traceable**: Chain IDs track the entire workflow
 `;
 
+const AUTOMATIC_WORKFLOW_TEXT = `# Automatic Recall Workflow
+
+## CRITICAL: Call These Automatically
+
+Recall now has **automatic hooks** that you should call without being asked:
+
+### At Session Start: auto_session_start
+
+**ALWAYS call this at the beginning of every session:**
+\`\`\`
+auto_session_start({ task_hint: "what user wants to work on" })
+\`\`\`
+
+This automatically retrieves:
+- Active directives (what you MUST follow)
+- Recent decisions (last 24h)
+- Code patterns
+- Critical items (importance 9+)
+
+**When to call:** First thing after user's initial message, BEFORE starting work.
+
+### After Making Decisions: quick_store_decision
+
+**Call this after ANY significant choice:**
+\`\`\`
+quick_store_decision({
+  decision: "What was decided",
+  reasoning: "Why this choice was made",
+  alternatives_considered: ["Option A", "Option B"]
+})
+\`\`\`
+
+**When to call:**
+- After architectural decisions
+- After choosing between approaches
+- After establishing patterns
+- After resolving ambiguities
+
+### Before Processing Large Content: should_use_rlm
+
+**Call this BEFORE attempting to analyze large files:**
+\`\`\`
+should_use_rlm({
+  content: "<large content>",
+  task: "What you want to do with it"
+})
+\`\`\`
+
+Returns whether you should:
+- Process directly (small content)
+- Consider RLM (medium content)
+- Must use RLM (large content)
+
+## The Automatic Flow
+
+\`\`\`
+1. USER SENDS FIRST MESSAGE
+   → auto_session_start({ task_hint: "..." })
+   → Get context, then proceed with task
+
+2. MAKE A DECISION DURING WORK
+   → Do the work
+   → quick_store_decision({ decision: "...", reasoning: "..." })
+
+3. ENCOUNTER LARGE CONTENT (file, log, etc.)
+   → should_use_rlm({ content: "...", task: "..." })
+   → If recommendation is "use_rlm", use RLM workflow
+
+4. END OF SIGNIFICANT DISCUSSION
+   → analyze_and_remember({ conversation_text: "..." })
+
+5. END OF SESSION
+   → summarize_session({ session_name: "..." })
+\`\`\`
+
+## What Makes This Automatic?
+
+| Old Way (Manual) | New Way (Automatic) |
+|------------------|---------------------|
+| User says "recall context" | Claude calls auto_session_start automatically |
+| User says "remember this decision" | Claude calls quick_store_decision after deciding |
+| User manually invokes RLM | Claude checks should_use_rlm before processing |
+| Context forgotten between sessions | Context automatically loaded at start |
+
+## Key Principle
+
+**Be proactive, not reactive.** Don't wait for the user to ask you to recall or store. Do it automatically:
+- Start of session → auto_session_start
+- Made a decision → quick_store_decision
+- Large content → should_use_rlm
+`;
+
 export const prompts = {
   workspace_context: {
     name: 'workspace_context',
@@ -271,6 +363,26 @@ export const prompts = {
             content: {
               type: 'text' as const,
               text: SESSION_MANAGEMENT_TEXT,
+            },
+          },
+        ],
+      };
+    },
+  },
+
+  automatic_workflow: {
+    name: 'automatic_workflow',
+    description: 'CRITICAL: Learn the automatic Recall workflow - call auto_session_start at start, quick_store_decision after decisions, should_use_rlm before large content',
+    arguments: [],
+    handler: async () => {
+      return {
+        description: 'Automatic Recall workflow for proactive memory management',
+        messages: [
+          {
+            role: 'user' as const,
+            content: {
+              type: 'text' as const,
+              text: AUTOMATIC_WORKFLOW_TEXT,
             },
           },
         ],

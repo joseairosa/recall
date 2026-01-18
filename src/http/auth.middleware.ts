@@ -13,6 +13,8 @@ import { Response, NextFunction } from 'express';
 import { AuthenticatedRequest, ApiKeyRecord, PLAN_LIMITS } from './types.js';
 import { StorageClient } from '../persistence/storage-client.js';
 import { OAuthService } from './oauth.service.js';
+import { WorkspaceService } from './workspace.service.js';
+import { createWorkspaceId } from '../types.js';
 
 /**
  * Creates an authentication middleware with the given storage client
@@ -106,6 +108,32 @@ export function createAuthMiddleware(storageClient: StorageClient, oauthService?
             // Ignore errors updating usage stats
           });
 
+        // Extract workspace from header (default to 'default' if not provided)
+        const workspacePath =
+          (req.headers['x-recall-workspace'] as string) || 'default';
+        const isDefaultWorkspace = !req.headers['x-recall-workspace'];
+        const workspaceId = createWorkspaceId(workspacePath);
+
+        // Validate/register workspace
+        const workspaceService = new WorkspaceService(storageClient);
+        const workspaceResult = await workspaceService.getOrRegisterWorkspace(
+          record.tenantId,
+          workspacePath,
+          record.plan
+        );
+
+        if (!workspaceResult) {
+          const limit = PLAN_LIMITS[record.plan].maxWorkspaces;
+          res.status(403).json({
+            success: false,
+            error: {
+              code: 'WORKSPACE_LIMIT_EXCEEDED',
+              message: `Your ${record.plan} plan allows ${limit} workspace(s). Upgrade to add more.`,
+            },
+          });
+          return;
+        }
+
         // Attach tenant context to request
         req.tenant = {
           tenantId: record.tenantId,
@@ -113,6 +141,11 @@ export function createAuthMiddleware(storageClient: StorageClient, oauthService?
           apiKeyId: record.id,
           plan: record.plan,
           limits: PLAN_LIMITS[record.plan],
+          workspace: {
+            id: workspaceId,
+            path: workspacePath,
+            isDefault: isDefaultWorkspace,
+          },
         };
 
         next();
@@ -159,6 +192,32 @@ export function createAuthMiddleware(storageClient: StorageClient, oauthService?
           }
         }
 
+        // Extract workspace from header (default to 'default' if not provided)
+        const workspacePath =
+          (req.headers['x-recall-workspace'] as string) || 'default';
+        const isDefaultWorkspace = !req.headers['x-recall-workspace'];
+        const workspaceId = createWorkspaceId(workspacePath);
+
+        // Validate/register workspace
+        const workspaceService = new WorkspaceService(storageClient);
+        const workspaceResult = await workspaceService.getOrRegisterWorkspace(
+          tokenData.tenantId,
+          workspacePath,
+          bestPlan
+        );
+
+        if (!workspaceResult) {
+          const limit = PLAN_LIMITS[bestPlan].maxWorkspaces;
+          res.status(403).json({
+            success: false,
+            error: {
+              code: 'WORKSPACE_LIMIT_EXCEEDED',
+              message: `Your ${bestPlan} plan allows ${limit} workspace(s). Upgrade to add more.`,
+            },
+          });
+          return;
+        }
+
         // Attach tenant context to request (OAuth auth)
         req.tenant = {
           tenantId: tokenData.tenantId,
@@ -166,9 +225,16 @@ export function createAuthMiddleware(storageClient: StorageClient, oauthService?
           apiKeyId: 'oauth', // OAuth sessions don't have API key IDs
           plan: bestPlan,
           limits: PLAN_LIMITS[bestPlan],
+          workspace: {
+            id: workspaceId,
+            path: workspacePath,
+            isDefault: isDefaultWorkspace,
+          },
         };
 
-        console.log(`[Auth] OAuth token validated for tenant ${tokenData.tenantId}`);
+        console.log(
+          `[Auth] OAuth token validated for tenant ${tokenData.tenantId}, workspace ${workspaceId}`
+        );
         next();
       }
     } catch (error) {

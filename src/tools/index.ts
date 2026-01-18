@@ -16,6 +16,9 @@ import {
   analyze_and_remember,
   summarize_session,
   get_time_window_context,
+  auto_session_start,
+  quick_store_decision,
+  should_use_rlm,
   setContextMemoryStore,
 } from './context-tools.js';
 import {
@@ -35,6 +38,7 @@ import { relationshipTools, setRelationshipMemoryStore } from './relationship-to
 import { versionTools, setVersionMemoryStore } from './version-tools.js';
 import { templateTools, setTemplateMemoryStore } from './template-tools.js';
 import { categoryTools, setCategoryMemoryStore } from './category-tools.js';
+import { rlmTools, setRLMMemoryStore } from './rlm-tools.js';
 
 // Default memory store for stdio mode (singleton)
 let defaultMemoryStore: MemoryStore | null = null;
@@ -67,6 +71,7 @@ export function setMemoryStore(store: MemoryStore): void {
   setVersionMemoryStore(store);
   setTemplateMemoryStore(store);
   setCategoryMemoryStore(store);
+  setRLMMemoryStore(store);
 }
 
 /**
@@ -99,6 +104,11 @@ export const tools = {
   analyze_and_remember,
   summarize_session,
   get_time_window_context,
+
+  // Automatic hooks (v1.8.0) - makes Recall automatic
+  auto_session_start,      // Call at start of every session
+  quick_store_decision,    // Quickly store decisions after making them
+  should_use_rlm,          // Check if content needs RLM processing
 
   // Export/Import tools
   export_memories: {
@@ -463,6 +473,10 @@ export const tools = {
 
   // Category tools (v1.5.0)
   ...categoryTools,
+
+  // RLM (Recursive Language Model) tools (v1.8.0)
+  // For handling large contexts that exceed context window limits
+  ...rlmTools,
 };
 
 // Helper function to convert Zod schema to JSON Schema

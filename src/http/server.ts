@@ -33,6 +33,7 @@ import {
   isStripeConfigured,
 } from './billing.service.js';
 import { OAuthService, OAUTH_CLIENTS, isValidRedirectUri } from './oauth.service.js';
+import { WorkspaceService } from './workspace.service.js';
 import { randomBytes } from 'crypto';
 
 // ESM __dirname equivalent
@@ -160,7 +161,11 @@ export function createHttpServer(storageClient: StorageClient) {
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
-        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
+        const store = createTenantMemoryStore(
+          storageClient,
+          tenant.tenantId,
+          tenant.workspace.id
+        );
 
         const { content, context_type, importance, tags, metadata } = req.body;
 
@@ -201,7 +206,11 @@ export function createHttpServer(storageClient: StorageClient) {
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
-        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
+        const store = createTenantMemoryStore(
+          storageClient,
+          tenant.tenantId,
+          tenant.workspace.id
+        );
 
         const query = req.query.q as string;
         const limit = parseInt(req.query.limit as string) || 10;
@@ -237,7 +246,11 @@ export function createHttpServer(storageClient: StorageClient) {
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
-        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
+        const store = createTenantMemoryStore(
+          storageClient,
+          tenant.tenantId,
+          tenant.workspace.id
+        );
 
         const limit = parseInt(req.query.limit as string) || 50;
         const minImportance = parseInt(req.query.min as string) || 8;
@@ -264,7 +277,11 @@ export function createHttpServer(storageClient: StorageClient) {
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
-        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
+        const store = createTenantMemoryStore(
+          storageClient,
+          tenant.tenantId,
+          tenant.workspace.id
+        );
 
         const memories = await store.getMemoriesByType(req.params.type);
 
@@ -289,7 +306,11 @@ export function createHttpServer(storageClient: StorageClient) {
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
-        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
+        const store = createTenantMemoryStore(
+          storageClient,
+          tenant.tenantId,
+          tenant.workspace.id
+        );
 
         const memories = await store.getMemoriesByTag(req.params.tag);
 
@@ -314,7 +335,11 @@ export function createHttpServer(storageClient: StorageClient) {
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
-        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
+        const store = createTenantMemoryStore(
+          storageClient,
+          tenant.tenantId,
+          tenant.workspace.id
+        );
 
         const limit = parseInt(req.query.limit as string) || 50;
         const memories = await store.getRecentMemories(limit);
@@ -340,7 +365,11 @@ export function createHttpServer(storageClient: StorageClient) {
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
-        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
+        const store = createTenantMemoryStore(
+          storageClient,
+          tenant.tenantId,
+          tenant.workspace.id
+        );
 
         const memory = await store.getMemory(req.params.id);
 
@@ -373,7 +402,11 @@ export function createHttpServer(storageClient: StorageClient) {
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
-        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
+        const store = createTenantMemoryStore(
+          storageClient,
+          tenant.tenantId,
+          tenant.workspace.id
+        );
 
         const { content, context_type, importance, tags, metadata } = req.body;
 
@@ -414,7 +447,11 @@ export function createHttpServer(storageClient: StorageClient) {
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
-        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
+        const store = createTenantMemoryStore(
+          storageClient,
+          tenant.tenantId,
+          tenant.workspace.id
+        );
 
         await store.deleteMemory(req.params.id);
 
@@ -439,7 +476,11 @@ export function createHttpServer(storageClient: StorageClient) {
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
-        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
+        const store = createTenantMemoryStore(
+          storageClient,
+          tenant.tenantId,
+          tenant.workspace.id
+        );
 
         const stats = await store.getSummaryStats();
 
@@ -469,7 +510,11 @@ export function createHttpServer(storageClient: StorageClient) {
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
-        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
+        const store = createTenantMemoryStore(
+          storageClient,
+          tenant.tenantId,
+          tenant.workspace.id
+        );
 
         const sessions = await store.getAllSessions();
 
@@ -494,7 +539,11 @@ export function createHttpServer(storageClient: StorageClient) {
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
-        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
+        const store = createTenantMemoryStore(
+          storageClient,
+          tenant.tenantId,
+          tenant.workspace.id
+        );
 
         const session = await store.getSession(req.params.id);
 
@@ -509,6 +558,71 @@ export function createHttpServer(storageClient: StorageClient) {
         res.json({
           success: true,
           data: session,
+        });
+      } catch (error) {
+        handleError(res, error);
+      }
+    }
+  );
+
+  // ============================================
+  // Workspace Management
+  // ============================================
+
+  /**
+   * List all workspaces for current tenant
+   * GET /api/workspaces
+   */
+  app.get(
+    '/api/workspaces',
+    authMiddleware,
+    auditMiddleware,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const tenant = req.tenant!;
+        const workspaceService = new WorkspaceService(storageClient);
+
+        const workspaces = await workspaceService.listWorkspaces(tenant.tenantId);
+
+        res.json({
+          success: true,
+          data: {
+            workspaces,
+            current: tenant.workspace,
+            limit: tenant.limits.maxWorkspaces,
+            count: workspaces.length,
+          },
+        });
+      } catch (error) {
+        handleError(res, error);
+      }
+    }
+  );
+
+  /**
+   * Get current workspace info
+   * GET /api/workspaces/current
+   */
+  app.get(
+    '/api/workspaces/current',
+    authMiddleware,
+    auditMiddleware,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const tenant = req.tenant!;
+        const workspaceService = new WorkspaceService(storageClient);
+
+        const workspace = await workspaceService.getWorkspace(
+          tenant.tenantId,
+          tenant.workspace.id
+        );
+
+        res.json({
+          success: true,
+          data: {
+            ...tenant.workspace,
+            ...workspace,
+          },
         });
       } catch (error) {
         handleError(res, error);
@@ -895,7 +1009,11 @@ export function createHttpServer(storageClient: StorageClient) {
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const tenant = req.tenant!;
-        const store = createTenantMemoryStore(storageClient, tenant.tenantId);
+        const store = createTenantMemoryStore(
+          storageClient,
+          tenant.tenantId,
+          tenant.workspace.id
+        );
 
         const stats = await store.getSummaryStats();
 
@@ -905,6 +1023,7 @@ export function createHttpServer(storageClient: StorageClient) {
             tenantId: tenant.tenantId,
             plan: tenant.plan,
             limits: tenant.limits,
+            workspace: tenant.workspace,
             usage: {
               memories: stats.total_memories || 0,
             },
@@ -1506,15 +1625,19 @@ export function createHttpServer(storageClient: StorageClient) {
 }
 
 /**
- * Creates a tenant-scoped MemoryStore instance
+ * Creates a tenant and workspace-scoped MemoryStore instance
  */
 function createTenantMemoryStore(
   storageClient: StorageClient,
-  tenantId: string
+  tenantId: string,
+  workspaceId: string
 ): MemoryStore {
-  // The workspace path becomes tenant-scoped
-  // This ensures all Redis keys are prefixed with tenant ID
-  return new MemoryStore(storageClient, `tenant:${tenantId}`);
+  // The workspace path becomes tenant + workspace scoped
+  // This ensures all Redis keys are prefixed with tenant and workspace ID
+  return new MemoryStore(
+    storageClient,
+    `tenant:${tenantId}:workspace:${workspaceId}`
+  );
 }
 
 /**

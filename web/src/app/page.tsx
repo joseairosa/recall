@@ -204,9 +204,9 @@ export default function HomePage() {
                   {`{
   "mcpServers": {
     "recall": {
-      "url": "https://api.recall.dev/mcp",
+      "url": "https://recallmcp.com/mcp",
       "headers": {
-        "Authorization": "Bearer sk-your-api-key"
+        "Authorization": "Bearer YOUR_API_KEY"
       }
     }
   }

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Database, Key, Activity, Clock } from "lucide-react";
+import { Database, Key, Activity, Clock, Check, X, AlertCircle, Users, Lightbulb } from "lucide-react";
 import { api, TenantInfo, Memory, AuditEntry } from "@/lib/api";
 import { formatRelativeTime } from "@/lib/utils";
 
@@ -263,6 +263,93 @@ export default function DashboardPage() {
   --header "Authorization: Bearer YOUR_API_KEY"`}
               </pre>
             </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Understanding Recall */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg flex items-center gap-2">
+            <Lightbulb className="w-5 h-5" />
+            Understanding Recall
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="grid md:grid-cols-2 gap-6">
+            {/* What Recall IS */}
+            <div className="space-y-3">
+              <h4 className="font-medium text-green-500 flex items-center gap-2">
+                <Check className="w-4 h-4" />
+                What Recall IS
+              </h4>
+              <ul className="space-y-2 text-sm text-muted-foreground">
+                <li className="flex gap-2">
+                  <Check className="w-3 h-3 text-green-500 mt-1 flex-shrink-0" />
+                  <span><strong className="text-foreground">Cross-session memory</strong> — Start new conversations and retrieve previous decisions</span>
+                </li>
+                <li className="flex gap-2">
+                  <Check className="w-3 h-3 text-green-500 mt-1 flex-shrink-0" />
+                  <span><strong className="text-foreground">Survives compaction</strong> — When context fills up, memories persist externally</span>
+                </li>
+                <li className="flex gap-2">
+                  <Check className="w-3 h-3 text-green-500 mt-1 flex-shrink-0" />
+                  <span><strong className="text-foreground">Team collaboration</strong> — Share across 10s-1000s of Claude instances</span>
+                </li>
+                <li className="flex gap-2">
+                  <Check className="w-3 h-3 text-green-500 mt-1 flex-shrink-0" />
+                  <span><strong className="text-foreground">Long-term knowledge</strong> — Accumulate decisions and patterns over weeks</span>
+                </li>
+              </ul>
+            </div>
+
+            {/* What Recall is NOT */}
+            <div className="space-y-3">
+              <h4 className="font-medium text-yellow-500 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4" />
+                What Recall is NOT
+              </h4>
+              <ul className="space-y-2 text-sm text-muted-foreground">
+                <li className="flex gap-2">
+                  <X className="w-3 h-3 text-yellow-500 mt-1 flex-shrink-0" />
+                  <span><strong className="text-foreground">Not within-chat compression</strong> — Current conversation still grows normally</span>
+                </li>
+                <li className="flex gap-2">
+                  <X className="w-3 h-3 text-yellow-500 mt-1 flex-shrink-0" />
+                  <span><strong className="text-foreground">Not automatic</strong> — Tell Claude to store/retrieve memories explicitly</span>
+                </li>
+                <li className="flex gap-2">
+                  <X className="w-3 h-3 text-yellow-500 mt-1 flex-shrink-0" />
+                  <span><strong className="text-foreground">Not instant savings</strong> — Benefits compound over time across sessions</span>
+                </li>
+                <li className="flex gap-2">
+                  <X className="w-3 h-3 text-yellow-500 mt-1 flex-shrink-0" />
+                  <span><strong className="text-foreground">Store high-signal only</strong> — Decisions, patterns, not everything</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          <div className="bg-muted/50 rounded-lg p-4 border">
+            <h4 className="font-medium mb-2 flex items-center gap-2">
+              <Users className="w-4 h-4 text-primary" />
+              Key Feature: Multi-Claude Collaboration
+            </h4>
+            <p className="text-sm text-muted-foreground">
+              Share memories across your entire organization. When one Claude instance learns something,
+              all others can retrieve it. Perfect for teams running multiple Claude sessions, CI/CD pipelines,
+              or distributed AI workflows.
+            </p>
+          </div>
+
+          <div className="bg-primary/5 rounded-lg p-4 border border-primary/20">
+            <h4 className="font-medium mb-2">Best Practices</h4>
+            <ol className="text-sm text-muted-foreground space-y-1 list-decimal list-inside">
+              <li>Start new sessions with: <code className="bg-muted px-1 rounded">recall context about [topic]</code></li>
+              <li>After important decisions: <code className="bg-muted px-1 rounded">analyze and remember this discussion</code></li>
+              <li>End long sessions with: <code className="bg-muted px-1 rounded">summarize this session</code></li>
+              <li>Store decisions and patterns, not code implementations</li>
+            </ol>
           </div>
         </CardContent>
       </Card>

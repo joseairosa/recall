@@ -10,6 +10,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { AuthenticatedRequest, AuditAction, AuditResource } from './types.js';
+import { ContextType } from '../types.js';
 import {
   createAuthMiddleware,
   createApiKey,
@@ -192,7 +193,7 @@ export function createHttpServer(storageClient: StorageClient) {
           context_type: context_type || 'information',
           importance: importance || 5,
           tags: tags || [],
-          metadata,
+          is_global: false,
         });
 
         res.status(201).json({
@@ -293,7 +294,7 @@ export function createHttpServer(storageClient: StorageClient) {
           tenant.workspace.id
         );
 
-        const memories = await store.getMemoriesByType(req.params.type);
+        const memories = await store.getMemoriesByType(req.params.type as ContextType);
 
         res.json({
           success: true,
@@ -322,7 +323,7 @@ export function createHttpServer(storageClient: StorageClient) {
           tenant.workspace.id
         );
 
-        const memories = await store.getMemoriesByTag(req.params.tag);
+        const memories = await store.getMemoriesByTag(req.params.tag as string);
 
         res.json({
           success: true,
@@ -381,7 +382,7 @@ export function createHttpServer(storageClient: StorageClient) {
           tenant.workspace.id
         );
 
-        const memory = await store.getMemory(req.params.id);
+        const memory = await store.getMemory(req.params.id as string);
 
         if (!memory) {
           res.status(404).json({
@@ -420,12 +421,11 @@ export function createHttpServer(storageClient: StorageClient) {
 
         const { content, context_type, importance, tags, metadata } = req.body;
 
-        const memory = await store.updateMemory(req.params.id, {
+        const memory = await store.updateMemory(req.params.id as string, {
           content,
           context_type,
           importance,
           tags,
-          metadata,
         });
 
         if (!memory) {
@@ -463,11 +463,12 @@ export function createHttpServer(storageClient: StorageClient) {
           tenant.workspace.id
         );
 
-        await store.deleteMemory(req.params.id);
+        const memoryId = req.params.id as string;
+        await store.deleteMemory(memoryId);
 
         res.json({
           success: true,
-          data: { deleted: req.params.id },
+          data: { deleted: memoryId },
         });
       } catch (error) {
         handleError(res, error);
@@ -555,7 +556,7 @@ export function createHttpServer(storageClient: StorageClient) {
           tenant.workspace.id
         );
 
-        const session = await store.getSession(req.params.id);
+        const session = await store.getSession(req.params.id as string);
 
         if (!session) {
           res.status(404).json({
@@ -809,7 +810,7 @@ export function createHttpServer(storageClient: StorageClient) {
         const key = await getApiKeyById(
           storageClient,
           tenant.tenantId,
-          req.params.id
+          req.params.id as string
         );
 
         if (!key) {
@@ -843,7 +844,7 @@ export function createHttpServer(storageClient: StorageClient) {
         const tenant = req.tenant!;
 
         // Prevent revoking the current key
-        if (req.params.id === tenant.apiKeyId) {
+        if ((req.params.id as string) === tenant.apiKeyId) {
           res.status(400).json({
             success: false,
             error: {
@@ -857,7 +858,7 @@ export function createHttpServer(storageClient: StorageClient) {
         const success = await revokeApiKey(
           storageClient,
           tenant.tenantId,
-          req.params.id
+          req.params.id as string
         );
 
         if (!success) {
@@ -870,7 +871,7 @@ export function createHttpServer(storageClient: StorageClient) {
 
         res.json({
           success: true,
-          data: { revoked: req.params.id },
+          data: { revoked: req.params.id as string },
         });
       } catch (error) {
         handleError(res, error);
@@ -893,7 +894,7 @@ export function createHttpServer(storageClient: StorageClient) {
         const result = await regenerateApiKey(
           storageClient,
           tenant.tenantId,
-          req.params.id
+          req.params.id as string
         );
 
         if (!result) {
@@ -983,7 +984,7 @@ export function createHttpServer(storageClient: StorageClient) {
 
         const entry = await auditService.getEntry(
           tenant.tenantId,
-          req.params.id
+          req.params.id as string
         );
 
         if (!entry) {
@@ -1556,7 +1557,7 @@ export function createHttpServer(storageClient: StorageClient) {
         return;
       }
 
-      const teamId = req.params.id;
+      const teamId = req.params.id as string;
       const member = await teamService.getMemberByTenantId(teamId, decodedToken.uid);
 
       if (!member) {
@@ -1616,7 +1617,7 @@ export function createHttpServer(storageClient: StorageClient) {
 
       const { name, settings } = req.body;
 
-      const team = await teamService.updateTeam(req.params.id, decodedToken.uid, {
+      const team = await teamService.updateTeam(req.params.id as string, decodedToken.uid, {
         name,
         settings,
       });
@@ -1673,11 +1674,11 @@ export function createHttpServer(storageClient: StorageClient) {
         return;
       }
 
-      await teamService.deleteTeam(req.params.id, decodedToken.uid);
+      await teamService.deleteTeam(req.params.id as string, decodedToken.uid);
 
       res.json({
         success: true,
-        data: { deleted: req.params.id },
+        data: { deleted: req.params.id as string },
       });
     } catch (error) {
       if (error instanceof Error && error.message.includes('owner')) {
@@ -1719,7 +1720,7 @@ export function createHttpServer(storageClient: StorageClient) {
         return;
       }
 
-      const teamId = req.params.id;
+      const teamId = req.params.id as string;
       const member = await teamService.getMemberByTenantId(teamId, decodedToken.uid);
 
       if (!member) {
@@ -1780,9 +1781,9 @@ export function createHttpServer(storageClient: StorageClient) {
       }
 
       const updatedMember = await teamService.updateMemberRole(
-        req.params.id,
+        req.params.id as string,
         decodedToken.uid,
-        req.params.memberId,
+        req.params.memberId as string,
         role as TeamRole
       );
 
@@ -1839,9 +1840,9 @@ export function createHttpServer(storageClient: StorageClient) {
       }
 
       const removed = await teamService.removeMember(
-        req.params.id,
+        req.params.id as string,
         decodedToken.uid,
-        req.params.memberId
+        req.params.memberId as string
       );
 
       if (!removed) {
@@ -1854,7 +1855,7 @@ export function createHttpServer(storageClient: StorageClient) {
 
       res.json({
         success: true,
-        data: { removed: req.params.memberId },
+        data: { removed: req.params.memberId as string },
       });
     } catch (error) {
       if (error instanceof Error && (error.message.includes('Permission') || error.message.includes('Cannot'))) {
@@ -1915,7 +1916,7 @@ export function createHttpServer(storageClient: StorageClient) {
       }
 
       const invite = await teamService.createInvite(
-        req.params.id,
+        req.params.id as string,
         decodedToken.uid,
         email,
         role as TeamRole,
@@ -1973,7 +1974,7 @@ export function createHttpServer(storageClient: StorageClient) {
         return;
       }
 
-      const teamId = req.params.id;
+      const teamId = req.params.id as string;
       const member = await teamService.getMemberByTenantId(teamId, decodedToken.uid);
 
       if (!member || (member.role !== 'owner' && member.role !== 'admin')) {
@@ -2030,9 +2031,9 @@ export function createHttpServer(storageClient: StorageClient) {
       }
 
       const cancelled = await teamService.cancelInvite(
-        req.params.id,
+        req.params.id as string,
         decodedToken.uid,
-        req.params.inviteId
+        req.params.inviteId as string
       );
 
       if (!cancelled) {
@@ -2045,7 +2046,7 @@ export function createHttpServer(storageClient: StorageClient) {
 
       res.json({
         success: true,
-        data: { cancelled: req.params.inviteId },
+        data: { cancelled: req.params.inviteId as string },
       });
     } catch (error) {
       if (error instanceof Error && error.message.includes('Permission')) {
@@ -2099,7 +2100,7 @@ export function createHttpServer(storageClient: StorageClient) {
       }
 
       const member = await teamService.acceptInvite(
-        req.params.token,
+        req.params.token as string,
         decodedToken.uid,
         email,
         name || decodedToken.name
@@ -2169,10 +2170,10 @@ export function createHttpServer(storageClient: StorageClient) {
       }
 
       await teamService.grantWorkspacePermission(
-        req.params.id,
+        req.params.id as string,
         decodedToken.uid,
-        req.params.memberId,
-        req.params.wsId,
+        req.params.memberId as string,
+        req.params.wsId as string,
         permission
       );
 
@@ -2221,10 +2222,10 @@ export function createHttpServer(storageClient: StorageClient) {
       }
 
       await teamService.revokeWorkspacePermission(
-        req.params.id,
+        req.params.id as string,
         decodedToken.uid,
-        req.params.memberId,
-        req.params.wsId
+        req.params.memberId as string,
+        req.params.wsId as string
       );
 
       res.json({
@@ -2271,7 +2272,7 @@ export function createHttpServer(storageClient: StorageClient) {
         return;
       }
 
-      const teamId = req.params.id;
+      const teamId = req.params.id as string;
       const currentMember = await teamService.getMemberByTenantId(teamId, decodedToken.uid);
 
       if (!currentMember) {
@@ -2282,7 +2283,7 @@ export function createHttpServer(storageClient: StorageClient) {
         return;
       }
 
-      const workspaces = await teamService.listMemberWorkspaces(teamId, req.params.memberId);
+      const workspaces = await teamService.listMemberWorkspaces(teamId, req.params.memberId as string);
 
       res.json({
         success: true,
@@ -2321,7 +2322,7 @@ export function createHttpServer(storageClient: StorageClient) {
         return;
       }
 
-      const teamId = req.params.id;
+      const teamId = req.params.id as string;
       const member = await teamService.getMemberByTenantId(teamId, decodedToken.uid);
 
       if (!member || (member.role !== 'owner' && member.role !== 'admin')) {

@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { TeamService } from './team.service.js';
-import { MockStorageClient } from '../../tests/__mocks__/storage-client.mock.js';
+import { MockStorageClient } from '../__mocks__/storage-client.mock.js';
 import { Team, TeamMember, TeamInvite, DEFAULT_TEAM_SETTINGS } from './team.types.js';
 
 describe('TeamService', () => {
@@ -85,7 +85,11 @@ describe('TeamService', () => {
       it('should update team settings', async () => {
         const team = await teamService.createTeam('owner-123', 'Test Team');
         const updated = await teamService.updateTeam(team.id, 'owner-123', {
-          settings: { allowMemberInvites: false },
+          settings: {
+            allowMemberInvites: false,
+            defaultWorkspacePermission: 'read',
+            requireApprovalForWorkspaces: false,
+          },
         });
 
         expect(updated?.settings.allowMemberInvites).toBe(false);

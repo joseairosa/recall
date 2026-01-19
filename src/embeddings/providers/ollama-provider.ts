@@ -57,7 +57,7 @@ export class OllamaProvider implements EmbeddingProvider {
         throw new Error(`Ollama API error: ${response.status} - ${errorBody}`);
       }
 
-      const data: OllamaEmbeddingResponse = await response.json();
+      const data = (await response.json()) as OllamaEmbeddingResponse;
       return data.embedding;
     } catch (error) {
       console.error('[OllamaProvider] Error generating embedding:', error);

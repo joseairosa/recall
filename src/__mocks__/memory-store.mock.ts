@@ -15,7 +15,6 @@ import {
   type ExecutionChainSummary,
   type ContextSnippet,
   type MergedResults,
-  type DecompositionStrategy,
 } from '../types.js';
 
 /**
@@ -119,97 +118,119 @@ export function createMockMergedResults(
  */
 export class MockMemoryStore {
   // Execution context methods
-  createExecutionContext = vi.fn<
-    [string, string, number, string?],
-    Promise<ExecutionContext>
-  >().mockImplementation(async (task, context, maxDepth, parentChainId) => {
-    return createMockExecutionContext({
-      original_task: task,
-      depth: 0,
-      parent_chain_id: parentChainId,
-    });
-  });
-
-  getExecutionContext = vi.fn<[string], Promise<ExecutionContext | null>>().mockImplementation(
-    async () => createMockExecutionContext()
+  createExecutionContext = vi.fn().mockImplementation(
+    async (
+      task: string,
+      _context: string,
+      _maxDepth: number,
+      parentChainId?: string
+    ): Promise<ExecutionContext> => {
+      return createMockExecutionContext({
+        original_task: task,
+        depth: 0,
+        parent_chain_id: parentChainId,
+      });
+    }
   );
 
-  updateExecutionContext = vi.fn<
-    [string, Partial<{ status: string; error_message: string }>],
-    Promise<ExecutionContext | null>
-  >().mockImplementation(async (chainId, updates) => {
-    return createMockExecutionContext({ ...updates } as Partial<ExecutionContext>);
-  });
+  getExecutionContext = vi.fn().mockImplementation(
+    async (_chainId: string): Promise<ExecutionContext | null> => createMockExecutionContext()
+  );
+
+  updateExecutionContext = vi.fn().mockImplementation(
+    async (
+      _chainId: string,
+      updates: Partial<{ status: string; error_message: string }>
+    ): Promise<ExecutionContext | null> => {
+      return createMockExecutionContext({ ...updates } as Partial<ExecutionContext>);
+    }
+  );
 
   // Subtask methods
-  createSubtasks = vi.fn<
-    [string, Array<{ description: string; query?: string }>],
-    Promise<Subtask[]>
-  >().mockImplementation(async (chainId, definitions) => {
-    return definitions.map((def, index) =>
-      createMockSubtask({
-        id: `subtask-${String(index + 1).padStart(3, '0')}`,
-        chain_id: chainId,
-        order: index,
-        description: def.description,
-        query: def.query,
-      })
-    );
-  });
-
-  getSubtask = vi.fn<[string, string], Promise<Subtask | null>>().mockImplementation(
-    async () => createMockSubtask()
+  createSubtasks = vi.fn().mockImplementation(
+    async (
+      chainId: string,
+      definitions: Array<{ description: string; query?: string }>
+    ): Promise<Subtask[]> => {
+      return definitions.map((def, index) =>
+        createMockSubtask({
+          id: `subtask-${String(index + 1).padStart(3, '0')}`,
+          chain_id: chainId,
+          order: index,
+          description: def.description,
+          query: def.query,
+        })
+      );
+    }
   );
 
-  getSubtasks = vi.fn<[string], Promise<Subtask[]>>().mockImplementation(async () => [
-    createMockSubtask({ id: 'subtask-001', order: 0 }),
-    createMockSubtask({ id: 'subtask-002', order: 1 }),
-  ]);
+  getSubtask = vi.fn().mockImplementation(
+    async (_chainId: string, _subtaskId: string): Promise<Subtask | null> => createMockSubtask()
+  );
 
-  updateSubtaskResult = vi.fn<
-    [string, string, string, SubtaskStatus, number?, string[]?],
-    Promise<Subtask | null>
-  >().mockImplementation(async (chainId, subtaskId, result, status, tokensUsed) => {
-    return createMockSubtask({
-      id: subtaskId,
-      chain_id: chainId,
-      status,
-      result,
-      tokens_used: tokensUsed,
-    });
-  });
+  getSubtasks = vi.fn().mockImplementation(
+    async (_chainId: string): Promise<Subtask[]> => [
+      createMockSubtask({ id: 'subtask-001', order: 0 }),
+      createMockSubtask({ id: 'subtask-002', order: 1 }),
+    ]
+  );
+
+  updateSubtaskResult = vi.fn().mockImplementation(
+    async (
+      chainId: string,
+      subtaskId: string,
+      result: string,
+      status: SubtaskStatus,
+      tokensUsed?: number,
+      _memoryIds?: string[]
+    ): Promise<Subtask | null> => {
+      return createMockSubtask({
+        id: subtaskId,
+        chain_id: chainId,
+        status,
+        result,
+        tokens_used: tokensUsed,
+      });
+    }
+  );
 
   // Context snippet methods
-  getContextSnippet = vi.fn<
-    [string, string, number],
-    Promise<ContextSnippet | null>
-  >().mockImplementation(async () => createMockContextSnippet());
+  getContextSnippet = vi.fn().mockImplementation(
+    async (
+      _chainId: string,
+      _query: string,
+      _maxTokens: number
+    ): Promise<ContextSnippet | null> => createMockContextSnippet()
+  );
 
-  getExecutionContextData = vi.fn<[string], Promise<string | null>>().mockImplementation(
-    async () => 'This is the raw context data for testing purposes.'
+  getExecutionContextData = vi.fn().mockImplementation(
+    async (_chainId: string): Promise<string | null> =>
+      'This is the raw context data for testing purposes.'
   );
 
   // Results methods
-  getExecutionChainSummary = vi.fn<[string], Promise<ExecutionChainSummary | null>>().mockImplementation(
-    async () => createMockExecutionChainSummary()
+  getExecutionChainSummary = vi.fn().mockImplementation(
+    async (_chainId: string): Promise<ExecutionChainSummary | null> =>
+      createMockExecutionChainSummary()
   );
 
-  storeMergedResults = vi.fn<[string, MergedResults], Promise<void>>().mockImplementation(
-    async () => {}
+  storeMergedResults = vi.fn().mockImplementation(
+    async (_chainId: string, _results: MergedResults): Promise<void> => {}
   );
 
-  getMergedResults = vi.fn<[string], Promise<MergedResults | null>>().mockImplementation(
-    async () => createMockMergedResults()
+  getMergedResults = vi.fn().mockImplementation(
+    async (_chainId: string): Promise<MergedResults | null> => createMockMergedResults()
   );
 
   // Chain management
-  listExecutionChains = vi.fn<
-    [string?, number?],
-    Promise<ExecutionContext[]>
-  >().mockImplementation(async () => [createMockExecutionContext()]);
+  listExecutionChains = vi.fn().mockImplementation(
+    async (_status?: string, _limit?: number): Promise<ExecutionContext[]> => [
+      createMockExecutionContext(),
+    ]
+  );
 
-  deleteExecutionChain = vi.fn<[string], Promise<boolean>>().mockImplementation(
-    async () => true
+  deleteExecutionChain = vi.fn().mockImplementation(
+    async (_chainId: string): Promise<boolean> => true
   );
 
   /**

@@ -275,7 +275,7 @@ function createTenantMcpServer(
     }
 
     let isError = false;
-    let result;
+    let result: { content: Array<{ type: string; text: string }>; isError?: boolean };
     try {
       result = await tool.handler(args as any);
       isError = result?.isError === true;

@@ -28,6 +28,14 @@ import {
 } from '../__mocks__/memory-store.mock.js';
 import type { MemoryStore } from '../persistence/memory-store.js';
 
+/**
+ * Type for RLM tool result that includes optional isError property
+ */
+interface ToolResult {
+  content: Array<{ type: string; text: string }>;
+  isError?: boolean;
+}
+
 describe('RLM Tools', () => {
   let mockStore: MockMemoryStore;
 
@@ -114,7 +122,7 @@ describe('RLM Tools', () => {
         task: 'Task',
         context: 'Context',
         max_depth: 3,
-      });
+      }) as ToolResult;
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Error creating execution context');
@@ -153,7 +161,7 @@ describe('RLM Tools', () => {
 
       const result = await decompose_task.handler({
         chain_id: 'nonexistent',
-      });
+      }) as ToolResult;
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('not found');
@@ -201,7 +209,7 @@ describe('RLM Tools', () => {
         subtask_id: 'subtask-001',
         query: 'ERROR',
         max_tokens: 4000,
-      });
+      }) as ToolResult;
 
       expect(result.isError).toBe(true);
     });
@@ -217,7 +225,7 @@ describe('RLM Tools', () => {
         subtask_id: 'nonexistent',
         query: 'ERROR',
         max_tokens: 4000,
-      });
+      }) as ToolResult;
 
       expect(result.isError).toBe(true);
     });
@@ -234,7 +242,7 @@ describe('RLM Tools', () => {
         subtask_id: 'subtask-001',
         query: 'ERROR',
         max_tokens: 4000,
-      });
+      }) as ToolResult;
 
       expect(result.isError).toBe(true);
     });
@@ -277,7 +285,7 @@ describe('RLM Tools', () => {
         chain_id: 'chain-001',
         subtask_id: 'nonexistent',
         result: 'Result',
-      });
+      }) as ToolResult;
 
       expect(result.isError).toBe(true);
     });
@@ -337,7 +345,8 @@ describe('RLM Tools', () => {
 
       const result = await merge_results.handler({
         chain_id: 'nonexistent',
-      });
+        include_failed: false,
+      }) as ToolResult;
 
       expect(result.isError).toBe(true);
     });
@@ -352,7 +361,8 @@ describe('RLM Tools', () => {
 
       const result = await merge_results.handler({
         chain_id: 'chain-001',
-      });
+        include_failed: false,
+      }) as ToolResult;
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('No completed subtasks');
@@ -363,7 +373,7 @@ describe('RLM Tools', () => {
         createMockExecutionChainSummary()
       );
 
-      await merge_results.handler({ chain_id: 'chain-001' });
+      await merge_results.handler({ chain_id: 'chain-001', include_failed: false });
 
       expect(mockStore.updateExecutionContext).toHaveBeenCalledWith('chain-001', {
         status: 'completed',
@@ -404,7 +414,7 @@ describe('RLM Tools', () => {
         chain_id: 'nonexistent',
         answer: 'Answer',
         verification_queries: ['query'],
-      });
+      }) as ToolResult;
 
       expect(result.isError).toBe(true);
     });
@@ -456,7 +466,8 @@ describe('RLM Tools', () => {
 
       const result = await get_execution_status.handler({
         chain_id: 'nonexistent',
-      });
+        include_subtasks: false,
+      }) as ToolResult;
 
       expect(result.isError).toBe(true);
     });
@@ -504,7 +515,7 @@ describe('RLM Tools', () => {
         task: 'Task',
         context: 'Context',
         max_depth: 3,
-      });
+      }) as ToolResult;
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Unknown error');
@@ -519,7 +530,7 @@ describe('RLM Tools', () => {
         task: 'Task',
         context: 'Context',
         max_depth: 3,
-      });
+      }) as ToolResult;
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Specific error message');

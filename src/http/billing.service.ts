@@ -10,9 +10,7 @@ import { StorageClient } from '../persistence/storage-client.js';
 
 // Initialize Stripe with secret key
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
-const stripe = stripeSecretKey
-  ? new Stripe(stripeSecretKey, { apiVersion: '2025-01-27.acacia' })
-  : null;
+const stripe = stripeSecretKey ? new Stripe(stripeSecretKey) : null;
 
 // Price IDs from Stripe Dashboard (test mode)
 const PRICE_IDS: Record<string, string> = {
@@ -248,7 +246,7 @@ async function handleSubscriptionChange(
 
   // Get tenant ID from subscription metadata first (most reliable)
   // Fall back to reverse lookup if not in metadata
-  let tenantId = subscription.metadata?.tenantId;
+  let tenantId: string | null | undefined = subscription.metadata?.tenantId;
 
   if (!tenantId) {
     tenantId = await storageClient.get(`stripe_customer:${customerId}`);
@@ -314,7 +312,7 @@ async function handleSubscriptionCanceled(
       : subscription.customer.id;
 
   // Get tenant ID from subscription metadata first, then reverse lookup
-  let tenantId = subscription.metadata?.tenantId;
+  let tenantId: string | null | undefined = subscription.metadata?.tenantId;
 
   if (!tenantId) {
     tenantId = await storageClient.get(`stripe_customer:${customerId}`);
@@ -358,7 +356,7 @@ async function syncSubscriptionAddons(
       : subscription.customer.id;
 
   // Get tenant ID
-  let tenantId = subscription.metadata?.tenantId;
+  let tenantId: string | null | undefined = subscription.metadata?.tenantId;
   if (!tenantId) {
     tenantId = await storageClient.get(`stripe_customer:${customerId}`);
   }

@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { MockStorageClient } from '../../tests/__mocks__/storage-client.mock.js';
+import { MockStorageClient } from '../__mocks__/storage-client.mock.js';
 import {
   getCustomerAddons,
   getPlanLimits,
@@ -185,7 +185,7 @@ describe('Plan upgrade detection', () => {
   });
 
   it('should fallback to free for unknown price', () => {
-    const priceId = 'unknown_price';
+    const priceId: string = 'unknown_price';
     let plan = 'free';
 
     if (priceId === 'price_1SqTaOLUbfmx8MWFecrr4ng8') {

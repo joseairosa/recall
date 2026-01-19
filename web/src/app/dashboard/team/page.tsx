@@ -61,7 +61,6 @@ export default function TeamPage() {
   const [error, setError] = useState<string | null>(null);
 
   // Create team form
-  const [showCreateForm, setShowCreateForm] = useState(false);
   const [teamName, setTeamName] = useState("");
   const [creating, setCreating] = useState(false);
 
@@ -116,6 +115,7 @@ export default function TeamPage() {
 
   useEffect(() => {
     loadTeamData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiKey, user?.uid]);
 
   const handleCreateTeam = async (e: React.FormEvent) => {
@@ -127,7 +127,6 @@ export default function TeamPage() {
 
     if (response.success && response.data) {
       setTeam(response.data);
-      setShowCreateForm(false);
       setTeamName("");
       await loadTeamData();
     } else if (response.error) {

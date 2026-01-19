@@ -65,6 +65,12 @@ export class ValkeyAdapter implements StorageClient {
     this.client = valkeyClient;
   }
 
+  async hget(key: string, field: string): Promise<string | null> {
+    if (!key || !field) return null;
+    const result = await this.client.hget(key, field);
+    return result ? String(result) : null;
+  }
+
   async hset(key: string, data: Record<string, string>): Promise<void> {
     if (!key || Object.keys(data).length === 0) return;
     await this.client.hset(key, data);
@@ -80,6 +86,11 @@ export class ValkeyAdapter implements StorageClient {
       acc[String(value.field)] = String(value.value);
       return acc;
     }, {} as Record<string, string>);
+  }
+
+  async hdel(key: string, field: string): Promise<void> {
+    if (!key || !field) return;
+    await this.client.hdel(key, [field]);
   }
 
   async del(key: string): Promise<void> {

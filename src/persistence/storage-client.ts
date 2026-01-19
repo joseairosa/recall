@@ -1,7 +1,9 @@
 export interface StorageClient {
   // Basic Operations
+  hget(key: string, field: string): Promise<string | null>;
   hset(key: string, data: Record<string, string>): Promise<void>;
   hgetall(key: string): Promise<Record<string, string>>;
+  hdel(key: string, field: string): Promise<void>;
   del(key: string): Promise<void>;
   exists(key: string): Promise<boolean>;
   get(key: string): Promise<string | null>;

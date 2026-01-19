@@ -5,7 +5,7 @@
  * for testing services without Redis dependency.
  */
 
-import { StorageClient } from '../../src/persistence/storage-client.js';
+import { StorageClient, IPipelineOperations } from '../../src/persistence/storage-client.js';
 
 export class MockStorageClient implements StorageClient {
   private store: Map<string, string> = new Map();
@@ -18,7 +18,7 @@ export class MockStorageClient implements StorageClient {
     return this.store.get(key) ?? null;
   }
 
-  async set(key: string, value: string, options?: { ex?: number }): Promise<void> {
+  async set(key: string, value: string): Promise<void> {
     this.store.set(key, value);
   }
 
@@ -38,25 +38,6 @@ export class MockStorageClient implements StorageClient {
     );
   }
 
-  async keys(pattern: string): Promise<string[]> {
-    const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
-    const allKeys = [
-      ...this.store.keys(),
-      ...this.hashStore.keys(),
-      ...this.setStore.keys(),
-      ...this.sortedSetStore.keys(),
-    ];
-    return [...new Set(allKeys)].filter((key) => regex.test(key));
-  }
-
-  async scan(
-    cursor: number,
-    options?: { match?: string; count?: number }
-  ): Promise<{ cursor: number; keys: string[] }> {
-    const allKeys = await this.keys(options?.match || '*');
-    return { cursor: 0, keys: allKeys };
-  }
-
   // Hash operations
   async hget(key: string, field: string): Promise<string | null> {
     const hash = this.hashStore.get(key);
@@ -68,8 +49,8 @@ export class MockStorageClient implements StorageClient {
     this.hashStore.set(key, { ...existing, ...data });
   }
 
-  async hgetall(key: string): Promise<Record<string, string> | null> {
-    return this.hashStore.get(key) ?? null;
+  async hgetall(key: string): Promise<Record<string, string>> {
+    return this.hashStore.get(key) ?? {};
   }
 
   async hdel(key: string, field: string): Promise<void> {
@@ -98,14 +79,20 @@ export class MockStorageClient implements StorageClient {
     return set ? [...set] : [];
   }
 
+  async sunion(...keys: string[]): Promise<string[]> {
+    const result = new Set<string>();
+    for (const key of keys) {
+      const set = this.setStore.get(key);
+      if (set) {
+        set.forEach((m) => result.add(m));
+      }
+    }
+    return [...result];
+  }
+
   async scard(key: string): Promise<number> {
     const set = this.setStore.get(key);
     return set ? set.size : 0;
-  }
-
-  async sismember(key: string, member: string): Promise<boolean> {
-    const set = this.setStore.get(key);
-    return set ? set.has(member) : false;
   }
 
   // Sorted set operations
@@ -122,78 +109,110 @@ export class MockStorageClient implements StorageClient {
     }
   }
 
-  async zrange(
-    key: string,
-    start: number,
-    stop: number,
-    options?: { withScores?: boolean; rev?: boolean }
-  ): Promise<string[] | Array<{ value: string; score: number }>> {
+  async zrange(key: string, start: number, stop: number): Promise<string[]> {
     const zset = this.sortedSetStore.get(key);
     if (!zset) return [];
 
-    let entries = [...zset.entries()].sort((a, b) =>
-      options?.rev ? b[1] - a[1] : a[1] - b[1]
-    );
+    const entries = [...zset.entries()].sort((a, b) => a[1] - b[1]);
 
     // Handle negative indices
     const len = entries.length;
     const startIdx = start < 0 ? Math.max(0, len + start) : start;
     const endIdx = stop < 0 ? len + stop + 1 : stop + 1;
-    entries = entries.slice(startIdx, endIdx);
-
-    if (options?.withScores) {
-      return entries.map(([value, score]) => ({ value, score }));
-    }
-    return entries.map(([value]) => value);
+    return entries.slice(startIdx, endIdx).map(([value]) => value);
   }
 
-  async zrangebyscore(
+  async zrevrange(key: string, start: number, stop: number): Promise<string[]> {
+    const zset = this.sortedSetStore.get(key);
+    if (!zset) return [];
+
+    const entries = [...zset.entries()].sort((a, b) => b[1] - a[1]);
+
+    // Handle negative indices
+    const len = entries.length;
+    const startIdx = start < 0 ? Math.max(0, len + start) : start;
+    const endIdx = stop < 0 ? len + stop + 1 : stop + 1;
+    return entries.slice(startIdx, endIdx).map(([value]) => value);
+  }
+
+  async zrangebyscore(key: string, min: number, max: number): Promise<string[]> {
+    const zset = this.sortedSetStore.get(key);
+    if (!zset) return [];
+
+    return [...zset.entries()]
+      .filter(([, score]) => score >= min && score <= max)
+      .sort((a, b) => a[1] - b[1])
+      .map(([value]) => value);
+  }
+
+  async zrevrangebyscore(
     key: string,
-    min: number | string,
-    max: number | string,
-    options?: { limit?: { offset: number; count: number } }
+    max: number,
+    min: number,
+    limit?: { offset: number; count: number }
   ): Promise<string[]> {
     const zset = this.sortedSetStore.get(key);
     if (!zset) return [];
 
-    const minVal = min === '-inf' ? -Infinity : Number(min);
-    const maxVal = max === '+inf' ? Infinity : Number(max);
-
     let entries = [...zset.entries()]
-      .filter(([, score]) => score >= minVal && score <= maxVal)
-      .sort((a, b) => a[1] - b[1]);
+      .filter(([, score]) => score >= min && score <= max)
+      .sort((a, b) => b[1] - a[1]);
 
-    if (options?.limit) {
-      entries = entries.slice(
-        options.limit.offset,
-        options.limit.offset + options.limit.count
-      );
+    if (limit) {
+      entries = entries.slice(limit.offset, limit.offset + limit.count);
     }
 
     return entries.map(([value]) => value);
   }
 
-  async zcount(key: string, min: number | string, max: number | string): Promise<number> {
-    const results = await this.zrangebyscore(key, min, max);
-    return results.length;
+  async zremrangebyrank(key: string, start: number, stop: number): Promise<void> {
+    const zset = this.sortedSetStore.get(key);
+    if (!zset) return;
+
+    const entries = [...zset.entries()].sort((a, b) => a[1] - b[1]);
+    const len = entries.length;
+    const startIdx = start < 0 ? Math.max(0, len + start) : start;
+    const endIdx = stop < 0 ? len + stop + 1 : stop + 1;
+
+    const toRemove = entries.slice(startIdx, endIdx);
+    toRemove.forEach(([member]) => zset.delete(member));
   }
 
-  async zscore(key: string, member: string): Promise<number | null> {
+  async zcard(key: string): Promise<number> {
+    const zset = this.sortedSetStore.get(key);
+    return zset ? zset.size : 0;
+  }
+
+  async zcount(key: string, min: number | string, max: number | string): Promise<number> {
+    const zset = this.sortedSetStore.get(key);
+    if (!zset) return 0;
+
+    const minVal = min === '-inf' ? -Infinity : Number(min);
+    const maxVal = max === '+inf' ? Infinity : Number(max);
+
+    return [...zset.values()].filter((score) => score >= minVal && score <= maxVal).length;
+  }
+
+  async zscore(key: string, member: string): Promise<string | null> {
     const zset = this.sortedSetStore.get(key);
     if (!zset) return null;
-    return zset.get(member) ?? null;
+    const score = zset.get(member);
+    return score !== undefined ? String(score) : null;
   }
 
-  // Pipeline operations
-  async pipeline(): Promise<{
-    hset: (key: string, data: Record<string, string>) => void;
-    sadd: (key: string, member: string) => void;
-    srem: (key: string, member: string) => void;
-    zadd: (key: string, score: number, member: string) => void;
-    zrem: (key: string, member: string) => void;
-    del: (key: string) => void;
-    exec: () => Promise<void>;
-  }> {
+  // Key Operations
+  async expire(key: string, seconds: number): Promise<boolean> {
+    // In-memory mock doesn't implement TTL, just return true if key exists
+    return (
+      this.store.has(key) ||
+      this.hashStore.has(key) ||
+      this.setStore.has(key) ||
+      this.sortedSetStore.has(key)
+    );
+  }
+
+  // Pipeline operations (sync, returns IPipelineOperations)
+  pipeline(): IPipelineOperations {
     const operations: Array<() => Promise<void>> = [];
     const self = this;
 
@@ -201,11 +220,14 @@ export class MockStorageClient implements StorageClient {
       hset(key: string, data: Record<string, string>) {
         operations.push(() => self.hset(key, data));
       },
-      sadd(key: string, member: string) {
-        operations.push(() => self.sadd(key, member));
+      del(key: string) {
+        operations.push(() => self.del(key));
       },
-      srem(key: string, member: string) {
-        operations.push(() => self.srem(key, member));
+      sadd(key: string, ...members: string[]) {
+        operations.push(() => self.sadd(key, ...members));
+      },
+      srem(key: string, ...members: string[]) {
+        operations.push(() => self.srem(key, ...members));
       },
       zadd(key: string, score: number, member: string) {
         operations.push(() => self.zadd(key, score, member));
@@ -213,8 +235,14 @@ export class MockStorageClient implements StorageClient {
       zrem(key: string, member: string) {
         operations.push(() => self.zrem(key, member));
       },
-      del(key: string) {
-        operations.push(() => self.del(key));
+      set(key: string, value: string) {
+        operations.push(() => self.set(key, value));
+      },
+      expire(key: string, seconds: number) {
+        operations.push(async () => { await self.expire(key, seconds); });
+      },
+      zremrangebyrank(key: string, start: number, stop: number) {
+        operations.push(() => self.zremrangebyrank(key, start, stop));
       },
       async exec() {
         for (const op of operations) {
@@ -224,9 +252,13 @@ export class MockStorageClient implements StorageClient {
     };
   }
 
-  // Connection
-  async disconnect(): Promise<void> {
+  // Connection methods
+  async closeClient(): Promise<void> {
     this.clear();
+  }
+
+  async checkConnection(): Promise<boolean> {
+    return true;
   }
 
   // Test helpers

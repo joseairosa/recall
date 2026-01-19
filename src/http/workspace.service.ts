@@ -80,7 +80,15 @@ export class WorkspaceService {
     const addonWorkspaces = parseInt(customerData?.workspaceAddons || '0') || 0;
     const totalLimit = basePlanLimit === -1 ? -1 : basePlanLimit + addonWorkspaces;
 
+    console.log(
+      `[Workspace] Limit check: count=${workspaceCount}, basePlanLimit=${basePlanLimit}, ` +
+        `addonWorkspaces=${addonWorkspaces}, totalLimit=${totalLimit}, plan=${plan}`
+    );
+
     if (totalLimit !== -1 && workspaceCount >= totalLimit) {
+      console.log(
+        `[Workspace] LIMIT EXCEEDED: ${workspaceCount} >= ${totalLimit} for tenant ${tenantId}`
+      );
       return null; // Limit exceeded
     }
 

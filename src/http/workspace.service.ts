@@ -114,6 +114,10 @@ export class WorkspaceService {
       `tenant:${tenantId}:workspaces`
     );
 
+    console.log(
+      `[Workspace] getWorkspaceCount for tenant ${tenantId}: found ${workspaceIds.length} IDs in set`
+    );
+
     // Count only those with valid metadata
     let validCount = 0;
     const orphanedIds: string[] = [];
@@ -124,8 +128,10 @@ export class WorkspaceService {
       );
       if (meta && Object.keys(meta).length > 0) {
         validCount++;
+        console.log(`[Workspace] Valid workspace: ${wsId}`);
       } else {
         orphanedIds.push(wsId);
+        console.log(`[Workspace] Orphaned workspace ID (no metadata): ${wsId}`);
       }
     }
 
@@ -138,6 +144,10 @@ export class WorkspaceService {
         await this.storageClient.srem(`tenant:${tenantId}:workspaces`, id);
       }
     }
+
+    console.log(
+      `[Workspace] getWorkspaceCount result: ${validCount} valid, ${orphanedIds.length} orphaned (cleaned up)`
+    );
 
     return validCount;
   }

@@ -153,6 +153,7 @@ export interface Stats {
 
 class ApiClient {
   private apiKey: string | null = null;
+  private firebaseToken: string | null = null;
 
   setApiKey(key: string) {
     this.apiKey = key;
@@ -162,6 +163,14 @@ class ApiClient {
     this.apiKey = null;
   }
 
+  setFirebaseToken(token: string) {
+    this.firebaseToken = token;
+  }
+
+  clearFirebaseToken() {
+    this.firebaseToken = null;
+  }
+
   private async request<T>(
     endpoint: string,
     options: RequestInit = {}
@@ -169,6 +178,43 @@ class ApiClient {
     const headers: HeadersInit = {
       "Content-Type": "application/json",
       ...(this.apiKey && { Authorization: `Bearer ${this.apiKey}` }),
+      ...options.headers,
+    };
+
+    try {
+      const response = await fetch(`${getApiBaseUrl()}${endpoint}`, {
+        ...options,
+        headers,
+      });
+
+      const data = await response.json();
+      return data;
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          code: "NETWORK_ERROR",
+          message:
+            error instanceof Error ? error.message : "Network request failed",
+        },
+      };
+    }
+  }
+
+  private async requestWithFirebase<T>(
+    endpoint: string,
+    options: RequestInit = {}
+  ): Promise<ApiResponse<T>> {
+    if (!this.firebaseToken) {
+      return {
+        success: false,
+        error: { code: "UNAUTHORIZED", message: "Firebase token not set" },
+      };
+    }
+
+    const headers: HeadersInit = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${this.firebaseToken}`,
       ...options.headers,
     };
 
@@ -277,13 +323,13 @@ class ApiClient {
     return this.request<Stats>("/api/stats");
   }
 
-  // Teams
+  // Teams (use Firebase token for authentication)
   async getMyTeam(): Promise<ApiResponse<Team>> {
-    return this.request<Team>("/api/teams/me");
+    return this.requestWithFirebase<Team>("/api/teams/me");
   }
 
   async createTeam(name: string): Promise<ApiResponse<Team>> {
-    return this.request<Team>("/api/teams", {
+    return this.requestWithFirebase<Team>("/api/teams", {
       method: "POST",
       body: JSON.stringify({ name }),
     });
@@ -293,7 +339,7 @@ class ApiClient {
     teamId: string,
     data: Partial<Team>
   ): Promise<ApiResponse<Team>> {
-    return this.request<Team>(`/api/teams/${teamId}`, {
+    return this.requestWithFirebase<Team>(`/api/teams/${teamId}`, {
       method: "PUT",
       body: JSON.stringify(data),
     });
@@ -301,7 +347,7 @@ class ApiClient {
 
   // Team Members
   async getTeamMembers(teamId: string): Promise<ApiResponse<TeamMember[]>> {
-    return this.request<TeamMember[]>(`/api/teams/${teamId}/members`);
+    return this.requestWithFirebase<TeamMember[]>(`/api/teams/${teamId}/members`);
   }
 
   async inviteTeamMember(
@@ -309,7 +355,7 @@ class ApiClient {
     email: string,
     role: TeamRole
   ): Promise<ApiResponse<TeamInvite>> {
-    return this.request<TeamInvite>(`/api/teams/${teamId}/invites`, {
+    return this.requestWithFirebase<TeamInvite>(`/api/teams/${teamId}/invites`, {
       method: "POST",
       body: JSON.stringify({ email, role }),
     });
@@ -320,7 +366,7 @@ class ApiClient {
     memberId: string,
     role: TeamRole
   ): Promise<ApiResponse<TeamMember>> {
-    return this.request<TeamMember>(
+    return this.requestWithFirebase<TeamMember>(
       `/api/teams/${teamId}/members/${memberId}/role`,
       {
         method: "PUT",
@@ -333,7 +379,7 @@ class ApiClient {
     teamId: string,
     memberId: string
   ): Promise<ApiResponse<{ removed: string }>> {
-    return this.request<{ removed: string }>(
+    return this.requestWithFirebase<{ removed: string }>(
       `/api/teams/${teamId}/members/${memberId}`,
       {
         method: "DELETE",
@@ -346,7 +392,7 @@ class ApiClient {
     teamId: string,
     memberId: string
   ): Promise<ApiResponse<TeamMemberWorkspacePermission[]>> {
-    return this.request<TeamMemberWorkspacePermission[]>(
+    return this.requestWithFirebase<TeamMemberWorkspacePermission[]>(
       `/api/teams/${teamId}/members/${memberId}/workspaces`
     );
   }
@@ -357,7 +403,7 @@ class ApiClient {
     memberId: string,
     permission: WorkspacePermission
   ): Promise<ApiResponse<TeamMemberWorkspacePermission>> {
-    return this.request<TeamMemberWorkspacePermission>(
+    return this.requestWithFirebase<TeamMemberWorkspacePermission>(
       `/api/teams/${teamId}/workspaces/${workspaceId}/members/${memberId}`,
       {
         method: "PUT",
@@ -371,7 +417,7 @@ class ApiClient {
     workspaceId: string,
     memberId: string
   ): Promise<ApiResponse<{ revoked: boolean }>> {
-    return this.request<{ revoked: boolean }>(
+    return this.requestWithFirebase<{ revoked: boolean }>(
       `/api/teams/${teamId}/workspaces/${workspaceId}/members/${memberId}`,
       {
         method: "DELETE",
@@ -381,14 +427,14 @@ class ApiClient {
 
   // Team Invites
   async getPendingInvites(teamId: string): Promise<ApiResponse<TeamInvite[]>> {
-    return this.request<TeamInvite[]>(`/api/teams/${teamId}/invites`);
+    return this.requestWithFirebase<TeamInvite[]>(`/api/teams/${teamId}/invites`);
   }
 
   async cancelInvite(
     teamId: string,
     inviteId: string
   ): Promise<ApiResponse<{ cancelled: boolean }>> {
-    return this.request<{ cancelled: boolean }>(
+    return this.requestWithFirebase<{ cancelled: boolean }>(
       `/api/teams/${teamId}/invites/${inviteId}`,
       {
         method: "DELETE",

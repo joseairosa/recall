@@ -53,7 +53,7 @@ const ROLE_COLORS: Record<TeamRole, string> = {
 };
 
 export default function TeamPage() {
-  const { apiKey, user } = useAuth();
+  const { user } = useAuth();
   const [team, setTeam] = useState<Team | null>(null);
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [invites, setInvites] = useState<TeamInvite[]>([]);
@@ -73,12 +73,29 @@ export default function TeamPage() {
   // Current user's role
   const [currentUserRole, setCurrentUserRole] = useState<TeamRole | null>(null);
 
+  // Helper to ensure Firebase token is set before API calls
+  const ensureFirebaseToken = async (): Promise<boolean> => {
+    if (!user) return false;
+    try {
+      const idToken = await user.getIdToken();
+      api.setFirebaseToken(idToken);
+      return true;
+    } catch {
+      setError("Failed to get authentication token");
+      return false;
+    }
+  };
+
   const loadTeamData = async () => {
-    if (!apiKey) return;
+    if (!user) return;
 
     setLoading(true);
     setError(null);
-    api.setApiKey(apiKey);
+
+    if (!(await ensureFirebaseToken())) {
+      setLoading(false);
+      return;
+    }
 
     const teamResponse = await api.getMyTeam();
 
@@ -116,13 +133,18 @@ export default function TeamPage() {
   useEffect(() => {
     loadTeamData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiKey, user?.uid]);
+  }, [user]);
 
   const handleCreateTeam = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!teamName.trim()) return;
 
     setCreating(true);
+    if (!(await ensureFirebaseToken())) {
+      setCreating(false);
+      return;
+    }
+
     const response = await api.createTeam(teamName.trim());
 
     if (response.success && response.data) {
@@ -140,6 +162,11 @@ export default function TeamPage() {
     if (!inviteEmail.trim() || !team) return;
 
     setInviting(true);
+    if (!(await ensureFirebaseToken())) {
+      setInviting(false);
+      return;
+    }
+
     const response = await api.inviteTeamMember(
       team.id,
       inviteEmail.trim(),
@@ -159,6 +186,7 @@ export default function TeamPage() {
 
   const handleCancelInvite = async (inviteId: string) => {
     if (!team) return;
+    if (!(await ensureFirebaseToken())) return;
     const response = await api.cancelInvite(team.id, inviteId);
     if (response.success) {
       await loadTeamData();
@@ -170,6 +198,7 @@ export default function TeamPage() {
   const handleRemoveMember = async (memberId: string) => {
     if (!team) return;
     if (!confirm("Are you sure you want to remove this member?")) return;
+    if (!(await ensureFirebaseToken())) return;
 
     const response = await api.removeMember(team.id, memberId);
     if (response.success) {
@@ -181,6 +210,7 @@ export default function TeamPage() {
 
   const handleChangeRole = async (memberId: string, newRole: TeamRole) => {
     if (!team) return;
+    if (!(await ensureFirebaseToken())) return;
 
     const response = await api.updateMemberRole(team.id, memberId, newRole);
     if (response.success) {

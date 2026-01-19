@@ -355,7 +355,7 @@ export default function DocsPage() {
                 <CardTitle>RLM (Large Content Processing)</CardTitle>
               </div>
               <CardDescription>
-                For processing content larger than context windows (~100KB+)
+                For processing content larger than context windows (~50KB+)
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -564,6 +564,12 @@ export default function DocsPage() {
                       </td>
                     </tr>
                     <tr>
+                      <td className="py-2 pr-4 font-mono text-xs">organize_session</td>
+                      <td className="py-2 text-muted-foreground">
+                        Group related memories into a named session snapshot
+                      </td>
+                    </tr>
+                    <tr>
                       <td className="py-2 pr-4 font-mono text-xs">convert_to_global</td>
                       <td className="py-2 text-muted-foreground">
                         Make a workspace memory accessible everywhere
@@ -691,7 +697,7 @@ export default function DocsPage() {
                 </ol>
                 <p className="text-sm">
                   <strong>When to use:</strong> When you&apos;re about to analyze a
-                  huge file, log dump, or document (100KB+).
+                  large file, log dump, or document (50KB+).
                 </p>
               </div>
 

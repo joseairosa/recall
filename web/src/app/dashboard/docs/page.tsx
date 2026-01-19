@@ -8,7 +8,7 @@ import {
   CardTitle,
   CardDescription,
 } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
 import {
   BookOpen,
   Terminal,
@@ -20,9 +20,19 @@ import {
   FileCode,
   ChevronRight,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+type TabValue = "getting-started" | "commands" | "workflows" | "best-practices";
+
+const tabs = [
+  { value: "getting-started" as const, label: "Getting Started" },
+  { value: "commands" as const, label: "MCP Commands" },
+  { value: "workflows" as const, label: "Slash Commands" },
+  { value: "best-practices" as const, label: "Best Practices" },
+];
 
 export default function DocsPage() {
-  const [activeSection, setActiveSection] = useState("getting-started");
+  const [activeTab, setActiveTab] = useState<TabValue>("getting-started");
 
   return (
     <div className="space-y-8">
@@ -33,16 +43,26 @@ export default function DocsPage() {
         </p>
       </div>
 
-      <Tabs defaultValue="getting-started" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-4 lg:w-auto lg:inline-grid">
-          <TabsTrigger value="getting-started">Getting Started</TabsTrigger>
-          <TabsTrigger value="commands">MCP Commands</TabsTrigger>
-          <TabsTrigger value="workflows">Slash Commands</TabsTrigger>
-          <TabsTrigger value="best-practices">Best Practices</TabsTrigger>
-        </TabsList>
+      {/* Tab Navigation */}
+      <div className="flex flex-wrap gap-2 border-b pb-4">
+        {tabs.map((tab) => (
+          <Button
+            key={tab.value}
+            variant={activeTab === tab.value ? "default" : "outline"}
+            size="sm"
+            onClick={() => setActiveTab(tab.value)}
+            className={cn(
+              activeTab === tab.value && "bg-primary text-primary-foreground"
+            )}
+          >
+            {tab.label}
+          </Button>
+        ))}
+      </div>
 
-        {/* Getting Started */}
-        <TabsContent value="getting-started" className="space-y-6">
+      {/* Getting Started */}
+      {activeTab === "getting-started" && (
+        <div className="space-y-6">
           <Card>
             <CardHeader>
               <div className="flex items-center gap-3">
@@ -56,8 +76,8 @@ export default function DocsPage() {
             <CardContent className="space-y-6">
               <div className="space-y-4">
                 <h4 className="font-semibold">Step 1: Set Workspace</h4>
-                <div className="bg-muted p-4 rounded-lg font-mono text-sm">
-                  <code>set_workspace(&#123; path: "/path/to/your/project" &#125;)</code>
+                <div className="bg-muted p-4 rounded-lg font-mono text-sm overflow-x-auto">
+                  <code>set_workspace(&#123; path: &quot;/path/to/your/project&quot; &#125;)</code>
                 </div>
                 <p className="text-sm text-muted-foreground">
                   Isolates memories to the current project, so you don&apos;t get
@@ -67,10 +87,9 @@ export default function DocsPage() {
 
               <div className="space-y-4">
                 <h4 className="font-semibold">Step 2: Auto-load Context</h4>
-                <div className="bg-muted p-4 rounded-lg font-mono text-sm">
+                <div className="bg-muted p-4 rounded-lg font-mono text-sm overflow-x-auto">
                   <code>
-                    auto_session_start(&#123; task_hint: "what you&apos;re working on"
-                    &#125;)
+                    auto_session_start(&#123; task_hint: &quot;what you&apos;re working on&quot; &#125;)
                   </code>
                 </div>
                 <p className="text-sm text-muted-foreground">
@@ -124,31 +143,31 @@ export default function DocsPage() {
                   </h4>
                   <ul className="space-y-2 text-sm">
                     <li className="flex items-start gap-2">
-                      <ChevronRight className="w-4 h-4 text-green-600 mt-0.5" />
+                      <ChevronRight className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
                       <span>
-                        <strong>Decisions:</strong> "Chose Redis over Postgres
-                        because..."
+                        <strong>Decisions:</strong> &quot;Chose Redis over Postgres
+                        because...&quot;
                       </span>
                     </li>
                     <li className="flex items-start gap-2">
-                      <ChevronRight className="w-4 h-4 text-green-600 mt-0.5" />
+                      <ChevronRight className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
                       <span>
-                        <strong>Directives:</strong> "Always use ULIDs, never
-                        auto-increment"
+                        <strong>Directives:</strong> &quot;Always use ULIDs, never
+                        auto-increment&quot;
                       </span>
                     </li>
                     <li className="flex items-start gap-2">
-                      <ChevronRight className="w-4 h-4 text-green-600 mt-0.5" />
+                      <ChevronRight className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
                       <span>
-                        <strong>Patterns:</strong> "API endpoints follow
-                        /api/v1/&#123;resource&#125;"
+                        <strong>Patterns:</strong> &quot;API endpoints follow
+                        /api/v1/&#123;resource&#125;&quot;
                       </span>
                     </li>
                     <li className="flex items-start gap-2">
-                      <ChevronRight className="w-4 h-4 text-green-600 mt-0.5" />
+                      <ChevronRight className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
                       <span>
-                        <strong>Preferences:</strong> "User prefers informal
-                        tone"
+                        <strong>Preferences:</strong> &quot;User prefers informal
+                        tone&quot;
                       </span>
                     </li>
                   </ul>
@@ -159,19 +178,19 @@ export default function DocsPage() {
                   </h4>
                   <ul className="space-y-2 text-sm text-muted-foreground">
                     <li className="flex items-start gap-2">
-                      <span className="text-destructive">✗</span>
+                      <span className="text-destructive flex-shrink-0">✗</span>
                       <span>Code implementations (that&apos;s what files are for)</span>
                     </li>
                     <li className="flex items-start gap-2">
-                      <span className="text-destructive">✗</span>
+                      <span className="text-destructive flex-shrink-0">✗</span>
                       <span>Temporary debugging notes</span>
                     </li>
                     <li className="flex items-start gap-2">
-                      <span className="text-destructive">✗</span>
+                      <span className="text-destructive flex-shrink-0">✗</span>
                       <span>Generic knowledge Claude already knows</span>
                     </li>
                     <li className="flex items-start gap-2">
-                      <span className="text-destructive">✗</span>
+                      <span className="text-destructive flex-shrink-0">✗</span>
                       <span>Conversation chitchat</span>
                     </li>
                   </ul>
@@ -179,10 +198,12 @@ export default function DocsPage() {
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
+        </div>
+      )}
 
-        {/* MCP Commands */}
-        <TabsContent value="commands" className="space-y-6">
+      {/* MCP Commands */}
+      {activeTab === "commands" && (
+        <div className="space-y-6">
           <Card>
             <CardHeader>
               <div className="flex items-center gap-3">
@@ -207,8 +228,7 @@ export default function DocsPage() {
                         store_memory
                       </td>
                       <td className="py-2 text-muted-foreground">
-                        Save a new memory with content, type, importance, and
-                        tags
+                        Save a new memory with content, type, importance, and tags
                       </td>
                     </tr>
                     <tr>
@@ -424,21 +444,15 @@ export default function DocsPage() {
                 <div className="space-y-3 text-sm">
                   <div className="flex justify-between">
                     <code className="font-mono text-xs">link_memories</code>
-                    <span className="text-muted-foreground">
-                      Create relationship
-                    </span>
+                    <span className="text-muted-foreground">Create relationship</span>
                   </div>
                   <div className="flex justify-between">
-                    <code className="font-mono text-xs">
-                      get_related_memories
-                    </code>
+                    <code className="font-mono text-xs">get_related_memories</code>
                     <span className="text-muted-foreground">Get connected</span>
                   </div>
                   <div className="flex justify-between">
                     <code className="font-mono text-xs">unlink_memories</code>
-                    <span className="text-muted-foreground">
-                      Remove relationship
-                    </span>
+                    <span className="text-muted-foreground">Remove relationship</span>
                   </div>
                   <div className="flex justify-between">
                     <code className="font-mono text-xs">get_memory_graph</code>
@@ -463,9 +477,7 @@ export default function DocsPage() {
                   </div>
                   <div className="flex justify-between">
                     <code className="font-mono text-xs">rollback_memory</code>
-                    <span className="text-muted-foreground">
-                      Restore previous
-                    </span>
+                    <span className="text-muted-foreground">Restore previous</span>
                   </div>
                 </div>
               </CardContent>
@@ -482,14 +494,10 @@ export default function DocsPage() {
                 <div className="space-y-3 text-sm">
                   <div className="flex justify-between">
                     <code className="font-mono text-xs">create_template</code>
-                    <span className="text-muted-foreground">
-                      Create reusable
-                    </span>
+                    <span className="text-muted-foreground">Create reusable</span>
                   </div>
                   <div className="flex justify-between">
-                    <code className="font-mono text-xs">
-                      create_from_template
-                    </code>
+                    <code className="font-mono text-xs">create_from_template</code>
                     <span className="text-muted-foreground">Use template</span>
                   </div>
                   <div className="flex justify-between">
@@ -518,9 +526,7 @@ export default function DocsPage() {
                     <span className="text-muted-foreground">List with counts</span>
                   </div>
                   <div className="flex justify-between">
-                    <code className="font-mono text-xs">
-                      get_memories_by_category
-                    </code>
+                    <code className="font-mono text-xs">get_memories_by_category</code>
                     <span className="text-muted-foreground">Get by category</span>
                   </div>
                 </div>
@@ -532,7 +538,7 @@ export default function DocsPage() {
             <CardHeader>
               <div className="flex items-center gap-3">
                 <Database className="w-5 h-5 text-primary" />
-                <CardTitle>Workspace & Scope</CardTitle>
+                <CardTitle>Workspace &amp; Scope</CardTitle>
               </div>
             </CardHeader>
             <CardContent>
@@ -540,49 +546,37 @@ export default function DocsPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b">
-                      <th className="text-left py-2 pr-4 font-semibold">
-                        Command
-                      </th>
+                      <th className="text-left py-2 pr-4 font-semibold">Command</th>
                       <th className="text-left py-2 font-semibold">Purpose</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
                     <tr>
-                      <td className="py-2 pr-4 font-mono text-xs">
-                        set_workspace
-                      </td>
+                      <td className="py-2 pr-4 font-mono text-xs">set_workspace</td>
                       <td className="py-2 text-muted-foreground">
                         Set current project directory for memory isolation
                       </td>
                     </tr>
                     <tr>
-                      <td className="py-2 pr-4 font-mono text-xs">
-                        get_workspace
-                      </td>
+                      <td className="py-2 pr-4 font-mono text-xs">get_workspace</td>
                       <td className="py-2 text-muted-foreground">
                         Get current workspace path and ID
                       </td>
                     </tr>
                     <tr>
-                      <td className="py-2 pr-4 font-mono text-xs">
-                        convert_to_global
-                      </td>
+                      <td className="py-2 pr-4 font-mono text-xs">convert_to_global</td>
                       <td className="py-2 text-muted-foreground">
                         Make a workspace memory accessible everywhere
                       </td>
                     </tr>
                     <tr>
-                      <td className="py-2 pr-4 font-mono text-xs">
-                        convert_to_workspace
-                      </td>
+                      <td className="py-2 pr-4 font-mono text-xs">convert_to_workspace</td>
                       <td className="py-2 text-muted-foreground">
                         Make a global memory workspace-specific
                       </td>
                     </tr>
                     <tr>
-                      <td className="py-2 pr-4 font-mono text-xs">
-                        get_time_window_context
-                      </td>
+                      <td className="py-2 pr-4 font-mono text-xs">get_time_window_context</td>
                       <td className="py-2 text-muted-foreground">
                         Get memories from a time range (e.g., &quot;last 2 hours&quot;)
                       </td>
@@ -597,7 +591,7 @@ export default function DocsPage() {
             <CardHeader>
               <div className="flex items-center gap-3">
                 <FileCode className="w-5 h-5 text-primary" />
-                <CardTitle>Import/Export & Maintenance</CardTitle>
+                <CardTitle>Import/Export &amp; Maintenance</CardTitle>
               </div>
             </CardHeader>
             <CardContent>
@@ -605,41 +599,27 @@ export default function DocsPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b">
-                      <th className="text-left py-2 pr-4 font-semibold">
-                        Command
-                      </th>
+                      <th className="text-left py-2 pr-4 font-semibold">Command</th>
                       <th className="text-left py-2 font-semibold">Purpose</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
                     <tr>
-                      <td className="py-2 pr-4 font-mono text-xs">
-                        export_memories
-                      </td>
-                      <td className="py-2 text-muted-foreground">
-                        Export memories to JSON
-                      </td>
+                      <td className="py-2 pr-4 font-mono text-xs">export_memories</td>
+                      <td className="py-2 text-muted-foreground">Export memories to JSON</td>
                     </tr>
                     <tr>
-                      <td className="py-2 pr-4 font-mono text-xs">
-                        import_memories
-                      </td>
-                      <td className="py-2 text-muted-foreground">
-                        Import memories from JSON
-                      </td>
+                      <td className="py-2 pr-4 font-mono text-xs">import_memories</td>
+                      <td className="py-2 text-muted-foreground">Import memories from JSON</td>
                     </tr>
                     <tr>
-                      <td className="py-2 pr-4 font-mono text-xs">
-                        find_duplicates
-                      </td>
+                      <td className="py-2 pr-4 font-mono text-xs">find_duplicates</td>
                       <td className="py-2 text-muted-foreground">
                         Find and optionally merge duplicate memories
                       </td>
                     </tr>
                     <tr>
-                      <td className="py-2 pr-4 font-mono text-xs">
-                        consolidate_memories
-                      </td>
+                      <td className="py-2 pr-4 font-mono text-xs">consolidate_memories</td>
                       <td className="py-2 text-muted-foreground">
                         Manually merge multiple memories into one
                       </td>
@@ -649,10 +629,12 @@ export default function DocsPage() {
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
+        </div>
+      )}
 
-        {/* Slash Commands */}
-        <TabsContent value="workflows" className="space-y-6">
+      {/* Slash Commands */}
+      {activeTab === "workflows" && (
+        <div className="space-y-6">
           <Card>
             <CardHeader>
               <div className="flex items-center gap-3">
@@ -676,18 +658,9 @@ export default function DocsPage() {
                   proactively without being asked.
                 </p>
                 <ul className="text-sm text-muted-foreground space-y-1 ml-4">
-                  <li>
-                    - Reminds Claude to call <code>auto_session_start</code> at
-                    the beginning
-                  </li>
-                  <li>
-                    - Reminds Claude to call <code>quick_store_decision</code>{" "}
-                    after decisions
-                  </li>
-                  <li>
-                    - Reminds Claude to check <code>should_use_rlm</code> before
-                    large content
-                  </li>
+                  <li>- Reminds Claude to call <code>auto_session_start</code> at the beginning</li>
+                  <li>- Reminds Claude to call <code>quick_store_decision</code> after decisions</li>
+                  <li>- Reminds Claude to check <code>should_use_rlm</code> before large content</li>
                 </ul>
                 <p className="text-sm">
                   <strong>When to use:</strong> At the start of a session if you
@@ -709,24 +682,12 @@ export default function DocsPage() {
                   Explains the 6-step RLM workflow:
                 </p>
                 <ol className="text-sm text-muted-foreground space-y-1 ml-4 list-decimal list-inside">
-                  <li>
-                    <code>create_execution_context</code> - Store large content
-                  </li>
-                  <li>
-                    <code>decompose_task</code> - Break into subtasks
-                  </li>
-                  <li>
-                    <code>inject_context_snippet</code> - Get relevant chunks
-                  </li>
-                  <li>
-                    <code>update_subtask_result</code> - Store partial results
-                  </li>
-                  <li>
-                    <code>merge_results</code> - Combine everything
-                  </li>
-                  <li>
-                    <code>verify_answer</code> - Cross-check accuracy
-                  </li>
+                  <li><code>create_execution_context</code> - Store large content</li>
+                  <li><code>decompose_task</code> - Break into subtasks</li>
+                  <li><code>inject_context_snippet</code> - Get relevant chunks</li>
+                  <li><code>update_subtask_result</code> - Store partial results</li>
+                  <li><code>merge_results</code> - Combine everything</li>
+                  <li><code>verify_answer</code> - Cross-check accuracy</li>
                 </ol>
                 <p className="text-sm">
                   <strong>When to use:</strong> When you&apos;re about to analyze a
@@ -741,27 +702,16 @@ export default function DocsPage() {
                   </code>
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  <strong>Purpose:</strong> Guide for session lifecycle
-                  management.
+                  <strong>Purpose:</strong> Guide for session lifecycle management.
                 </p>
                 <ul className="text-sm text-muted-foreground space-y-1 ml-4">
-                  <li>
-                    - <code>organize_session</code> - Group related memories
-                    into a named session
-                  </li>
-                  <li>
-                    - <code>summarize_session</code> - Create a snapshot at end
-                    of work
-                  </li>
-                  <li>
-                    - <code>get_time_window_context</code> - Retrieve memories
-                    from specific time ranges
-                  </li>
+                  <li>- <code>organize_session</code> - Group related memories into a named session</li>
+                  <li>- <code>summarize_session</code> - Create a snapshot at end of work</li>
+                  <li>- <code>get_time_window_context</code> - Retrieve memories from specific time ranges</li>
                 </ul>
                 <p className="text-sm">
                   <strong>When to use:</strong> At the end of a work session to
-                  preserve context, or when resuming work from a previous
-                  session.
+                  preserve context, or when resuming work from a previous session.
                 </p>
               </div>
 
@@ -775,22 +725,13 @@ export default function DocsPage() {
                   <strong>Purpose:</strong> Guide for workspace isolation.
                 </p>
                 <ul className="text-sm text-muted-foreground space-y-1 ml-4">
-                  <li>
-                    - <code>set_workspace</code> - Isolate memories to a project
-                  </li>
-                  <li>
-                    - <code>get_workspace</code> - Check current workspace
-                  </li>
-                  <li>
-                    - <code>convert_to_global</code> /{" "}
-                    <code>convert_to_workspace</code> - Move memories between
-                    scopes
-                  </li>
+                  <li>- <code>set_workspace</code> - Isolate memories to a project</li>
+                  <li>- <code>get_workspace</code> - Check current workspace</li>
+                  <li>- <code>convert_to_global</code> / <code>convert_to_workspace</code> - Move memories between scopes</li>
                 </ul>
                 <p className="text-sm">
                   <strong>When to use:</strong> When switching between projects,
-                  or when you want a preference to apply globally (like &quot;always
-                  use informal tone&quot;).
+                  or when you want a preference to apply globally.
                 </p>
               </div>
             </CardContent>
@@ -805,9 +746,7 @@ export default function DocsPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b">
-                      <th className="text-left py-2 pr-4 font-semibold">
-                        Scenario
-                      </th>
+                      <th className="text-left py-2 pr-4 font-semibold">Scenario</th>
                       <th className="text-left py-2 font-semibold">Command</th>
                     </tr>
                   </thead>
@@ -848,16 +787,17 @@ export default function DocsPage() {
                 </table>
               </div>
               <p className="text-sm text-muted-foreground mt-4">
-                You typically only need{" "}
-                <code>/recall-remote:automatic_workflow</code> at session start
-                - it covers most cases.
+                You typically only need <code>/recall-remote:automatic_workflow</code> at
+                session start - it covers most cases.
               </p>
             </CardContent>
           </Card>
-        </TabsContent>
+        </div>
+      )}
 
-        {/* Best Practices */}
-        <TabsContent value="best-practices" className="space-y-6">
+      {/* Best Practices */}
+      {activeTab === "best-practices" && (
+        <div className="space-y-6">
           <Card>
             <CardHeader>
               <div className="flex items-center gap-3">
@@ -871,73 +811,64 @@ export default function DocsPage() {
             <CardContent>
               <div className="space-y-4">
                 <div className="flex items-start gap-4 p-4 bg-muted rounded-lg">
-                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold flex-shrink-0">
                     1
                   </div>
                   <div>
                     <p className="font-medium">User Sends First Message</p>
                     <p className="text-sm text-muted-foreground mt-1">
-                      → <code>auto_session_start(&#123; task_hint: "..." &#125;)</code>
+                      → <code>auto_session_start(&#123; task_hint: &quot;...&quot; &#125;)</code>
                       <br />→ Get context, then proceed with task
                     </p>
                   </div>
                 </div>
 
                 <div className="flex items-start gap-4 p-4 bg-muted rounded-lg">
-                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold flex-shrink-0">
                     2
                   </div>
                   <div>
                     <p className="font-medium">Make a Decision During Work</p>
                     <p className="text-sm text-muted-foreground mt-1">
                       → Do the work
-                      <br />→{" "}
-                      <code>
-                        quick_store_decision(&#123; decision: "...", reasoning: "..."
-                        &#125;)
-                      </code>
+                      <br />→ <code>quick_store_decision(&#123; decision: &quot;...&quot;, reasoning: &quot;...&quot; &#125;)</code>
                     </p>
                   </div>
                 </div>
 
                 <div className="flex items-start gap-4 p-4 bg-muted rounded-lg">
-                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold flex-shrink-0">
                     3
                   </div>
                   <div>
-                    <p className="font-medium">
-                      Encounter Large Content (file, log, etc.)
-                    </p>
+                    <p className="font-medium">Encounter Large Content</p>
                     <p className="text-sm text-muted-foreground mt-1">
-                      → <code>should_use_rlm(&#123; content: "...", task: "..." &#125;)</code>
+                      → <code>should_use_rlm(&#123; content: &quot;...&quot;, task: &quot;...&quot; &#125;)</code>
                       <br />→ If recommendation is &quot;use_rlm&quot;, use RLM workflow
                     </p>
                   </div>
                 </div>
 
                 <div className="flex items-start gap-4 p-4 bg-muted rounded-lg">
-                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold flex-shrink-0">
                     4
                   </div>
                   <div>
                     <p className="font-medium">End of Significant Discussion</p>
                     <p className="text-sm text-muted-foreground mt-1">
-                      →{" "}
-                      <code>
-                        analyze_and_remember(&#123; conversation_text: "..." &#125;)
-                      </code>
+                      → <code>analyze_and_remember(&#123; conversation_text: &quot;...&quot; &#125;)</code>
                     </p>
                   </div>
                 </div>
 
                 <div className="flex items-start gap-4 p-4 bg-muted rounded-lg">
-                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold flex-shrink-0">
                     5
                   </div>
                   <div>
                     <p className="font-medium">End of Session</p>
                     <p className="text-sm text-muted-foreground mt-1">
-                      → <code>summarize_session(&#123; session_name: "..." &#125;)</code>
+                      → <code>summarize_session(&#123; session_name: &quot;...&quot; &#125;)</code>
                     </p>
                   </div>
                 </div>
@@ -1106,9 +1037,7 @@ export default function DocsPage() {
               <div className="space-y-4">
                 <div className="flex items-center gap-4">
                   <div className="w-20 text-center">
-                    <span className="text-2xl font-bold text-muted-foreground">
-                      1-3
-                    </span>
+                    <span className="text-2xl font-bold text-muted-foreground">1-3</span>
                   </div>
                   <div>
                     <p className="font-medium">Low (Transient)</p>
@@ -1119,9 +1048,7 @@ export default function DocsPage() {
                 </div>
                 <div className="flex items-center gap-4">
                   <div className="w-20 text-center">
-                    <span className="text-2xl font-bold text-yellow-600">
-                      4-7
-                    </span>
+                    <span className="text-2xl font-bold text-yellow-600">4-7</span>
                   </div>
                   <div>
                     <p className="font-medium">Medium (General)</p>
@@ -1132,9 +1059,7 @@ export default function DocsPage() {
                 </div>
                 <div className="flex items-center gap-4">
                   <div className="w-20 text-center">
-                    <span className="text-2xl font-bold text-primary">
-                      8-10
-                    </span>
+                    <span className="text-2xl font-bold text-primary">8-10</span>
                   </div>
                   <div>
                     <p className="font-medium">High (Critical)</p>
@@ -1146,8 +1071,8 @@ export default function DocsPage() {
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
-      </Tabs>
+        </div>
+      )}
     </div>
   );
 }

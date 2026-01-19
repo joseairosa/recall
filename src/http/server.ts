@@ -37,6 +37,8 @@ import {
 } from './billing.service.js';
 import { OAuthService, OAUTH_CLIENTS, isValidRedirectUri } from './oauth.service.js';
 import { WorkspaceService } from './workspace.service.js';
+import { TeamService } from './team.service.js';
+import { TeamRole } from './team.types.js';
 import { randomBytes } from 'crypto';
 
 // ESM __dirname equivalent
@@ -1394,6 +1396,955 @@ export function createHttpServer(storageClient: StorageClient) {
       }
     }
   );
+
+  // ============================================
+  // Team Management Endpoints
+  // ============================================
+
+  const teamService = new TeamService(storageClient);
+
+  /**
+   * Create a new team
+   * POST /api/teams
+   *
+   * Requires Firebase authentication (team owner).
+   */
+  app.post('/api/teams', async (req: Request, res: Response) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' },
+        });
+        return;
+      }
+
+      const idToken = authHeader.substring(7);
+      const decodedToken = await verifyFirebaseToken(idToken);
+
+      if (!decodedToken) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Invalid Firebase token' },
+        });
+        return;
+      }
+
+      // Check if user is already in a team
+      const existingTeamId = await teamService.getTenantTeamId(decodedToken.uid);
+      if (existingTeamId) {
+        res.status(400).json({
+          success: false,
+          error: { code: 'ALREADY_IN_TEAM', message: 'You are already in a team' },
+        });
+        return;
+      }
+
+      // Check if user has a Team or Enterprise plan
+      const customerData = await storageClient.hgetall(`customer:${decodedToken.uid}`);
+      const userPlan = customerData?.plan || 'free';
+      if (userPlan !== 'team' && userPlan !== 'enterprise') {
+        res.status(403).json({
+          success: false,
+          error: {
+            code: 'PLAN_REQUIRED',
+            message: 'Team plan or higher is required to create a team. Please upgrade your plan.',
+          },
+        });
+        return;
+      }
+
+      const { name, settings } = req.body;
+
+      if (!name) {
+        res.status(400).json({
+          success: false,
+          error: { code: 'BAD_REQUEST', message: 'name is required' },
+        });
+        return;
+      }
+
+      const team = await teamService.createTeam(decodedToken.uid, name, 'team', settings);
+
+      res.status(201).json({
+        success: true,
+        data: team,
+      });
+    } catch (error) {
+      handleError(res, error);
+    }
+  });
+
+  /**
+   * Get current user's team
+   * GET /api/teams/me
+   *
+   * Requires Firebase authentication.
+   */
+  app.get('/api/teams/me', async (req: Request, res: Response) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' },
+        });
+        return;
+      }
+
+      const idToken = authHeader.substring(7);
+      const decodedToken = await verifyFirebaseToken(idToken);
+
+      if (!decodedToken) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Invalid Firebase token' },
+        });
+        return;
+      }
+
+      const teamId = await teamService.getTenantTeamId(decodedToken.uid);
+      if (!teamId) {
+        res.status(404).json({
+          success: false,
+          error: { code: 'NOT_IN_TEAM', message: 'You are not in a team' },
+        });
+        return;
+      }
+
+      const team = await teamService.getTeam(teamId);
+      const member = await teamService.getMemberByTenantId(teamId, decodedToken.uid);
+
+      res.json({
+        success: true,
+        data: {
+          team,
+          membership: member,
+        },
+      });
+    } catch (error) {
+      handleError(res, error);
+    }
+  });
+
+  /**
+   * Get team by ID
+   * GET /api/teams/:id
+   *
+   * Requires Firebase authentication and team membership.
+   */
+  app.get('/api/teams/:id', async (req: Request, res: Response) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' },
+        });
+        return;
+      }
+
+      const idToken = authHeader.substring(7);
+      const decodedToken = await verifyFirebaseToken(idToken);
+
+      if (!decodedToken) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Invalid Firebase token' },
+        });
+        return;
+      }
+
+      const teamId = req.params.id;
+      const member = await teamService.getMemberByTenantId(teamId, decodedToken.uid);
+
+      if (!member) {
+        res.status(403).json({
+          success: false,
+          error: { code: 'FORBIDDEN', message: 'You are not a member of this team' },
+        });
+        return;
+      }
+
+      const team = await teamService.getTeam(teamId);
+
+      if (!team) {
+        res.status(404).json({
+          success: false,
+          error: { code: 'NOT_FOUND', message: 'Team not found' },
+        });
+        return;
+      }
+
+      res.json({
+        success: true,
+        data: team,
+      });
+    } catch (error) {
+      handleError(res, error);
+    }
+  });
+
+  /**
+   * Update team settings
+   * PUT /api/teams/:id
+   *
+   * Requires Firebase authentication and admin/owner role.
+   */
+  app.put('/api/teams/:id', async (req: Request, res: Response) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' },
+        });
+        return;
+      }
+
+      const idToken = authHeader.substring(7);
+      const decodedToken = await verifyFirebaseToken(idToken);
+
+      if (!decodedToken) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Invalid Firebase token' },
+        });
+        return;
+      }
+
+      const { name, settings } = req.body;
+
+      const team = await teamService.updateTeam(req.params.id, decodedToken.uid, {
+        name,
+        settings,
+      });
+
+      if (!team) {
+        res.status(404).json({
+          success: false,
+          error: { code: 'NOT_FOUND', message: 'Team not found' },
+        });
+        return;
+      }
+
+      res.json({
+        success: true,
+        data: team,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Permission denied') {
+        res.status(403).json({
+          success: false,
+          error: { code: 'FORBIDDEN', message: error.message },
+        });
+        return;
+      }
+      handleError(res, error);
+    }
+  });
+
+  /**
+   * Delete team
+   * DELETE /api/teams/:id
+   *
+   * Requires Firebase authentication and owner role.
+   */
+  app.delete('/api/teams/:id', async (req: Request, res: Response) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' },
+        });
+        return;
+      }
+
+      const idToken = authHeader.substring(7);
+      const decodedToken = await verifyFirebaseToken(idToken);
+
+      if (!decodedToken) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Invalid Firebase token' },
+        });
+        return;
+      }
+
+      await teamService.deleteTeam(req.params.id, decodedToken.uid);
+
+      res.json({
+        success: true,
+        data: { deleted: req.params.id },
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('owner')) {
+        res.status(403).json({
+          success: false,
+          error: { code: 'FORBIDDEN', message: error.message },
+        });
+        return;
+      }
+      handleError(res, error);
+    }
+  });
+
+  /**
+   * List team members
+   * GET /api/teams/:id/members
+   *
+   * Requires Firebase authentication and team membership.
+   */
+  app.get('/api/teams/:id/members', async (req: Request, res: Response) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' },
+        });
+        return;
+      }
+
+      const idToken = authHeader.substring(7);
+      const decodedToken = await verifyFirebaseToken(idToken);
+
+      if (!decodedToken) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Invalid Firebase token' },
+        });
+        return;
+      }
+
+      const teamId = req.params.id;
+      const member = await teamService.getMemberByTenantId(teamId, decodedToken.uid);
+
+      if (!member) {
+        res.status(403).json({
+          success: false,
+          error: { code: 'FORBIDDEN', message: 'You are not a member of this team' },
+        });
+        return;
+      }
+
+      const members = await teamService.listMembers(teamId);
+
+      res.json({
+        success: true,
+        data: members,
+      });
+    } catch (error) {
+      handleError(res, error);
+    }
+  });
+
+  /**
+   * Update member role
+   * PUT /api/teams/:id/members/:memberId/role
+   *
+   * Requires Firebase authentication and admin/owner role.
+   */
+  app.put('/api/teams/:id/members/:memberId/role', async (req: Request, res: Response) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' },
+        });
+        return;
+      }
+
+      const idToken = authHeader.substring(7);
+      const decodedToken = await verifyFirebaseToken(idToken);
+
+      if (!decodedToken) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Invalid Firebase token' },
+        });
+        return;
+      }
+
+      const { role } = req.body;
+
+      if (!role || !['admin', 'member', 'viewer'].includes(role)) {
+        res.status(400).json({
+          success: false,
+          error: { code: 'BAD_REQUEST', message: 'role must be admin, member, or viewer' },
+        });
+        return;
+      }
+
+      const updatedMember = await teamService.updateMemberRole(
+        req.params.id,
+        decodedToken.uid,
+        req.params.memberId,
+        role as TeamRole
+      );
+
+      if (!updatedMember) {
+        res.status(404).json({
+          success: false,
+          error: { code: 'NOT_FOUND', message: 'Member not found' },
+        });
+        return;
+      }
+
+      res.json({
+        success: true,
+        data: updatedMember,
+      });
+    } catch (error) {
+      if (error instanceof Error && (error.message.includes('Permission') || error.message.includes('Cannot'))) {
+        res.status(403).json({
+          success: false,
+          error: { code: 'FORBIDDEN', message: error.message },
+        });
+        return;
+      }
+      handleError(res, error);
+    }
+  });
+
+  /**
+   * Remove member from team
+   * DELETE /api/teams/:id/members/:memberId
+   *
+   * Requires Firebase authentication and admin/owner role.
+   */
+  app.delete('/api/teams/:id/members/:memberId', async (req: Request, res: Response) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' },
+        });
+        return;
+      }
+
+      const idToken = authHeader.substring(7);
+      const decodedToken = await verifyFirebaseToken(idToken);
+
+      if (!decodedToken) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Invalid Firebase token' },
+        });
+        return;
+      }
+
+      const removed = await teamService.removeMember(
+        req.params.id,
+        decodedToken.uid,
+        req.params.memberId
+      );
+
+      if (!removed) {
+        res.status(404).json({
+          success: false,
+          error: { code: 'NOT_FOUND', message: 'Member not found' },
+        });
+        return;
+      }
+
+      res.json({
+        success: true,
+        data: { removed: req.params.memberId },
+      });
+    } catch (error) {
+      if (error instanceof Error && (error.message.includes('Permission') || error.message.includes('Cannot'))) {
+        res.status(403).json({
+          success: false,
+          error: { code: 'FORBIDDEN', message: error.message },
+        });
+        return;
+      }
+      handleError(res, error);
+    }
+  });
+
+  /**
+   * Create team invite
+   * POST /api/teams/:id/invites
+   *
+   * Requires Firebase authentication and admin/owner role.
+   */
+  app.post('/api/teams/:id/invites', async (req: Request, res: Response) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' },
+        });
+        return;
+      }
+
+      const idToken = authHeader.substring(7);
+      const decodedToken = await verifyFirebaseToken(idToken);
+
+      if (!decodedToken) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Invalid Firebase token' },
+        });
+        return;
+      }
+
+      const { email, role, workspaceIds } = req.body;
+
+      if (!email) {
+        res.status(400).json({
+          success: false,
+          error: { code: 'BAD_REQUEST', message: 'email is required' },
+        });
+        return;
+      }
+
+      if (!role || !['admin', 'member', 'viewer'].includes(role)) {
+        res.status(400).json({
+          success: false,
+          error: { code: 'BAD_REQUEST', message: 'role must be admin, member, or viewer' },
+        });
+        return;
+      }
+
+      const invite = await teamService.createInvite(
+        req.params.id,
+        decodedToken.uid,
+        email,
+        role as TeamRole,
+        workspaceIds
+      );
+
+      res.status(201).json({
+        success: true,
+        data: {
+          id: invite.id,
+          email: invite.email,
+          role: invite.role,
+          expiresAt: invite.expiresAt,
+          // Include invite link token for sharing
+          inviteToken: invite.token,
+        },
+      });
+    } catch (error) {
+      if (error instanceof Error && (error.message.includes('Permission') || error.message.includes('already'))) {
+        res.status(403).json({
+          success: false,
+          error: { code: 'FORBIDDEN', message: error.message },
+        });
+        return;
+      }
+      handleError(res, error);
+    }
+  });
+
+  /**
+   * List pending invites
+   * GET /api/teams/:id/invites
+   *
+   * Requires Firebase authentication and admin/owner role.
+   */
+  app.get('/api/teams/:id/invites', async (req: Request, res: Response) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' },
+        });
+        return;
+      }
+
+      const idToken = authHeader.substring(7);
+      const decodedToken = await verifyFirebaseToken(idToken);
+
+      if (!decodedToken) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Invalid Firebase token' },
+        });
+        return;
+      }
+
+      const teamId = req.params.id;
+      const member = await teamService.getMemberByTenantId(teamId, decodedToken.uid);
+
+      if (!member || (member.role !== 'owner' && member.role !== 'admin')) {
+        res.status(403).json({
+          success: false,
+          error: { code: 'FORBIDDEN', message: 'Admin or owner access required' },
+        });
+        return;
+      }
+
+      const invites = await teamService.listInvites(teamId);
+
+      res.json({
+        success: true,
+        data: invites.map((inv) => ({
+          id: inv.id,
+          email: inv.email,
+          role: inv.role,
+          createdAt: inv.createdAt,
+          expiresAt: inv.expiresAt,
+        })),
+      });
+    } catch (error) {
+      handleError(res, error);
+    }
+  });
+
+  /**
+   * Cancel invite
+   * DELETE /api/teams/:id/invites/:inviteId
+   *
+   * Requires Firebase authentication and admin/owner role.
+   */
+  app.delete('/api/teams/:id/invites/:inviteId', async (req: Request, res: Response) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' },
+        });
+        return;
+      }
+
+      const idToken = authHeader.substring(7);
+      const decodedToken = await verifyFirebaseToken(idToken);
+
+      if (!decodedToken) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Invalid Firebase token' },
+        });
+        return;
+      }
+
+      const cancelled = await teamService.cancelInvite(
+        req.params.id,
+        decodedToken.uid,
+        req.params.inviteId
+      );
+
+      if (!cancelled) {
+        res.status(404).json({
+          success: false,
+          error: { code: 'NOT_FOUND', message: 'Invite not found' },
+        });
+        return;
+      }
+
+      res.json({
+        success: true,
+        data: { cancelled: req.params.inviteId },
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('Permission')) {
+        res.status(403).json({
+          success: false,
+          error: { code: 'FORBIDDEN', message: error.message },
+        });
+        return;
+      }
+      handleError(res, error);
+    }
+  });
+
+  /**
+   * Accept invite (public endpoint)
+   * POST /api/invites/:token/accept
+   *
+   * Requires Firebase authentication.
+   */
+  app.post('/api/invites/:token/accept', async (req: Request, res: Response) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' },
+        });
+        return;
+      }
+
+      const idToken = authHeader.substring(7);
+      const decodedToken = await verifyFirebaseToken(idToken);
+
+      if (!decodedToken) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Invalid Firebase token' },
+        });
+        return;
+      }
+
+      const { name } = req.body;
+      const email = decodedToken.email;
+
+      if (!email) {
+        res.status(400).json({
+          success: false,
+          error: { code: 'BAD_REQUEST', message: 'Email is required in Firebase token' },
+        });
+        return;
+      }
+
+      const member = await teamService.acceptInvite(
+        req.params.token,
+        decodedToken.uid,
+        email,
+        name || decodedToken.name
+      );
+
+      res.status(201).json({
+        success: true,
+        data: member,
+      });
+    } catch (error) {
+      if (error instanceof Error) {
+        if (error.message.includes('Invalid') || error.message.includes('expired')) {
+          res.status(400).json({
+            success: false,
+            error: { code: 'BAD_REQUEST', message: error.message },
+          });
+          return;
+        }
+        if (error.message.includes('already')) {
+          res.status(409).json({
+            success: false,
+            error: { code: 'CONFLICT', message: error.message },
+          });
+          return;
+        }
+      }
+      handleError(res, error);
+    }
+  });
+
+  /**
+   * Grant workspace permission to member
+   * PUT /api/teams/:id/workspaces/:wsId/members/:memberId
+   *
+   * Requires Firebase authentication and admin/owner role.
+   */
+  app.put('/api/teams/:id/workspaces/:wsId/members/:memberId', async (req: Request, res: Response) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' },
+        });
+        return;
+      }
+
+      const idToken = authHeader.substring(7);
+      const decodedToken = await verifyFirebaseToken(idToken);
+
+      if (!decodedToken) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Invalid Firebase token' },
+        });
+        return;
+      }
+
+      const { permission } = req.body;
+
+      if (!permission || !['read', 'write', 'admin'].includes(permission)) {
+        res.status(400).json({
+          success: false,
+          error: { code: 'BAD_REQUEST', message: 'permission must be read, write, or admin' },
+        });
+        return;
+      }
+
+      await teamService.grantWorkspacePermission(
+        req.params.id,
+        decodedToken.uid,
+        req.params.memberId,
+        req.params.wsId,
+        permission
+      );
+
+      res.json({
+        success: true,
+        data: { granted: true },
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('Permission')) {
+        res.status(403).json({
+          success: false,
+          error: { code: 'FORBIDDEN', message: error.message },
+        });
+        return;
+      }
+      handleError(res, error);
+    }
+  });
+
+  /**
+   * Revoke workspace permission from member
+   * DELETE /api/teams/:id/workspaces/:wsId/members/:memberId
+   *
+   * Requires Firebase authentication and admin/owner role.
+   */
+  app.delete('/api/teams/:id/workspaces/:wsId/members/:memberId', async (req: Request, res: Response) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' },
+        });
+        return;
+      }
+
+      const idToken = authHeader.substring(7);
+      const decodedToken = await verifyFirebaseToken(idToken);
+
+      if (!decodedToken) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Invalid Firebase token' },
+        });
+        return;
+      }
+
+      await teamService.revokeWorkspacePermission(
+        req.params.id,
+        decodedToken.uid,
+        req.params.memberId,
+        req.params.wsId
+      );
+
+      res.json({
+        success: true,
+        data: { revoked: true },
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('Permission')) {
+        res.status(403).json({
+          success: false,
+          error: { code: 'FORBIDDEN', message: error.message },
+        });
+        return;
+      }
+      handleError(res, error);
+    }
+  });
+
+  /**
+   * Get member's workspace permissions
+   * GET /api/teams/:id/members/:memberId/workspaces
+   *
+   * Requires Firebase authentication and team membership.
+   */
+  app.get('/api/teams/:id/members/:memberId/workspaces', async (req: Request, res: Response) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' },
+        });
+        return;
+      }
+
+      const idToken = authHeader.substring(7);
+      const decodedToken = await verifyFirebaseToken(idToken);
+
+      if (!decodedToken) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Invalid Firebase token' },
+        });
+        return;
+      }
+
+      const teamId = req.params.id;
+      const currentMember = await teamService.getMemberByTenantId(teamId, decodedToken.uid);
+
+      if (!currentMember) {
+        res.status(403).json({
+          success: false,
+          error: { code: 'FORBIDDEN', message: 'You are not a member of this team' },
+        });
+        return;
+      }
+
+      const workspaces = await teamService.listMemberWorkspaces(teamId, req.params.memberId);
+
+      res.json({
+        success: true,
+        data: workspaces,
+      });
+    } catch (error) {
+      handleError(res, error);
+    }
+  });
+
+  /**
+   * Get team audit log
+   * GET /api/teams/:id/audit
+   *
+   * Requires Firebase authentication and admin/owner role.
+   */
+  app.get('/api/teams/:id/audit', async (req: Request, res: Response) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' },
+        });
+        return;
+      }
+
+      const idToken = authHeader.substring(7);
+      const decodedToken = await verifyFirebaseToken(idToken);
+
+      if (!decodedToken) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Invalid Firebase token' },
+        });
+        return;
+      }
+
+      const teamId = req.params.id;
+      const member = await teamService.getMemberByTenantId(teamId, decodedToken.uid);
+
+      if (!member || (member.role !== 'owner' && member.role !== 'admin')) {
+        res.status(403).json({
+          success: false,
+          error: { code: 'FORBIDDEN', message: 'Admin or owner access required' },
+        });
+        return;
+      }
+
+      const limit = parseInt(req.query.limit as string) || 50;
+      const offset = parseInt(req.query.offset as string) || 0;
+
+      const auditLog = await teamService.getAuditLog(teamId, limit, offset);
+
+      res.json({
+        success: true,
+        data: auditLog,
+      });
+    } catch (error) {
+      handleError(res, error);
+    }
+  });
 
   // ============================================
   // OAuth 2.0 Endpoints (for Claude Desktop integration)

@@ -18,18 +18,18 @@ const stripe = stripeSecretKey
 const PRICE_IDS: Record<string, string> = {
   price_pro_monthly: process.env.STRIPE_PRICE_PRO || 'price_1SqTaOLUbfmx8MWFecrr4ng8',
   price_team_monthly: process.env.STRIPE_PRICE_TEAM || 'price_1SqTaOLUbfmx8MWFdxHsCoPz',
-  price_workspace_addon: process.env.STRIPE_PRICE_WORKSPACE_ADDON || 'price_workspace_addon', // TODO: Create in Stripe
+  price_workspace_addon: process.env.STRIPE_PRICE_WORKSPACE_ADDON || 'price_1Sr87zLUbfmx8MWFPESMdkwg',
   // Direct price IDs (frontend sends these)
   'price_1SqTaOLUbfmx8MWFecrr4ng8': 'price_1SqTaOLUbfmx8MWFecrr4ng8',
   'price_1SqTaOLUbfmx8MWFdxHsCoPz': 'price_1SqTaOLUbfmx8MWFdxHsCoPz',
 };
 
 // Plan limits
-const PLAN_LIMITS: Record<string, { maxMemories: number; maxWorkspaces: number }> = {
-  free: { maxMemories: 500, maxWorkspaces: 1 },
-  pro: { maxMemories: 5000, maxWorkspaces: 3 },
-  team: { maxMemories: 25000, maxWorkspaces: -1 },
-  enterprise: { maxMemories: -1, maxWorkspaces: -1 },
+const PLAN_LIMITS: Record<string, { maxMemories: number; maxWorkspaces: number; maxTeamMembers: number }> = {
+  free: { maxMemories: 500, maxWorkspaces: 1, maxTeamMembers: 1 },
+  pro: { maxMemories: 5000, maxWorkspaces: 3, maxTeamMembers: 1 },
+  team: { maxMemories: 25000, maxWorkspaces: -1, maxTeamMembers: 10 },
+  enterprise: { maxMemories: -1, maxWorkspaces: -1, maxTeamMembers: -1 },
 };
 
 export interface CustomerRecord {
@@ -211,6 +211,8 @@ export async function handleWebhookEvent(
     case 'customer.subscription.updated': {
       const subscription = event.data.object as Stripe.Subscription;
       await handleSubscriptionChange(storageClient, subscription);
+      // Also sync add-on quantities (handles portal modifications)
+      await syncSubscriptionAddons(storageClient, subscription);
       break;
     }
 
@@ -340,6 +342,55 @@ async function handleSubscriptionCanceled(
   }
 
   console.log(`[Billing] Downgraded tenant ${tenantId} to free plan`);
+}
+
+/**
+ * Sync workspace add-on quantities from subscription items
+ * Called when subscription is created/updated to ensure add-on count is accurate
+ */
+async function syncSubscriptionAddons(
+  storageClient: StorageClient,
+  subscription: Stripe.Subscription
+): Promise<void> {
+  const customerId =
+    typeof subscription.customer === 'string'
+      ? subscription.customer
+      : subscription.customer.id;
+
+  // Get tenant ID
+  let tenantId = subscription.metadata?.tenantId;
+  if (!tenantId) {
+    tenantId = await storageClient.get(`stripe_customer:${customerId}`);
+  }
+
+  if (!tenantId) {
+    console.error(`[Billing] syncAddons: No tenant found for Stripe customer ${customerId}`);
+    return;
+  }
+
+  // Find workspace addon item in subscription
+  const addonPriceId = PRICE_IDS.price_workspace_addon;
+  const addonItem = subscription.items.data.find(
+    (item) => item.price.id === addonPriceId
+  );
+
+  const addonQuantity = addonItem?.quantity || 0;
+
+  // Get current stored quantity
+  const customerData = await storageClient.hgetall(`customer:${tenantId}`);
+  const currentStored = parseInt(customerData?.workspaceAddons || '0') || 0;
+
+  // Only update if different (avoid unnecessary writes)
+  if (addonQuantity !== currentStored) {
+    console.log(
+      `[Billing] Syncing workspace add-ons for tenant ${tenantId}: ${currentStored} -> ${addonQuantity}`
+    );
+
+    await storageClient.hset(`customer:${tenantId}`, {
+      workspaceAddons: addonQuantity.toString(),
+      updatedAt: Date.now().toString(),
+    });
+  }
 }
 
 /**

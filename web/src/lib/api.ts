@@ -86,6 +86,57 @@ export interface TenantInfo {
   };
 }
 
+// Team types
+export type TeamRole = "owner" | "admin" | "member" | "viewer";
+export type WorkspacePermission = "none" | "read" | "write" | "admin";
+
+export interface Team {
+  id: string;
+  name: string;
+  ownerId: string;
+  plan: "free" | "pro" | "team" | "enterprise";
+  createdAt: number;
+  updatedAt: number;
+  settings: {
+    allowMemberInvites: boolean;
+    defaultWorkspacePermission: WorkspacePermission;
+    requireApprovalForWorkspaces: boolean;
+  };
+}
+
+export interface TeamMember {
+  id: string;
+  teamId: string;
+  tenantId: string;
+  email: string;
+  name?: string;
+  role: TeamRole;
+  invitedBy: string;
+  invitedAt: number;
+  joinedAt?: number;
+  status: "pending" | "active" | "suspended";
+}
+
+export interface TeamInvite {
+  id: string;
+  teamId: string;
+  email: string;
+  role: TeamRole;
+  invitedBy: string;
+  createdAt: number;
+  expiresAt: number;
+  token: string;
+  workspaceIds?: string[];
+}
+
+export interface TeamMemberWorkspacePermission {
+  memberId: string;
+  workspaceId: string;
+  permission: WorkspacePermission;
+  grantedBy: string;
+  grantedAt: number;
+}
+
 export interface Stats {
   tenantId: string;
   plan: string;
@@ -224,6 +275,125 @@ class ApiClient {
 
   async getStats(): Promise<ApiResponse<Stats>> {
     return this.request<Stats>("/api/stats");
+  }
+
+  // Teams
+  async getMyTeam(): Promise<ApiResponse<Team>> {
+    return this.request<Team>("/api/teams/me");
+  }
+
+  async createTeam(name: string): Promise<ApiResponse<Team>> {
+    return this.request<Team>("/api/teams", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+  }
+
+  async updateTeam(
+    teamId: string,
+    data: Partial<Team>
+  ): Promise<ApiResponse<Team>> {
+    return this.request<Team>(`/api/teams/${teamId}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  // Team Members
+  async getTeamMembers(teamId: string): Promise<ApiResponse<TeamMember[]>> {
+    return this.request<TeamMember[]>(`/api/teams/${teamId}/members`);
+  }
+
+  async inviteTeamMember(
+    teamId: string,
+    email: string,
+    role: TeamRole
+  ): Promise<ApiResponse<TeamInvite>> {
+    return this.request<TeamInvite>(`/api/teams/${teamId}/invites`, {
+      method: "POST",
+      body: JSON.stringify({ email, role }),
+    });
+  }
+
+  async updateMemberRole(
+    teamId: string,
+    memberId: string,
+    role: TeamRole
+  ): Promise<ApiResponse<TeamMember>> {
+    return this.request<TeamMember>(
+      `/api/teams/${teamId}/members/${memberId}/role`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ role }),
+      }
+    );
+  }
+
+  async removeMember(
+    teamId: string,
+    memberId: string
+  ): Promise<ApiResponse<{ removed: string }>> {
+    return this.request<{ removed: string }>(
+      `/api/teams/${teamId}/members/${memberId}`,
+      {
+        method: "DELETE",
+      }
+    );
+  }
+
+  // Workspace Permissions
+  async getMemberWorkspaces(
+    teamId: string,
+    memberId: string
+  ): Promise<ApiResponse<TeamMemberWorkspacePermission[]>> {
+    return this.request<TeamMemberWorkspacePermission[]>(
+      `/api/teams/${teamId}/members/${memberId}/workspaces`
+    );
+  }
+
+  async grantWorkspaceAccess(
+    teamId: string,
+    workspaceId: string,
+    memberId: string,
+    permission: WorkspacePermission
+  ): Promise<ApiResponse<TeamMemberWorkspacePermission>> {
+    return this.request<TeamMemberWorkspacePermission>(
+      `/api/teams/${teamId}/workspaces/${workspaceId}/members/${memberId}`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ permission }),
+      }
+    );
+  }
+
+  async revokeWorkspaceAccess(
+    teamId: string,
+    workspaceId: string,
+    memberId: string
+  ): Promise<ApiResponse<{ revoked: boolean }>> {
+    return this.request<{ revoked: boolean }>(
+      `/api/teams/${teamId}/workspaces/${workspaceId}/members/${memberId}`,
+      {
+        method: "DELETE",
+      }
+    );
+  }
+
+  // Team Invites
+  async getPendingInvites(teamId: string): Promise<ApiResponse<TeamInvite[]>> {
+    return this.request<TeamInvite[]>(`/api/teams/${teamId}/invites`);
+  }
+
+  async cancelInvite(
+    teamId: string,
+    inviteId: string
+  ): Promise<ApiResponse<{ cancelled: boolean }>> {
+    return this.request<{ cancelled: boolean }>(
+      `/api/teams/${teamId}/invites/${inviteId}`,
+      {
+        method: "DELETE",
+      }
+    );
   }
 }
 

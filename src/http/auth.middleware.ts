@@ -10,10 +10,11 @@
 import { randomBytes } from 'crypto';
 import { ulid } from 'ulid';
 import { Response, NextFunction } from 'express';
-import { AuthenticatedRequest, ApiKeyRecord, PLAN_LIMITS } from './types.js';
+import { AuthenticatedRequest, ApiKeyRecord, PLAN_LIMITS, TeamContext } from './types.js';
 import { StorageClient } from '../persistence/storage-client.js';
 import { OAuthService } from './oauth.service.js';
 import { WorkspaceService } from './workspace.service.js';
+import { TeamService } from './team.service.js';
 import { createWorkspaceId } from '../types.js';
 
 /**
@@ -144,6 +145,29 @@ export function createAuthMiddleware(storageClient: StorageClient, oauthService?
         const addonWorkspaces = parseInt(customerData?.workspaceAddons || '0') || 0;
         const basePlanLimits = PLAN_LIMITS[record.plan];
 
+        // Load team context if user is part of a team
+        const teamContext = await loadTeamContext(storageClient, record.tenantId);
+
+        // Check workspace permissions for team members
+        if (teamContext) {
+          const hasAccess = await checkWorkspaceAccess(
+            storageClient,
+            teamContext,
+            workspaceId
+          );
+
+          if (!hasAccess) {
+            res.status(403).json({
+              success: false,
+              error: {
+                code: 'WORKSPACE_ACCESS_DENIED',
+                message: `You do not have access to workspace '${workspacePath}'. Contact your team admin to request access.`,
+              },
+            });
+            return;
+          }
+        }
+
         // Attach tenant context to request
         req.tenant = {
           tenantId: record.tenantId,
@@ -163,6 +187,7 @@ export function createAuthMiddleware(storageClient: StorageClient, oauthService?
             path: workspacePath,
             isDefault: isDefaultWorkspace,
           },
+          team: teamContext,
         };
 
         next();
@@ -245,6 +270,29 @@ export function createAuthMiddleware(storageClient: StorageClient, oauthService?
         const oauthAddonWorkspaces = parseInt(oauthCustomerData?.workspaceAddons || '0') || 0;
         const oauthBasePlanLimits = PLAN_LIMITS[bestPlan];
 
+        // Load team context if user is part of a team
+        const oauthTeamContext = await loadTeamContext(storageClient, tokenData.tenantId);
+
+        // Check workspace permissions for team members
+        if (oauthTeamContext) {
+          const hasAccess = await checkWorkspaceAccess(
+            storageClient,
+            oauthTeamContext,
+            workspaceId
+          );
+
+          if (!hasAccess) {
+            res.status(403).json({
+              success: false,
+              error: {
+                code: 'WORKSPACE_ACCESS_DENIED',
+                message: `You do not have access to workspace '${workspacePath}'. Contact your team admin to request access.`,
+              },
+            });
+            return;
+          }
+        }
+
         // Attach tenant context to request (OAuth auth)
         req.tenant = {
           tenantId: tokenData.tenantId,
@@ -264,6 +312,7 @@ export function createAuthMiddleware(storageClient: StorageClient, oauthService?
             path: workspacePath,
             isDefault: isDefaultWorkspace,
           },
+          team: oauthTeamContext,
         };
 
         console.log(
@@ -508,4 +557,64 @@ function generateSecureToken(length: number): string {
     result += chars[bytes[i] % chars.length];
   }
   return result;
+}
+
+/**
+ * Load team context for a tenant if they are part of a team
+ * Returns undefined if the tenant is not a team member
+ */
+async function loadTeamContext(
+  storageClient: StorageClient,
+  tenantId: string
+): Promise<TeamContext | undefined> {
+  const teamService = new TeamService(storageClient);
+
+  // Check if tenant is part of a team
+  const teamId = await teamService.getTeamForTenant(tenantId);
+
+  if (!teamId) {
+    return undefined;
+  }
+
+  // Get the member info for this tenant
+  const member = await teamService.getMemberByTenantId(teamId, tenantId);
+
+  if (!member) {
+    return undefined;
+  }
+
+  return {
+    id: teamId,
+    memberId: member.id,
+    role: member.role,
+  };
+}
+
+/**
+ * Check if a team member has access to a workspace
+ * Owners and admins have access to all workspaces
+ * Members and viewers need explicit permission
+ */
+async function checkWorkspaceAccess(
+  storageClient: StorageClient,
+  teamContext: TeamContext,
+  workspaceId: string
+): Promise<boolean> {
+  // Owners and admins have access to all workspaces
+  if (teamContext.role === 'owner' || teamContext.role === 'admin') {
+    return true;
+  }
+
+  // For members and viewers, check explicit workspace permission
+  const teamService = new TeamService(storageClient);
+  const permission = await teamService.getWorkspacePermission(
+    teamContext.id,
+    teamContext.memberId,
+    workspaceId
+  );
+
+  // 'none' means no access, any other permission allows access
+  // For viewers, 'read' or higher is required
+  // For members, 'read' or higher is required (write operations will be checked separately if needed)
+  return permission !== 'none';
 }

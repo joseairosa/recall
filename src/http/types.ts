@@ -118,17 +118,21 @@ export const PLAN_LIMITS = {
   free: {
     maxMemories: 500,
     maxWorkspaces: 1,
+    maxTeamMembers: 1, // Owner only (can't create teams on free)
   },
   pro: {
     maxMemories: 5000,
     maxWorkspaces: 3,
+    maxTeamMembers: 1, // Owner only (can't create teams on pro)
   },
   team: {
     maxMemories: 25000,
     maxWorkspaces: -1, // unlimited
+    maxTeamMembers: 10, // 10 members included
   },
   enterprise: {
     maxMemories: -1, // unlimited
     maxWorkspaces: -1,
+    maxTeamMembers: -1, // unlimited
   },
 } as const;

@@ -15,6 +15,8 @@ import {
   LogOut,
   Menu,
   X,
+  Users,
+  BookOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -26,6 +28,8 @@ const navigation = [
   { name: "API Keys", href: "/dashboard/keys", icon: Key },
   { name: "Memories", href: "/dashboard/memories", icon: Database },
   { name: "Audit Log", href: "/dashboard/audit", icon: FileText },
+  { name: "Docs", href: "/dashboard/docs", icon: BookOpen },
+  { name: "Team", href: "/dashboard/team", icon: Users },
   { name: "Billing", href: "/dashboard/billing", icon: CreditCard },
   { name: "Settings", href: "/dashboard/settings", icon: Settings },
 ];

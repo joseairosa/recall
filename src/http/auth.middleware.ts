@@ -123,16 +123,26 @@ export function createAuthMiddleware(storageClient: StorageClient, oauthService?
         );
 
         if (!workspaceResult) {
-          const limit = PLAN_LIMITS[record.plan].maxWorkspaces;
+          // Get workspace add-ons from customer record
+          const customerData = await storageClient.hgetall(`customer:${record.tenantId}`);
+          const addonWorkspaces = parseInt(customerData?.workspaceAddons || '0') || 0;
+          const baseLimit = PLAN_LIMITS[record.plan].maxWorkspaces;
+          const totalLimit = baseLimit === -1 ? -1 : baseLimit + addonWorkspaces;
+
           res.status(403).json({
             success: false,
             error: {
               code: 'WORKSPACE_LIMIT_EXCEEDED',
-              message: `Your ${record.plan} plan allows ${limit} workspace(s). Upgrade to add more.`,
+              message: `Your ${record.plan} plan allows ${totalLimit} workspace(s). Upgrade to add more.`,
             },
           });
           return;
         }
+
+        // Get workspace add-ons from customer record for limits
+        const customerData = await storageClient.hgetall(`customer:${record.tenantId}`);
+        const addonWorkspaces = parseInt(customerData?.workspaceAddons || '0') || 0;
+        const basePlanLimits = PLAN_LIMITS[record.plan];
 
         // Attach tenant context to request
         req.tenant = {
@@ -140,7 +150,14 @@ export function createAuthMiddleware(storageClient: StorageClient, oauthService?
           apiKey: token,
           apiKeyId: record.id,
           plan: record.plan,
-          limits: PLAN_LIMITS[record.plan],
+          limits: {
+            maxMemories: basePlanLimits.maxMemories,
+            maxWorkspaces: basePlanLimits.maxWorkspaces === -1
+              ? -1
+              : basePlanLimits.maxWorkspaces + addonWorkspaces,
+            baseWorkspaces: basePlanLimits.maxWorkspaces,
+            addonWorkspaces,
+          },
           workspace: {
             id: workspaceId,
             path: workspacePath,
@@ -207,16 +224,26 @@ export function createAuthMiddleware(storageClient: StorageClient, oauthService?
         );
 
         if (!workspaceResult) {
-          const limit = PLAN_LIMITS[bestPlan].maxWorkspaces;
+          // Get workspace add-ons from customer record
+          const oauthCustomerData = await storageClient.hgetall(`customer:${tokenData.tenantId}`);
+          const oauthAddonWorkspaces = parseInt(oauthCustomerData?.workspaceAddons || '0') || 0;
+          const oauthBaseLimit = PLAN_LIMITS[bestPlan].maxWorkspaces;
+          const oauthTotalLimit = oauthBaseLimit === -1 ? -1 : oauthBaseLimit + oauthAddonWorkspaces;
+
           res.status(403).json({
             success: false,
             error: {
               code: 'WORKSPACE_LIMIT_EXCEEDED',
-              message: `Your ${bestPlan} plan allows ${limit} workspace(s). Upgrade to add more.`,
+              message: `Your ${bestPlan} plan allows ${oauthTotalLimit} workspace(s). Upgrade to add more.`,
             },
           });
           return;
         }
+
+        // Get workspace add-ons from customer record for limits
+        const oauthCustomerData = await storageClient.hgetall(`customer:${tokenData.tenantId}`);
+        const oauthAddonWorkspaces = parseInt(oauthCustomerData?.workspaceAddons || '0') || 0;
+        const oauthBasePlanLimits = PLAN_LIMITS[bestPlan];
 
         // Attach tenant context to request (OAuth auth)
         req.tenant = {
@@ -224,7 +251,14 @@ export function createAuthMiddleware(storageClient: StorageClient, oauthService?
           apiKey: `oauth:${token.substring(0, 8)}`, // OAuth identifier
           apiKeyId: 'oauth', // OAuth sessions don't have API key IDs
           plan: bestPlan,
-          limits: PLAN_LIMITS[bestPlan],
+          limits: {
+            maxMemories: oauthBasePlanLimits.maxMemories,
+            maxWorkspaces: oauthBasePlanLimits.maxWorkspaces === -1
+              ? -1
+              : oauthBasePlanLimits.maxWorkspaces + oauthAddonWorkspaces,
+            baseWorkspaces: oauthBasePlanLimits.maxWorkspaces,
+            addonWorkspaces: oauthAddonWorkspaces,
+          },
           workspace: {
             id: workspaceId,
             path: workspacePath,

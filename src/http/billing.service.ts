@@ -18,6 +18,7 @@ const stripe = stripeSecretKey
 const PRICE_IDS: Record<string, string> = {
   price_pro_monthly: process.env.STRIPE_PRICE_PRO || 'price_1SqTaOLUbfmx8MWFecrr4ng8',
   price_team_monthly: process.env.STRIPE_PRICE_TEAM || 'price_1SqTaOLUbfmx8MWFdxHsCoPz',
+  price_workspace_addon: process.env.STRIPE_PRICE_WORKSPACE_ADDON || 'price_workspace_addon', // TODO: Create in Stripe
   // Direct price IDs (frontend sends these)
   'price_1SqTaOLUbfmx8MWFecrr4ng8': 'price_1SqTaOLUbfmx8MWFecrr4ng8',
   'price_1SqTaOLUbfmx8MWFdxHsCoPz': 'price_1SqTaOLUbfmx8MWFdxHsCoPz',
@@ -39,6 +40,7 @@ export interface CustomerRecord {
   plan: string;
   subscriptionId?: string;
   subscriptionStatus?: string;
+  workspaceAddons?: number;  // Additional workspaces purchased as add-ons
   createdAt: number;
   updatedAt: number;
 }
@@ -68,6 +70,7 @@ export async function getOrCreateCustomer(
       plan: existingCustomer.plan || 'free',
       subscriptionId: existingCustomer.subscriptionId,
       subscriptionStatus: existingCustomer.subscriptionStatus,
+      workspaceAddons: parseInt(existingCustomer.workspaceAddons) || 0,
       createdAt: parseInt(existingCustomer.createdAt) || Date.now(),
       updatedAt: parseInt(existingCustomer.updatedAt) || Date.now(),
     };
@@ -88,6 +91,7 @@ export async function getOrCreateCustomer(
     email,
     name,
     plan: 'free',
+    workspaceAddons: 0,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
@@ -98,6 +102,7 @@ export async function getOrCreateCustomer(
     email: record.email || '',
     name: record.name || '',
     plan: record.plan,
+    workspaceAddons: '0',
     createdAt: record.createdAt.toString(),
     updatedAt: record.updatedAt.toString(),
   });
@@ -368,4 +373,148 @@ export function isStripeConfigured(): boolean {
  */
 export function getPlanLimits(plan: string): { maxMemories: number; maxWorkspaces: number } {
   return PLAN_LIMITS[plan] || PLAN_LIMITS.free;
+}
+
+/**
+ * Get current add-ons for a customer
+ */
+export async function getCustomerAddons(
+  storageClient: StorageClient,
+  tenantId: string
+): Promise<{ workspaceAddons: number }> {
+  const customerData = await storageClient.hgetall(`customer:${tenantId}`);
+  return {
+    workspaceAddons: parseInt(customerData?.workspaceAddons || '0') || 0,
+  };
+}
+
+/**
+ * Purchase or update workspace add-ons
+ * If customer has an active subscription, adds a subscription item
+ * Otherwise, creates a new checkout session
+ */
+export async function purchaseWorkspaceAddons(
+  storageClient: StorageClient,
+  tenantId: string,
+  quantity: number,
+  successUrl?: string,
+  cancelUrl?: string
+): Promise<{ url?: string; updated?: boolean; newTotal?: number }> {
+  if (!stripe) {
+    throw new Error('Stripe is not configured');
+  }
+
+  if (quantity < 1) {
+    throw new Error('Quantity must be at least 1');
+  }
+
+  // Get customer record
+  const customerData = await storageClient.hgetall(`customer:${tenantId}`);
+
+  if (!customerData || !customerData.stripeCustomerId) {
+    throw new Error('No Stripe customer found. Please subscribe to a plan first.');
+  }
+
+  const currentAddons = parseInt(customerData.workspaceAddons || '0') || 0;
+
+  // Check if customer has an active subscription
+  if (customerData.subscriptionId && customerData.subscriptionStatus === 'active') {
+    // Add or update subscription item for workspace add-ons
+    const subscription = await stripe.subscriptions.retrieve(customerData.subscriptionId);
+
+    // Check if workspace addon item already exists
+    const addonPriceId = PRICE_IDS.price_workspace_addon;
+    const existingItem = subscription.items.data.find(
+      (item) => item.price.id === addonPriceId
+    );
+
+    const newTotal = currentAddons + quantity;
+
+    if (existingItem) {
+      // Update existing item quantity
+      await stripe.subscriptionItems.update(existingItem.id, {
+        quantity: newTotal,
+      });
+    } else {
+      // Add new subscription item
+      await stripe.subscriptionItems.create({
+        subscription: customerData.subscriptionId,
+        price: addonPriceId,
+        quantity: newTotal,
+      });
+    }
+
+    // Update customer record
+    await storageClient.hset(`customer:${tenantId}`, {
+      workspaceAddons: newTotal.toString(),
+      updatedAt: Date.now().toString(),
+    });
+
+    return { updated: true, newTotal };
+  } else {
+    // No active subscription - create checkout session for add-ons
+    // Customer needs to have a base plan first
+    throw new Error('Active subscription required. Please subscribe to a plan first.');
+  }
+}
+
+/**
+ * Update workspace add-on quantity (can increase or decrease)
+ */
+export async function updateWorkspaceAddons(
+  storageClient: StorageClient,
+  tenantId: string,
+  newQuantity: number
+): Promise<{ updated: boolean; newTotal: number }> {
+  if (!stripe) {
+    throw new Error('Stripe is not configured');
+  }
+
+  if (newQuantity < 0) {
+    throw new Error('Quantity cannot be negative');
+  }
+
+  // Get customer record
+  const customerData = await storageClient.hgetall(`customer:${tenantId}`);
+
+  if (!customerData || !customerData.stripeCustomerId) {
+    throw new Error('No Stripe customer found');
+  }
+
+  if (!customerData.subscriptionId || customerData.subscriptionStatus !== 'active') {
+    throw new Error('Active subscription required');
+  }
+
+  const subscription = await stripe.subscriptions.retrieve(customerData.subscriptionId);
+  const addonPriceId = PRICE_IDS.price_workspace_addon;
+  const existingItem = subscription.items.data.find(
+    (item) => item.price.id === addonPriceId
+  );
+
+  if (newQuantity === 0) {
+    // Remove the add-on item if it exists
+    if (existingItem) {
+      await stripe.subscriptionItems.del(existingItem.id);
+    }
+  } else if (existingItem) {
+    // Update existing item quantity
+    await stripe.subscriptionItems.update(existingItem.id, {
+      quantity: newQuantity,
+    });
+  } else {
+    // Create new subscription item
+    await stripe.subscriptionItems.create({
+      subscription: customerData.subscriptionId,
+      price: addonPriceId,
+      quantity: newQuantity,
+    });
+  }
+
+  // Update customer record
+  await storageClient.hset(`customer:${tenantId}`, {
+    workspaceAddons: newQuantity.toString(),
+    updatedAt: Date.now().toString(),
+  });
+
+  return { updated: true, newTotal: newQuantity };
 }

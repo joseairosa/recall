@@ -70,12 +70,17 @@ export class WorkspaceService {
       };
     }
 
-    // New workspace - check limit
+    // New workspace - check limit (including add-ons)
     const workspaceCount = await this.getWorkspaceCount(tenantId);
-    const limit =
+    const basePlanLimit =
       PLAN_LIMITS[plan as keyof typeof PLAN_LIMITS]?.maxWorkspaces ?? 1;
 
-    if (limit !== -1 && workspaceCount >= limit) {
+    // Get workspace add-ons from customer record
+    const customerData = await this.storageClient.hgetall(`customer:${tenantId}`);
+    const addonWorkspaces = parseInt(customerData?.workspaceAddons || '0') || 0;
+    const totalLimit = basePlanLimit === -1 ? -1 : basePlanLimit + addonWorkspaces;
+
+    if (totalLimit !== -1 && workspaceCount >= totalLimit) {
       return null; // Limit exceeded
     }
 

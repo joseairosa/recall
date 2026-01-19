@@ -16,6 +16,20 @@ export interface WorkspaceContext {
 }
 
 /**
+ * Team role types for team management
+ */
+export type TeamRole = 'owner' | 'admin' | 'member' | 'viewer';
+
+/**
+ * Team context for team members
+ */
+export interface TeamContext {
+  id: string;
+  memberId: string;
+  role: TeamRole;
+}
+
+/**
  * Tenant information attached to authenticated requests
  */
 export interface TenantContext {
@@ -25,9 +39,12 @@ export interface TenantContext {
   plan: 'free' | 'pro' | 'team' | 'enterprise';
   limits: {
     maxMemories: number;
-    maxWorkspaces: number;
+    maxWorkspaces: number;      // Total = baseWorkspaces + addonWorkspaces
+    baseWorkspaces: number;     // Plan limit only
+    addonWorkspaces: number;    // Purchased add-ons
   };
   workspace: WorkspaceContext;
+  team?: TeamContext;           // Present if user is part of a team
 }
 
 /**

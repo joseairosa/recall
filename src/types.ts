@@ -73,6 +73,10 @@ export const DeleteMemorySchema = z.object({
   memory_id: z.string().describe('ULID of memory to delete'),
 });
 
+// Search output modes for context efficiency (v1.8.1)
+export const SearchOutputMode = z.enum(['full', 'summary', 'compact']);
+export type SearchOutputMode = z.infer<typeof SearchOutputMode>;
+
 // Search schema
 export const SearchMemorySchema = z.object({
   query: z.string().describe('Search query'),
@@ -82,6 +86,12 @@ export const SearchMemorySchema = z.object({
   category: z.string().optional().describe('Filter by category (v1.5.0)'),
   fuzzy: z.boolean().default(false).describe('Enable fuzzy search (v1.5.0)'),
   regex: z.string().optional().describe('Regex pattern for advanced search (v1.5.0)'),
+  output_mode: SearchOutputMode.default('summary').describe(
+    'Output mode for context efficiency (v1.8.1): ' +
+    'full=all fields including content, ' +
+    'summary=no content field (default, recommended), ' +
+    'compact=minimal fields (id, summary, type, similarity only)'
+  ),
 });
 
 // Session organization schema

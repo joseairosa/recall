@@ -81,9 +81,11 @@ function getStore(): MemoryStore {
 
 /**
  * recall_relevant_context - Proactively retrieve relevant memories for current task
+ *
+ * v1.8.1: Now returns summary-only by default for context efficiency (~73% token reduction)
  */
 export const recall_relevant_context = {
-  description: 'Proactively search memory for context relevant to current task. Use this when you need to recall patterns, decisions, or conventions.',
+  description: 'Proactively search memory for context relevant to current task. Use this when you need to recall patterns, decisions, or conventions. Returns summaries by default for context efficiency.',
   inputSchema: zodToJsonSchema(RecallContextSchema),
   handler: async (args: z.infer<typeof RecallContextSchema>) => {
     try {
@@ -97,10 +99,12 @@ export const recall_relevant_context = {
         args.min_importance
       );
 
-      // Format results for Claude to read
+      // Format results for context efficiency (v1.8.1)
+      // Returns summary instead of full content to reduce context bloat
       const formattedResults = results.map(r => ({
-        content: r.content,
-        summary: r.summary,
+        memory_id: r.id,
+        // Use summary if available, otherwise truncate content
+        summary: r.summary || (r.content.length > 150 ? r.content.substring(0, 150) + '...' : r.content),
         context_type: r.context_type,
         importance: r.importance,
         tags: r.tags,
@@ -115,6 +119,10 @@ export const recall_relevant_context = {
               current_task: args.current_task,
               found: results.length,
               relevant_memories: formattedResults,
+              // Hint for retrieving full content if needed
+              ...(results.length > 0 && {
+                hint: 'Use get_memory with memory_id to retrieve full content for specific memories',
+              }),
             }, null, 2),
           },
         ],

@@ -31,6 +31,9 @@ import {
   handleWebhookEvent,
   verifyWebhookSignature,
   isStripeConfigured,
+  getCustomerAddons,
+  purchaseWorkspaceAddons,
+  updateWorkspaceAddons,
 } from './billing.service.js';
 import { OAuthService, OAUTH_CLIENTS, isValidRedirectUri } from './oauth.service.js';
 import { WorkspaceService } from './workspace.service.js';
@@ -48,8 +51,13 @@ export function createHttpServer(storageClient: StorageClient) {
   const auditService = new AuditService(storageClient);
   const oauthService = new OAuthService(storageClient);
 
-  // Middleware
-  app.use(cors());
+  // Middleware - Configure CORS to expose MCP session headers
+  app.use(cors({
+    origin: true, // Allow all origins (API key provides security)
+    credentials: true,
+    exposedHeaders: ['Mcp-Session-Id', 'mcp-session-id'], // Critical for MCP session management
+    allowedHeaders: ['Content-Type', 'Authorization', 'Mcp-Session-Id', 'mcp-session-id'],
+  }));
   // Parse JSON for all routes EXCEPT the Stripe webhook (needs raw body for signature verification)
   app.use((req, res, next) => {
     if (req.originalUrl === '/api/webhooks/stripe') {
@@ -1171,6 +1179,174 @@ export function createHttpServer(storageClient: StorageClient) {
         data: {
           url: session.url,
         },
+      });
+    } catch (error) {
+      handleError(res, error);
+    }
+  });
+
+  // ============================================
+  // Add-on Endpoints
+  // ============================================
+
+  /**
+   * Get current add-ons for user
+   * GET /api/billing/addons
+   *
+   * Requires Firebase authentication.
+   */
+  app.get('/api/billing/addons', async (req: Request, res: Response) => {
+    try {
+      // Verify Firebase token
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' },
+        });
+        return;
+      }
+
+      const idToken = authHeader.substring(7);
+      const decodedToken = await verifyFirebaseToken(idToken);
+
+      if (!decodedToken) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Invalid Firebase token' },
+        });
+        return;
+      }
+
+      const addons = await getCustomerAddons(storageClient, decodedToken.uid);
+
+      res.json({
+        success: true,
+        data: addons,
+      });
+    } catch (error) {
+      handleError(res, error);
+    }
+  });
+
+  /**
+   * Purchase workspace add-ons
+   * POST /api/billing/addons/workspaces
+   *
+   * Requires Firebase authentication and active subscription.
+   */
+  app.post('/api/billing/addons/workspaces', async (req: Request, res: Response) => {
+    try {
+      // Verify Firebase token
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' },
+        });
+        return;
+      }
+
+      const idToken = authHeader.substring(7);
+      const decodedToken = await verifyFirebaseToken(idToken);
+
+      if (!decodedToken) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Invalid Firebase token' },
+        });
+        return;
+      }
+
+      if (!isStripeConfigured()) {
+        res.status(503).json({
+          success: false,
+          error: { code: 'SERVICE_UNAVAILABLE', message: 'Billing is not configured' },
+        });
+        return;
+      }
+
+      const { quantity } = req.body;
+
+      if (!quantity || typeof quantity !== 'number' || quantity < 1) {
+        res.status(400).json({
+          success: false,
+          error: { code: 'BAD_REQUEST', message: 'quantity must be a positive number' },
+        });
+        return;
+      }
+
+      const result = await purchaseWorkspaceAddons(
+        storageClient,
+        decodedToken.uid,
+        quantity
+      );
+
+      res.json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      handleError(res, error);
+    }
+  });
+
+  /**
+   * Update workspace add-on quantity
+   * PUT /api/billing/addons/workspaces
+   *
+   * Requires Firebase authentication and active subscription.
+   */
+  app.put('/api/billing/addons/workspaces', async (req: Request, res: Response) => {
+    try {
+      // Verify Firebase token
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' },
+        });
+        return;
+      }
+
+      const idToken = authHeader.substring(7);
+      const decodedToken = await verifyFirebaseToken(idToken);
+
+      if (!decodedToken) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Invalid Firebase token' },
+        });
+        return;
+      }
+
+      if (!isStripeConfigured()) {
+        res.status(503).json({
+          success: false,
+          error: { code: 'SERVICE_UNAVAILABLE', message: 'Billing is not configured' },
+        });
+        return;
+      }
+
+      const { quantity } = req.body;
+
+      if (typeof quantity !== 'number' || quantity < 0) {
+        res.status(400).json({
+          success: false,
+          error: { code: 'BAD_REQUEST', message: 'quantity must be a non-negative number' },
+        });
+        return;
+      }
+
+      const result = await updateWorkspaceAddons(
+        storageClient,
+        decodedToken.uid,
+        quantity
+      );
+
+      res.json({
+        success: true,
+        data: result,
       });
     } catch (error) {
       handleError(res, error);

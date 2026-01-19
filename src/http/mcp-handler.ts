@@ -208,14 +208,19 @@ function createTenantMcpServer(
       );
 
       if (!workspaceResult) {
-        const limit =
+        // Get total limit including add-ons for accurate error message
+        const customerData = await storageClient.hgetall(`customer:${tenantId}`);
+        const addonWorkspaces = parseInt(customerData?.workspaceAddons || '0') || 0;
+        const basePlanLimit =
           PLAN_LIMITS[plan as keyof typeof PLAN_LIMITS]?.maxWorkspaces ?? 1;
+        const totalLimit = basePlanLimit === -1 ? 'unlimited' : basePlanLimit + addonWorkspaces;
+
         logAudit('set_workspace', true);
         return {
           content: [
             {
               type: 'text',
-              text: `Error: Workspace limit exceeded. Your ${plan} plan allows ${limit} workspace(s). Upgrade to add more.`,
+              text: `Error: Workspace limit exceeded. Your ${plan} plan allows ${totalLimit} workspace(s)${addonWorkspaces > 0 ? ` (${basePlanLimit} base + ${addonWorkspaces} add-ons)` : ''}. Upgrade your plan or purchase workspace add-ons to add more.`,
             },
           ],
           isError: true,

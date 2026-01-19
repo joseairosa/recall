@@ -1060,6 +1060,83 @@ export function createHttpServer(storageClient: StorageClient) {
   app.all('/mcp', authMiddleware, mcpHandler as any);
 
   // ============================================
+  // Workspace Endpoints
+  // ============================================
+
+  /**
+   * List all workspaces for the authenticated tenant
+   * GET /api/workspaces
+   *
+   * Requires Firebase authentication.
+   * Returns workspace list with metadata and usage statistics.
+   */
+  app.get('/api/workspaces', async (req: Request, res: Response) => {
+    try {
+      // Verify Firebase token
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Missing authorization header' },
+        });
+        return;
+      }
+
+      const idToken = authHeader.substring(7);
+      const decodedToken = await verifyFirebaseToken(idToken);
+
+      if (!decodedToken) {
+        res.status(401).json({
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Invalid Firebase token' },
+        });
+        return;
+      }
+
+      const tenantId = decodedToken.uid;
+      const workspaceService = new WorkspaceService(storageClient);
+
+      // Get workspaces (this will also auto-clean orphaned IDs)
+      const workspaces = await workspaceService.listWorkspaces(tenantId);
+      const workspaceCount = await workspaceService.getWorkspaceCount(tenantId);
+
+      // Get plan limits
+      const customerData = await storageClient.hgetall(`customer:${tenantId}`);
+      const plan = customerData?.plan || 'free';
+      const addonWorkspaces = parseInt(customerData?.workspaceAddons || '0') || 0;
+
+      // Import PLAN_LIMITS from types
+      const { PLAN_LIMITS } = await import('./types.js');
+      const basePlanLimit = PLAN_LIMITS[plan as keyof typeof PLAN_LIMITS]?.maxWorkspaces ?? 1;
+      const totalLimit = basePlanLimit === -1 ? -1 : basePlanLimit + addonWorkspaces;
+
+      res.json({
+        success: true,
+        data: {
+          workspaces,
+          count: workspaceCount,
+          limits: {
+            base: basePlanLimit,
+            addons: addonWorkspaces,
+            total: totalLimit,
+            remaining: totalLimit === -1 ? -1 : totalLimit - workspaceCount,
+          },
+          plan,
+        },
+      });
+    } catch (error) {
+      console.error('[Server] Error listing workspaces:', error);
+      res.status(500).json({
+        success: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: error instanceof Error ? error.message : 'Failed to list workspaces',
+        },
+      });
+    }
+  });
+
+  // ============================================
   // Billing Endpoints (Stripe)
   // ============================================
 

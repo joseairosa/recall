@@ -106,9 +106,40 @@ export class WorkspaceService {
 
   /**
    * Get count of workspaces for a tenant
+   * Only counts workspaces with valid metadata (auto-cleans orphaned IDs)
    */
   async getWorkspaceCount(tenantId: string): Promise<number> {
-    return this.storageClient.scard(`tenant:${tenantId}:workspaces`);
+    // Get all workspace IDs in the set
+    const workspaceIds = await this.storageClient.smembers(
+      `tenant:${tenantId}:workspaces`
+    );
+
+    // Count only those with valid metadata
+    let validCount = 0;
+    const orphanedIds: string[] = [];
+
+    for (const wsId of workspaceIds) {
+      const meta = await this.storageClient.hgetall(
+        `tenant:${tenantId}:workspace:${wsId}:meta`
+      );
+      if (meta && Object.keys(meta).length > 0) {
+        validCount++;
+      } else {
+        orphanedIds.push(wsId);
+      }
+    }
+
+    // Auto-cleanup orphaned IDs
+    if (orphanedIds.length > 0) {
+      console.log(
+        `[Workspace] Cleaning up ${orphanedIds.length} orphaned workspace IDs for tenant ${tenantId}`
+      );
+      for (const id of orphanedIds) {
+        await this.storageClient.srem(`tenant:${tenantId}:workspaces`, id);
+      }
+    }
+
+    return validCount;
   }
 
   /**

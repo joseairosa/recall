@@ -105,6 +105,14 @@ export class TeamService {
   }
 
   /**
+   * Get team ID for a tenant (alias for getTenantTeamId)
+   * Used by auth middleware
+   */
+  async getTeamForTenant(tenantId: string): Promise<string | null> {
+    return this.getTenantTeamId(tenantId);
+  }
+
+  /**
    * Update team settings
    */
   async updateTeam(

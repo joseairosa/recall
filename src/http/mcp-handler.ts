@@ -448,14 +448,24 @@ export function createMcpHandler(storageClient: StorageClient) {
         return;
       }
 
-      // If client sends a stale session ID (e.g., after server restart), auto-create a new session
-      // instead of returning an error. This provides better UX as the client doesn't need to retry.
+      // If client sends a stale session ID (e.g., after server restart), return 410 Gone
+      // with a clear message. The MCP client should handle this by clearing the session
+      // and re-initializing. We set a header hint to help debugging.
       if (sessionId && !sessions.has(sessionId)) {
-        console.log(`[MCP] Stale session ID detected: ${sessionId}, auto-creating new session`);
-        // Fall through to create new session below
+        console.log(`[MCP] Stale session ID detected: ${sessionId}, returning 410 to trigger re-init`);
+        res.setHeader('X-Mcp-Session-Expired', 'true');
+        res.status(410).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32000,
+            message: 'Session expired or server restarted. Client should clear session ID and reconnect.',
+          },
+          id: req.body?.id || null,
+        });
+        return;
       }
 
-      // For new sessions (no session ID or stale session), create new server + transport
+      // For new sessions (no session ID), create new server + transport
       const { server, state } = createTenantMcpServer(
         storageClient,
         tenant.tenantId,

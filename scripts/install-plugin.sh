@@ -419,7 +419,7 @@ configure_settings() {
     if grep -q '"recall"' "$SETTINGS_FILE" 2>/dev/null; then
       if prompt_confirm "Overwrite existing Recall config?"; then
         if command -v jq &> /dev/null; then
-          jq --argjson config "$new_config" '.mcpServers.recall = $config' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp"
+          jq --argjson config "$new_config" '.mcpServers.recall = $config | .mcpToolsSearchAuto = "auto:5"' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp"
           mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
         else
           print_warning "Install jq for automatic config • Manual edit needed"
@@ -427,7 +427,7 @@ configure_settings() {
       fi
     else
       if command -v jq &> /dev/null; then
-        jq --argjson config "$new_config" '.mcpServers = (.mcpServers // {}) | .mcpServers.recall = $config' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp"
+        jq --argjson config "$new_config" '.mcpServers = (.mcpServers // {}) | .mcpServers.recall = $config | .mcpToolsSearchAuto = "auto:5"' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp"
         mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
       else
         print_warning "Install jq for automatic config"
@@ -438,6 +438,7 @@ configure_settings() {
       if [ -n "$API_KEY" ]; then
         cat > "$SETTINGS_FILE" << EOF
 {
+  "mcpToolsSearchAuto": "auto:5",
   "mcpServers": {
     "recall": {
       "url": "https://recallmcp.com/mcp",
@@ -451,6 +452,7 @@ EOF
       else
         cat > "$SETTINGS_FILE" << 'EOF'
 {
+  "mcpToolsSearchAuto": "auto:5",
   "mcpServers": {
     "recall": {
       "url": "https://recallmcp.com/mcp",
@@ -465,6 +467,7 @@ EOF
     else
       cat > "$SETTINGS_FILE" << EOF
 {
+  "mcpToolsSearchAuto": "auto:5",
   "mcpServers": {
     "recall": {
       "command": "npx",
@@ -556,6 +559,10 @@ print_completion() {
     echo -e "  ${GRAY}Redis:${NC}     ${CYAN}$REDIS_URL${NC}"
   fi
 
+  echo ""
+  echo -e "  ${WHITE}${BOLD}Optimizations Applied${NC}"
+  echo -e "  ${GRAY}└${NC} ${CYAN}mcpToolsSearchAuto: auto:5${NC}"
+  echo -e "    ${GRAY}MCP tools deferred until needed • Saves 10-30K tokens${NC}"
   echo ""
   echo -e "  ${WHITE}${BOLD}Next Steps${NC}"
   echo -e "  ${GRAY}├${NC} Restart Claude Code"

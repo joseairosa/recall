@@ -1,5 +1,5 @@
-import { initializeApp, getApps } from "firebase/app";
-import { getAuth, GithubAuthProvider, GoogleAuthProvider } from "firebase/auth";
+import { initializeApp, getApps, FirebaseApp } from "firebase/app";
+import { getAuth, GithubAuthProvider, GoogleAuthProvider, Auth } from "firebase/auth";
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -13,10 +13,10 @@ const firebaseConfig = {
 
 // Initialize Firebase only in browser environment
 // This prevents SSG errors during build
-let app;
-let auth;
-let githubProvider: GithubAuthProvider;
-let googleProvider: GoogleAuthProvider;
+let app: FirebaseApp | undefined;
+let auth: Auth | undefined;
+let githubProvider: GithubAuthProvider | undefined;
+let googleProvider: GoogleAuthProvider | undefined;
 
 if (typeof window !== "undefined") {
   // Initialize Firebase (prevent re-initialization in development)

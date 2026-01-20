@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.8.2] - 2026-01-20
+
+### Added
+
+- **RLM (Recursive Language Model) Tools** - Process content larger than context windows
+  - `create_execution_context` - Store large content for processing
+  - `decompose_task` - Break into subtasks (filter/chunk/recursive/aggregate)
+  - `inject_context_snippet` - Extract relevant portions
+  - `update_subtask_result` - Store results
+  - `merge_results` - Combine subtask results
+  - `verify_answer` - Cross-check against source
+  - `should_use_rlm` - Check if RLM is needed for content size
+  - `get_execution_status` - Get chain progress
+
+- **Search Output Modes** - Context efficiency (v1.8.1)
+  - `output_mode` parameter: `full`, `summary`, `compact`
+  - Reduces context usage for large result sets
+
+- **Multi-Provider Embedding Support**
+  - Voyage AI (recommended for quality)
+  - Cohere (multilingual)
+  - OpenAI / Deepseek / Grok
+  - Anthropic (keyword fallback)
+  - Ollama (local inference)
+  - Auto-detection based on available API keys
+
+- **New Prompts**
+  - `session_management` - For long work sessions
+  - `rlm_workflow` - Automatic RLM distribution
+
+- **MemoryStore Improvements**
+  - `clearWorkspace()` - Delete all memories in workspace
+
+### Fixed
+
+- StorageClient interface: Added missing `hget` and `hdel` methods
+- TypeScript type errors for CI build
+
+### Tool Count
+- **40+ tools** (was 28 in v1.6.0)
+
+---
+
 ## [1.7.0] - 2025-12-03
 
 ### Added

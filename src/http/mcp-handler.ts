@@ -505,10 +505,14 @@ export function createMcpHandler(storageClient: StorageClient) {
       if (isStaleSession) {
         console.log(`[MCP] Force-initializing transport for stale session: ${sessionId}`);
         // Access internal properties to force initialization state
+        // MCP SDK 1.25.x wraps a WebStandardStreamableHTTPServerTransport internally
+        // We need to set properties on the internal transport
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const transportInternal = transport as any;
-        transportInternal._initialized = true;
-        transportInternal.sessionId = sessionId;
+        // Check if this is the new architecture (SDK 1.25.x+) with _webStandardTransport
+        const innerTransport = transportInternal._webStandardTransport || transportInternal;
+        innerTransport._initialized = true;
+        innerTransport.sessionId = sessionId;
         // Register the session manually since onsessioninitialized won't be called
         sessions.set(sessionId, {
           server,

@@ -91,15 +91,15 @@ export default function DashboardPage() {
           title="Total Memories"
           value={tenantInfo?.usage.memories.toString() || "0"}
           icon={<Database className="w-5 h-5" />}
-          description={`${tenantInfo?.limits.maxMemories || 0} max`}
+          description={tenantInfo?.limits.maxMemories === -1 ? 'unlimited' : `${tenantInfo?.limits.maxMemories || 0} max`}
         />
         <StatsCard
           title="Usage"
           value={`${usagePercentage}%`}
           icon={<Activity className="w-5 h-5" />}
-          description={`${tenantInfo?.usage.memories || 0} / ${
-            tenantInfo?.limits.maxMemories || 0
-          }`}
+          description={tenantInfo?.limits.maxMemories === -1
+            ? `${tenantInfo?.usage.memories || 0} / unlimited`
+            : `${tenantInfo?.usage.memories || 0} / ${tenantInfo?.limits.maxMemories || 0}`}
         />
         <StatsCard
           title="Plan"
@@ -112,7 +112,7 @@ export default function DashboardPage() {
           title="Workspaces"
           value="1"
           icon={<Clock className="w-5 h-5" />}
-          description={`${tenantInfo?.limits.maxWorkspaces || 1} max`}
+          description={tenantInfo?.limits.maxWorkspaces === -1 ? 'unlimited' : `${tenantInfo?.limits.maxWorkspaces || 1} max`}
         />
       </div>
 

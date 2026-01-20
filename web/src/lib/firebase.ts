@@ -17,22 +17,34 @@ let app: FirebaseApp | undefined;
 let auth: Auth | undefined;
 let githubProvider: GithubAuthProvider | undefined;
 let googleProvider: GoogleAuthProvider | undefined;
+let firebaseError: string | undefined;
 
 if (typeof window !== "undefined") {
-  // Initialize Firebase (prevent re-initialization in development)
-  app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+  // Check if API key is configured
+  if (!firebaseConfig.apiKey) {
+    console.warn("[Firebase] API key not configured - authentication will be disabled");
+    firebaseError = "Firebase API key not configured";
+  } else {
+    try {
+      // Initialize Firebase (prevent re-initialization in development)
+      app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 
-  // Auth instance
-  auth = getAuth(app);
+      // Auth instance
+      auth = getAuth(app);
 
-  // Auth providers
-  githubProvider = new GithubAuthProvider();
-  googleProvider = new GoogleAuthProvider();
+      // Auth providers
+      githubProvider = new GithubAuthProvider();
+      googleProvider = new GoogleAuthProvider();
 
-  // Add scopes for GitHub
-  githubProvider.addScope("read:user");
-  githubProvider.addScope("user:email");
+      // Add scopes for GitHub
+      githubProvider.addScope("read:user");
+      githubProvider.addScope("user:email");
+    } catch (error) {
+      console.error("[Firebase] Initialization failed:", error);
+      firebaseError = error instanceof Error ? error.message : "Firebase initialization failed";
+    }
+  }
 }
 
-export { auth, githubProvider, googleProvider };
+export { auth, githubProvider, googleProvider, firebaseError };
 export default app;

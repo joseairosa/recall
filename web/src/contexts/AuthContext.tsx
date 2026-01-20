@@ -17,7 +17,7 @@ import {
   onAuthStateChanged,
   updateProfile,
 } from "firebase/auth";
-import { auth, githubProvider, googleProvider } from "@/lib/firebase";
+import { auth, githubProvider, googleProvider, firebaseError } from "@/lib/firebase";
 
 interface AuthContextType {
   user: User | null;
@@ -39,7 +39,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [apiKey, setApiKey] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(firebaseError || null);
 
   // Listen to auth state changes
   useEffect(() => {

@@ -54,12 +54,21 @@
   }
 }
 
-/* Custom gradient backgrounds */
-.gradient-bg {
+/* Custom gradient backgrounds - Dark mode */
+.dark .gradient-bg {
   background: linear-gradient(135deg,
     hsl(262, 83%, 8%) 0%,
     hsl(222, 84%, 5%) 50%,
     hsl(280, 70%, 8%) 100%
+  );
+}
+
+/* Custom gradient backgrounds - Light mode */
+.gradient-bg {
+  background: linear-gradient(135deg,
+    hsl(262, 83%, 96%) 0%,
+    hsl(222, 84%, 98%) 50%,
+    hsl(280, 70%, 96%) 100%
   );
 }
 
@@ -68,6 +77,18 @@
     hsl(262, 83%, 58%) 0%,
     hsl(280, 100%, 70%) 50%,
     hsl(200, 100%, 60%) 100%
+  );
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Light mode gradient text - slightly darker for contrast */
+.light .gradient-text {
+  background: linear-gradient(135deg,
+    hsl(262, 83%, 45%) 0%,
+    hsl(280, 100%, 55%) 50%,
+    hsl(200, 100%, 45%) 100%
   );
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -91,6 +112,11 @@
   z-index: -1;
   opacity: 0.5;
   filter: blur(8px);
+}
+
+/* Reduce glow intensity in light mode */
+.light .glow-border::before {
+  opacity: 0.3;
 }
 
 /* Scrollbar styling */

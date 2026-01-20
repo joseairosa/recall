@@ -27,6 +27,7 @@ import {
   RefreshCw,
   AlertCircle,
 } from "lucide-react";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 export default function HomePage() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -86,6 +87,7 @@ export default function HomePage() {
             </div>
 
             <div className="hidden md:flex items-center gap-4">
+              <ThemeToggle />
               <Link href="/sign-in">
                 <Button variant="ghost">Sign In</Button>
               </Link>
@@ -131,6 +133,10 @@ export default function HomePage() {
                 How it Works
               </a>
               <div className="pt-4 flex flex-col gap-2">
+                <div className="flex items-center justify-between pb-2">
+                  <span className="text-sm text-muted-foreground">Theme</span>
+                  <ThemeToggle />
+                </div>
                 <Link href="/sign-in">
                   <Button variant="ghost" className="w-full">
                     Sign In

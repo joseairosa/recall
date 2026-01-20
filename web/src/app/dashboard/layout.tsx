@@ -18,6 +18,7 @@ import {
   Users,
   BookOpen,
 } from "lucide-react";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -193,6 +194,7 @@ export default function DashboardLayout({
             <span className="text-sm text-muted-foreground capitalize">
               {tenantInfo?.plan || "Free"} Plan
             </span>
+            <ThemeToggle />
           </div>
         </header>
 

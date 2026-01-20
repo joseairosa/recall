@@ -494,6 +494,30 @@ export class MemoryStore {
     return true;
   }
 
+  /**
+   * Delete all memories in the current workspace
+   * Returns the number of memories deleted
+   */
+  async clearWorkspace(): Promise<number> {
+    const ids = await this.storageClient.smembers(StorageKeys.memories(this.workspaceId));
+
+    if (ids.length === 0) {
+      return 0;
+    }
+
+    console.log(`[MemoryStore] Clearing workspace ${this.workspaceId}: ${ids.length} memories to delete`);
+
+    let deleted = 0;
+    for (const id of ids) {
+      if (await this.deleteMemory(id)) {
+        deleted++;
+      }
+    }
+
+    console.log(`[MemoryStore] Cleared workspace ${this.workspaceId}: ${deleted} memories deleted`);
+    return deleted;
+  }
+
   // Semantic search (respects workspace mode with global memory weighting)
   async searchMemories(
     query: string,

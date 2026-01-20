@@ -172,6 +172,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signInWithGitHub = async () => {
+    if (!auth || !githubProvider) {
+      setError("Authentication not initialized");
+      return;
+    }
     try {
       setError(null);
       setLoading(true);
@@ -184,6 +188,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signInWithGoogle = async () => {
+    if (!auth || !googleProvider) {
+      setError("Authentication not initialized");
+      return;
+    }
     try {
       setError(null);
       setLoading(true);
@@ -196,6 +204,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signInWithEmail = async (email: string, password: string) => {
+    if (!auth) {
+      setError("Authentication not initialized");
+      return;
+    }
     try {
       setError(null);
       setLoading(true);
@@ -208,6 +220,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signUpWithEmail = async (email: string, password: string, name?: string) => {
+    if (!auth) {
+      setError("Authentication not initialized");
+      return;
+    }
     try {
       setError(null);
       setLoading(true);
@@ -225,6 +241,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const resetPassword = async (email: string) => {
+    if (!auth) {
+      setError("Authentication not initialized");
+      throw new Error("Authentication not initialized");
+    }
     try {
       setError(null);
       await sendPasswordResetEmail(auth, email);
@@ -236,6 +256,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signOut = async () => {
+    if (!auth) {
+      return;
+    }
     try {
       await firebaseSignOut(auth);
       localStorage.removeItem("recall_api_key");

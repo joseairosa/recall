@@ -53,36 +53,33 @@ const pricingTiers: PricingTier[] = [
   },
   {
     name: "Pro",
-    price: "$9",
-    priceId: "price_1SqGK8LUbfmx8MWFMzZ2WTsz",
+    price: "$4.99",
+    priceId: "price_1SqTaOLUbfmx8MWFecrr4ng8",
     description: "For individuals and power users",
     icon: <Sparkles className="w-5 h-5" />,
     buttonText: "Upgrade to Pro",
     highlighted: true,
     features: [
-      "10,000 memories",
-      "5 workspaces",
+      "5,000 memories",
+      "3 workspaces",
       "Advanced semantic search",
       "REST API access",
       "Priority support",
-      "Custom tags & metadata",
     ],
   },
   {
     name: "Team",
-    price: "$29",
-    priceId: "price_1SqGL4LUbfmx8MWFjxlB3B7F",
+    price: "$9.99",
+    priceId: "price_1SqTaOLUbfmx8MWFdxHsCoPz",
     description: "For teams and organizations",
     icon: <Building2 className="w-5 h-5" />,
     buttonText: "Upgrade to Team",
     features: [
-      "50,000 memories",
+      "25,000 memories",
       "Unlimited workspaces",
       "Shared team memories",
       "Admin dashboard",
-      "SSO authentication",
-      "Dedicated support",
-      "Custom integrations",
+      "Priority support",
     ],
   },
   {
@@ -318,11 +315,10 @@ export default function BillingPage() {
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
           {pricingTiers.map((tier) => {
             const isCurrentPlan = tier.name.toLowerCase() === currentPlan;
-            const isUpgrade =
-              !isCurrentPlan &&
-              tier.priceId &&
-              pricingTiers.findIndex((t) => t.name.toLowerCase() === currentPlan) <
-                pricingTiers.findIndex((t) => t.name === tier.name);
+            const currentPlanIndex = pricingTiers.findIndex((t) => t.name.toLowerCase() === currentPlan);
+            const tierIndex = pricingTiers.findIndex((t) => t.name === tier.name);
+            const isUpgrade = !isCurrentPlan && tier.priceId && currentPlanIndex < tierIndex;
+            const isDowngrade = !isCurrentPlan && currentPlanIndex > tierIndex;
 
             return (
               <Card
@@ -394,6 +390,10 @@ export default function BillingPage() {
                         ) : (
                           tier.buttonText
                         )}
+                      </Button>
+                    ) : isDowngrade ? (
+                      <Button variant="outline" className="w-full" disabled>
+                        Included in your plan
                       </Button>
                     ) : (
                       <Button variant="outline" className="w-full" disabled>

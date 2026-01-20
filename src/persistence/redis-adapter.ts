@@ -61,6 +61,10 @@ export class RedisAdapter implements StorageClient {
     this.client = redisClient;
   }
 
+  async hget(key: string, field: string): Promise<string | null> {
+    return this.client.hget(key, field);
+  }
+
   async hset(key: string, data: Record<string, string>): Promise<void> {
     await this.client.hset(key, data);
   }
@@ -68,6 +72,10 @@ export class RedisAdapter implements StorageClient {
   async hgetall(key: string): Promise<Record<string, string>> {
     const result = await this.client.hgetall(key);
     return result || {};
+  }
+
+  async hdel(key: string, field: string): Promise<void> {
+    await this.client.hdel(key, field);
   }
 
   async del(key: string): Promise<void> {

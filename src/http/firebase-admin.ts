@@ -18,7 +18,7 @@ if (!admin.apps.length) {
 }
 
 export const firebaseAdmin = admin;
-export const firebaseAuth = admin.auth();
+export const firebaseAuth: ReturnType<typeof admin.auth> = admin.auth();
 
 /**
  * Verify a Firebase ID token

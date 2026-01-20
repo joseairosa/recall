@@ -1,0 +1,8 @@
+{
+  "name": "recall-rlm",
+  "description": "RLM (Recursive Language Model) support for processing large contexts using Recall MCP memory",
+  "author": {
+    "name": "Jose Airosa",
+    "email": "me@joseairosa.com"
+  }
+}

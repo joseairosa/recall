@@ -16,6 +16,9 @@ import {
   analyze_and_remember,
   summarize_session,
   get_time_window_context,
+  auto_session_start,
+  quick_store_decision,
+  should_use_rlm,
   setContextMemoryStore,
 } from './context-tools.js';
 import {
@@ -35,6 +38,7 @@ import { relationshipTools, setRelationshipMemoryStore } from './relationship-to
 import { versionTools, setVersionMemoryStore } from './version-tools.js';
 import { templateTools, setTemplateMemoryStore } from './template-tools.js';
 import { categoryTools, setCategoryMemoryStore } from './category-tools.js';
+import { rlmTools, setRLMMemoryStore } from './rlm-tools.js';
 
 // Default memory store for stdio mode (singleton)
 let defaultMemoryStore: MemoryStore | null = null;
@@ -67,6 +71,7 @@ export function setMemoryStore(store: MemoryStore): void {
   setVersionMemoryStore(store);
   setTemplateMemoryStore(store);
   setCategoryMemoryStore(store);
+  setRLMMemoryStore(store);
 }
 
 /**
@@ -99,6 +104,11 @@ export const tools = {
   analyze_and_remember,
   summarize_session,
   get_time_window_context,
+
+  // Automatic hooks (v1.8.0) - makes Recall automatic
+  auto_session_start,      // Call at start of every session
+  quick_store_decision,    // Quickly store decisions after making them
+  should_use_rlm,          // Check if content needs RLM processing
 
   // Export/Import tools
   export_memories: {
@@ -285,7 +295,7 @@ export const tools = {
   },
 
   search_memories: {
-    description: 'Search memories using semantic similarity with advanced filters (v1.5.0: category, fuzzy, regex)',
+    description: 'Search memories using semantic similarity with advanced filters (v1.5.0: category, fuzzy, regex; v1.8.1: output_mode for context efficiency)',
     inputSchema: zodToJsonSchema(SearchMemorySchema),
     handler: async (args: z.infer<typeof SearchMemorySchema>) => {
       try {
@@ -299,6 +309,51 @@ export const tools = {
           args.regex
         );
 
+        // Format results based on output_mode (v1.8.1)
+        // - compact: minimal fields for maximum context efficiency (~83% reduction)
+        // - summary: all fields except content (~73% reduction) - DEFAULT
+        // - full: all fields including content (original behavior)
+        const outputMode = args.output_mode || 'summary';
+
+        const formattedResults = results.map(r => {
+          if (outputMode === 'compact') {
+            // Minimal: just enough to identify and decide if full content is needed
+            return {
+              memory_id: r.id,
+              summary: r.summary || r.content.substring(0, 100) + (r.content.length > 100 ? '...' : ''),
+              context_type: r.context_type,
+              similarity: r.similarity,
+            };
+          }
+
+          if (outputMode === 'full') {
+            // Full: all fields including content (original behavior)
+            return {
+              memory_id: r.id,
+              content: r.content,
+              summary: r.summary,
+              context_type: r.context_type,
+              importance: r.importance,
+              tags: r.tags,
+              category: r.category,
+              similarity: r.similarity,
+              timestamp: r.timestamp,
+            };
+          }
+
+          // Default: summary mode - all fields except content
+          return {
+            memory_id: r.id,
+            summary: r.summary || r.content.substring(0, 150) + (r.content.length > 150 ? '...' : ''),
+            context_type: r.context_type,
+            importance: r.importance,
+            tags: r.tags,
+            category: r.category,
+            similarity: r.similarity,
+            timestamp: r.timestamp,
+          };
+        });
+
         return {
           content: [
             {
@@ -306,6 +361,7 @@ export const tools = {
               text: JSON.stringify({
                 query: args.query,
                 count: results.length,
+                output_mode: outputMode,
                 filters: {
                   category: args.category,
                   fuzzy: args.fuzzy,
@@ -313,17 +369,11 @@ export const tools = {
                   min_importance: args.min_importance,
                   context_types: args.context_types,
                 },
-                results: results.map(r => ({
-                  memory_id: r.id,
-                  content: r.content,
-                  summary: r.summary,
-                  context_type: r.context_type,
-                  importance: r.importance,
-                  tags: r.tags,
-                  category: r.category,
-                  similarity: r.similarity,
-                  timestamp: r.timestamp,
-                })),
+                results: formattedResults,
+                // Hint for retrieving full content if needed
+                ...(outputMode !== 'full' && results.length > 0 && {
+                  hint: 'Use get_memory with memory_id to retrieve full content for specific memories',
+                }),
               }, null, 2),
             },
           ],
@@ -463,6 +513,10 @@ export const tools = {
 
   // Category tools (v1.5.0)
   ...categoryTools,
+
+  // RLM (Recursive Language Model) tools (v1.8.0)
+  // For handling large contexts that exceed context window limits
+  ...rlmTools,
 };
 
 // Helper function to convert Zod schema to JSON Schema

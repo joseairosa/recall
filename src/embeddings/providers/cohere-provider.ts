@@ -88,7 +88,7 @@ export class CohereProvider implements EmbeddingProvider {
         throw new Error(`Cohere API error: ${response.status} - ${errorBody}`);
       }
 
-      const data: CohereEmbeddingResponse = await response.json();
+      const data = (await response.json()) as CohereEmbeddingResponse;
       const embeddings = data.embeddings.float;
 
       console.log(

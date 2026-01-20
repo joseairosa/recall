@@ -4,8 +4,26 @@
  * Client for communicating with the Recall HTTP API.
  */
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+// Get API base URL - computed at runtime for browser environments
+function getApiBaseUrl(): string {
+  // If explicitly set via env var, use that
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+
+  // In browser, check if we're on localhost (dev) or production
+  if (typeof window !== "undefined") {
+    // Production: use relative URLs (same domain)
+    if (window.location.hostname !== "localhost") {
+      return "";
+    }
+    // Development: use localhost backend
+    return "http://localhost:8080";
+  }
+
+  // SSR/build time fallback
+  return "";
+}
 
 export interface ApiResponse<T> {
   success: boolean;
@@ -68,6 +86,57 @@ export interface TenantInfo {
   };
 }
 
+// Team types
+export type TeamRole = "owner" | "admin" | "member" | "viewer";
+export type WorkspacePermission = "none" | "read" | "write" | "admin";
+
+export interface Team {
+  id: string;
+  name: string;
+  ownerId: string;
+  plan: "free" | "pro" | "team" | "enterprise";
+  createdAt: number;
+  updatedAt: number;
+  settings: {
+    allowMemberInvites: boolean;
+    defaultWorkspacePermission: WorkspacePermission;
+    requireApprovalForWorkspaces: boolean;
+  };
+}
+
+export interface TeamMember {
+  id: string;
+  teamId: string;
+  tenantId: string;
+  email: string;
+  name?: string;
+  role: TeamRole;
+  invitedBy: string;
+  invitedAt: number;
+  joinedAt?: number;
+  status: "pending" | "active" | "suspended";
+}
+
+export interface TeamInvite {
+  id: string;
+  teamId: string;
+  email: string;
+  role: TeamRole;
+  invitedBy: string;
+  createdAt: number;
+  expiresAt: number;
+  token: string;
+  workspaceIds?: string[];
+}
+
+export interface TeamMemberWorkspacePermission {
+  memberId: string;
+  workspaceId: string;
+  permission: WorkspacePermission;
+  grantedBy: string;
+  grantedAt: number;
+}
+
 export interface Stats {
   tenantId: string;
   plan: string;
@@ -84,6 +153,7 @@ export interface Stats {
 
 class ApiClient {
   private apiKey: string | null = null;
+  private firebaseToken: string | null = null;
 
   setApiKey(key: string) {
     this.apiKey = key;
@@ -91,6 +161,14 @@ class ApiClient {
 
   clearApiKey() {
     this.apiKey = null;
+  }
+
+  setFirebaseToken(token: string) {
+    this.firebaseToken = token;
+  }
+
+  clearFirebaseToken() {
+    this.firebaseToken = null;
   }
 
   private async request<T>(
@@ -104,7 +182,44 @@ class ApiClient {
     };
 
     try {
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      const response = await fetch(`${getApiBaseUrl()}${endpoint}`, {
+        ...options,
+        headers,
+      });
+
+      const data = await response.json();
+      return data;
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          code: "NETWORK_ERROR",
+          message:
+            error instanceof Error ? error.message : "Network request failed",
+        },
+      };
+    }
+  }
+
+  private async requestWithFirebase<T>(
+    endpoint: string,
+    options: RequestInit = {}
+  ): Promise<ApiResponse<T>> {
+    if (!this.firebaseToken) {
+      return {
+        success: false,
+        error: { code: "UNAUTHORIZED", message: "Firebase token not set" },
+      };
+    }
+
+    const headers: HeadersInit = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${this.firebaseToken}`,
+      ...options.headers,
+    };
+
+    try {
+      const response = await fetch(`${getApiBaseUrl()}${endpoint}`, {
         ...options,
         headers,
       });
@@ -206,6 +321,125 @@ class ApiClient {
 
   async getStats(): Promise<ApiResponse<Stats>> {
     return this.request<Stats>("/api/stats");
+  }
+
+  // Teams (use Firebase token for authentication)
+  async getMyTeam(): Promise<ApiResponse<Team>> {
+    return this.requestWithFirebase<Team>("/api/teams/me");
+  }
+
+  async createTeam(name: string): Promise<ApiResponse<Team>> {
+    return this.requestWithFirebase<Team>("/api/teams", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+  }
+
+  async updateTeam(
+    teamId: string,
+    data: Partial<Team>
+  ): Promise<ApiResponse<Team>> {
+    return this.requestWithFirebase<Team>(`/api/teams/${teamId}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  // Team Members
+  async getTeamMembers(teamId: string): Promise<ApiResponse<TeamMember[]>> {
+    return this.requestWithFirebase<TeamMember[]>(`/api/teams/${teamId}/members`);
+  }
+
+  async inviteTeamMember(
+    teamId: string,
+    email: string,
+    role: TeamRole
+  ): Promise<ApiResponse<TeamInvite>> {
+    return this.requestWithFirebase<TeamInvite>(`/api/teams/${teamId}/invites`, {
+      method: "POST",
+      body: JSON.stringify({ email, role }),
+    });
+  }
+
+  async updateMemberRole(
+    teamId: string,
+    memberId: string,
+    role: TeamRole
+  ): Promise<ApiResponse<TeamMember>> {
+    return this.requestWithFirebase<TeamMember>(
+      `/api/teams/${teamId}/members/${memberId}/role`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ role }),
+      }
+    );
+  }
+
+  async removeMember(
+    teamId: string,
+    memberId: string
+  ): Promise<ApiResponse<{ removed: string }>> {
+    return this.requestWithFirebase<{ removed: string }>(
+      `/api/teams/${teamId}/members/${memberId}`,
+      {
+        method: "DELETE",
+      }
+    );
+  }
+
+  // Workspace Permissions
+  async getMemberWorkspaces(
+    teamId: string,
+    memberId: string
+  ): Promise<ApiResponse<TeamMemberWorkspacePermission[]>> {
+    return this.requestWithFirebase<TeamMemberWorkspacePermission[]>(
+      `/api/teams/${teamId}/members/${memberId}/workspaces`
+    );
+  }
+
+  async grantWorkspaceAccess(
+    teamId: string,
+    workspaceId: string,
+    memberId: string,
+    permission: WorkspacePermission
+  ): Promise<ApiResponse<TeamMemberWorkspacePermission>> {
+    return this.requestWithFirebase<TeamMemberWorkspacePermission>(
+      `/api/teams/${teamId}/workspaces/${workspaceId}/members/${memberId}`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ permission }),
+      }
+    );
+  }
+
+  async revokeWorkspaceAccess(
+    teamId: string,
+    workspaceId: string,
+    memberId: string
+  ): Promise<ApiResponse<{ revoked: boolean }>> {
+    return this.requestWithFirebase<{ revoked: boolean }>(
+      `/api/teams/${teamId}/workspaces/${workspaceId}/members/${memberId}`,
+      {
+        method: "DELETE",
+      }
+    );
+  }
+
+  // Team Invites
+  async getPendingInvites(teamId: string): Promise<ApiResponse<TeamInvite[]>> {
+    return this.requestWithFirebase<TeamInvite[]>(`/api/teams/${teamId}/invites`);
+  }
+
+  async cancelInvite(
+    teamId: string,
+    inviteId: string
+  ): Promise<ApiResponse<{ cancelled: boolean }>> {
+    return this.requestWithFirebase<{ cancelled: boolean }>(
+      `/api/teams/${teamId}/invites/${inviteId}`,
+      {
+        method: "DELETE",
+      }
+    );
   }
 }
 

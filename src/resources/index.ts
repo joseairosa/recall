@@ -386,8 +386,9 @@ export const resources = {
         );
       }
 
+      const client = await getStorageClient();
       const limit = parseInt(uri.searchParams.get("limit") || "50", 10);
-      const ids = await storageClient.zrevrange(
+      const ids = await client.zrevrange(
         StorageKeys.globalTimeline(),
         0,
         limit - 1
@@ -436,12 +437,13 @@ export const resources = {
         );
       }
 
+      const client = await getStorageClient();
       const type = params.type as ContextType;
       const limit = uri.searchParams.get("limit")
         ? parseInt(uri.searchParams.get("limit")!, 10)
         : undefined;
 
-      const ids = await storageClient.smembers(StorageKeys.globalByType(type));
+      const ids = await client.smembers(StorageKeys.globalByType(type));
       const allMemories = await getStore().getMemories(ids);
 
       // Sort by timestamp descending
@@ -490,12 +492,13 @@ export const resources = {
         );
       }
 
+      const client = await getStorageClient();
       const { tag } = params;
       const limit = uri.searchParams.get("limit")
         ? parseInt(uri.searchParams.get("limit")!, 10)
         : undefined;
 
-      const ids = await storageClient.smembers(StorageKeys.globalByTag(tag));
+      const ids = await client.smembers(StorageKeys.globalByTag(tag));
       const allMemories = await getStore().getMemories(ids);
 
       // Sort by timestamp descending
@@ -545,12 +548,13 @@ export const resources = {
         );
       }
 
+      const client = await getStorageClient();
       const minImportance = parseInt(uri.searchParams.get("min") || "8", 10);
       const limit = uri.searchParams.get("limit")
         ? parseInt(uri.searchParams.get("limit")!, 10)
         : undefined;
 
-      const results = await storageClient.zrevrangebyscore(
+      const results = await client.zrevrangebyscore(
         StorageKeys.globalImportant(),
         10,
         minImportance,
@@ -667,6 +671,8 @@ export const resources = {
     description: "List all memory relationships in the current workspace",
     mimeType: "application/json",
     handler: async (uri: URL) => {
+      const client = await getStorageClient();
+      const store = getStore();
       const limit = parseInt(uri.searchParams.get("limit") || "100", 10);
       const mode = getWorkspaceMode();
 
@@ -674,14 +680,14 @@ export const resources = {
       let relationshipIds: string[] = [];
 
       if (mode === WorkspaceMode.ISOLATED || mode === WorkspaceMode.HYBRID) {
-        const workspaceIds = await storageClient.smembers(
-          StorageKeys.relationships(memoryStore["workspaceId"])
+        const workspaceIds = await client.smembers(
+          StorageKeys.relationships((store as unknown as { workspaceId: string }).workspaceId)
         );
         relationshipIds.push(...workspaceIds);
       }
 
       if (mode === WorkspaceMode.GLOBAL || mode === WorkspaceMode.HYBRID) {
-        const globalIds = await storageClient.smembers(
+        const globalIds = await client.smembers(
           StorageKeys.globalRelationships()
         );
         relationshipIds.push(...globalIds);

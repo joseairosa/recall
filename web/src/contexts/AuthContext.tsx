@@ -17,7 +17,7 @@ import {
   onAuthStateChanged,
   updateProfile,
 } from "firebase/auth";
-import { auth, githubProvider, googleProvider } from "@/lib/firebase";
+import { auth, githubProvider, googleProvider, firebaseError } from "@/lib/firebase";
 
 interface AuthContextType {
   user: User | null;
@@ -39,10 +39,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [apiKey, setApiKey] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(firebaseError || null);
 
   // Listen to auth state changes
   useEffect(() => {
+    // Skip if auth is not initialized (SSR)
+    if (!auth) {
+      setLoading(false);
+      return;
+    }
+
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setUser(user);
 
@@ -66,10 +72,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => unsubscribe();
   }, []);
 
+  // Get API base URL at runtime
+  const getApiUrl = () => {
+    if (process.env.NEXT_PUBLIC_API_URL) {
+      return process.env.NEXT_PUBLIC_API_URL;
+    }
+    // In browser, use relative URLs for production (same domain)
+    if (typeof window !== "undefined" && window.location.hostname !== "localhost") {
+      return "";
+    }
+    // Development fallback
+    return "http://localhost:8080";
+  };
+
   // Create API key for user based on their Firebase UID
   const createApiKeyForUser = async (user: User) => {
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
+      const apiUrl = getApiUrl();
 
       // First, try to get existing key by checking if we have one stored for this user
       const userKeyId = `recall_user_${user.uid}`;
@@ -102,20 +121,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const data = await response.json();
 
-      if (data.success) {
-        if (data.data.apiKey) {
-          // New key created
-          const newKey = data.data.apiKey;
-          setApiKey(newKey);
-          localStorage.setItem("recall_api_key", newKey);
-          localStorage.setItem(userKeyId, newKey);
-        } else if (data.data.hasExistingKey) {
-          // User already has a key but we don't have it locally
-          // They'll need to use the dashboard to manage/regenerate it
-          console.log("User has existing API key on server");
-          setError("You have an existing API key. Check the API Keys page to manage it.");
-        }
-      } else {
+      if (data.success && data.data.apiKey) {
+        // API key created or retrieved
+        const key = data.data.apiKey;
+        setApiKey(key);
+        localStorage.setItem("recall_api_key", key);
+        localStorage.setItem(userKeyId, key);
+        console.log("API key set successfully");
+      } else if (!data.success) {
         console.error("Failed to create API key:", data);
         setError(data.error?.message || "Failed to create API key");
       }
@@ -159,6 +172,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signInWithGitHub = async () => {
+    if (!auth || !githubProvider) {
+      setError("Authentication not initialized");
+      return;
+    }
     try {
       setError(null);
       setLoading(true);
@@ -171,6 +188,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signInWithGoogle = async () => {
+    if (!auth || !googleProvider) {
+      setError("Authentication not initialized");
+      return;
+    }
     try {
       setError(null);
       setLoading(true);
@@ -183,6 +204,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signInWithEmail = async (email: string, password: string) => {
+    if (!auth) {
+      setError("Authentication not initialized");
+      return;
+    }
     try {
       setError(null);
       setLoading(true);
@@ -195,6 +220,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signUpWithEmail = async (email: string, password: string, name?: string) => {
+    if (!auth) {
+      setError("Authentication not initialized");
+      return;
+    }
     try {
       setError(null);
       setLoading(true);
@@ -212,6 +241,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const resetPassword = async (email: string) => {
+    if (!auth) {
+      setError("Authentication not initialized");
+      throw new Error("Authentication not initialized");
+    }
     try {
       setError(null);
       await sendPasswordResetEmail(auth, email);
@@ -223,6 +256,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signOut = async () => {
+    if (!auth) {
+      return;
+    }
     try {
       await firebaseSignOut(auth);
       localStorage.removeItem("recall_api_key");

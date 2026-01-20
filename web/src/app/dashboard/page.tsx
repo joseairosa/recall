@@ -2,17 +2,31 @@
 
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Database, Key, Activity, Clock } from "lucide-react";
+import { Database, Key, Activity, Clock, Check, X, AlertCircle, Users, Lightbulb } from "lucide-react";
 import { api, TenantInfo, Memory, AuditEntry } from "@/lib/api";
 import { formatRelativeTime } from "@/lib/utils";
+
+// Compute API URL at runtime (not build time)
+function getApiUrl(): string {
+  if (typeof window === "undefined") return "";
+  if (window.location.hostname === "localhost") {
+    return "http://localhost:8080";
+  }
+  // Production: use the same domain
+  return `${window.location.protocol}//${window.location.host}`;
+}
 
 export default function DashboardPage() {
   const [tenantInfo, setTenantInfo] = useState<TenantInfo | null>(null);
   const [recentMemories, setRecentMemories] = useState<Memory[]>([]);
   const [recentActivity, setRecentActivity] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [apiUrl, setApiUrl] = useState("");
 
   useEffect(() => {
+    // Set API URL at runtime
+    setApiUrl(getApiUrl());
+
     const loadData = async () => {
       const apiKey = localStorage.getItem("recall_api_key");
       if (!apiKey) return;
@@ -77,15 +91,15 @@ export default function DashboardPage() {
           title="Total Memories"
           value={tenantInfo?.usage.memories.toString() || "0"}
           icon={<Database className="w-5 h-5" />}
-          description={`${tenantInfo?.limits.maxMemories || 0} max`}
+          description={tenantInfo?.limits.maxMemories === -1 ? 'unlimited' : `${tenantInfo?.limits.maxMemories || 0} max`}
         />
         <StatsCard
           title="Usage"
           value={`${usagePercentage}%`}
           icon={<Activity className="w-5 h-5" />}
-          description={`${tenantInfo?.usage.memories || 0} / ${
-            tenantInfo?.limits.maxMemories || 0
-          }`}
+          description={tenantInfo?.limits.maxMemories === -1
+            ? `${tenantInfo?.usage.memories || 0} / unlimited`
+            : `${tenantInfo?.usage.memories || 0} / ${tenantInfo?.limits.maxMemories || 0}`}
         />
         <StatsCard
           title="Plan"
@@ -98,7 +112,7 @@ export default function DashboardPage() {
           title="Workspaces"
           value="1"
           icon={<Clock className="w-5 h-5" />}
-          description={`${tenantInfo?.limits.maxWorkspaces || 1} max`}
+          description={tenantInfo?.limits.maxWorkspaces === -1 ? 'unlimited' : `${tenantInfo?.limits.maxWorkspaces || 1} max`}
         />
       </div>
 
@@ -201,23 +215,142 @@ export default function DashboardPage() {
         <CardHeader>
           <CardTitle className="text-lg">Quick Setup</CardTitle>
         </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground mb-4">
-            Add this to your Claude Desktop configuration to enable AI memory:
-          </p>
-          <div className="bg-muted rounded-lg p-4 font-mono text-sm overflow-x-auto">
-            <pre>
-              {`{
+        <CardContent className="space-y-6">
+          <div>
+            <h4 className="font-medium mb-2">REST API</h4>
+            <p className="text-sm text-muted-foreground mb-3">
+              Use the REST API directly:
+            </p>
+            <div className="bg-muted rounded-lg p-4 font-mono text-sm overflow-x-auto">
+              <pre>
+                {`curl -X POST ${apiUrl}/api/memories \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"content": "Remember this important fact"}'`}
+              </pre>
+            </div>
+          </div>
+
+          <div>
+            <h4 className="font-medium mb-2">Claude Desktop (MCP Configuration)</h4>
+            <p className="text-sm text-muted-foreground mb-3">
+              Add this to your Claude Desktop configuration file:
+            </p>
+            <div className="bg-muted rounded-lg p-4 font-mono text-sm overflow-x-auto">
+              <pre>
+                {`{
   "mcpServers": {
     "recall": {
-      "url": "${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"}/mcp",
+      "url": "${apiUrl}/mcp",
       "headers": {
-        "Authorization": "Bearer ${localStorage.getItem("recall_api_key")?.substring(0, 10)}..."
+        "Authorization": "Bearer YOUR_API_KEY"
       }
     }
   }
 }`}
-            </pre>
+              </pre>
+            </div>
+          </div>
+
+          <div>
+            <h4 className="font-medium mb-2">Claude Code (Terminal)</h4>
+            <p className="text-sm text-muted-foreground mb-3">
+              Run this command in your terminal:
+            </p>
+            <div className="bg-muted rounded-lg p-4 font-mono text-sm overflow-x-auto">
+              <pre>
+                {`claude mcp add --transport http recall ${apiUrl}/mcp \\
+  --header "Authorization: Bearer YOUR_API_KEY"`}
+              </pre>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Understanding Recall */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg flex items-center gap-2">
+            <Lightbulb className="w-5 h-5" />
+            Understanding Recall
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="grid md:grid-cols-2 gap-6">
+            {/* What Recall IS */}
+            <div className="space-y-3">
+              <h4 className="font-medium text-green-500 flex items-center gap-2">
+                <Check className="w-4 h-4" />
+                What Recall IS
+              </h4>
+              <ul className="space-y-2 text-sm text-muted-foreground">
+                <li className="flex gap-2">
+                  <Check className="w-3 h-3 text-green-500 mt-1 flex-shrink-0" />
+                  <span><strong className="text-foreground">Cross-session memory</strong> — Start new conversations and retrieve previous decisions</span>
+                </li>
+                <li className="flex gap-2">
+                  <Check className="w-3 h-3 text-green-500 mt-1 flex-shrink-0" />
+                  <span><strong className="text-foreground">Survives compaction</strong> — When context fills up, memories persist externally</span>
+                </li>
+                <li className="flex gap-2">
+                  <Check className="w-3 h-3 text-green-500 mt-1 flex-shrink-0" />
+                  <span><strong className="text-foreground">Real-time collaboration</strong> — One Claude learns, all others know instantly</span>
+                </li>
+                <li className="flex gap-2">
+                  <Check className="w-3 h-3 text-green-500 mt-1 flex-shrink-0" />
+                  <span><strong className="text-foreground">Long-term knowledge</strong> — Accumulate decisions and patterns over weeks</span>
+                </li>
+              </ul>
+            </div>
+
+            {/* What Recall is NOT */}
+            <div className="space-y-3">
+              <h4 className="font-medium text-yellow-500 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4" />
+                What Recall is NOT
+              </h4>
+              <ul className="space-y-2 text-sm text-muted-foreground">
+                <li className="flex gap-2">
+                  <X className="w-3 h-3 text-yellow-500 mt-1 flex-shrink-0" />
+                  <span><strong className="text-foreground">Not within-chat compression</strong> — Current conversation still grows normally</span>
+                </li>
+                <li className="flex gap-2">
+                  <X className="w-3 h-3 text-yellow-500 mt-1 flex-shrink-0" />
+                  <span><strong className="text-foreground">Semi-automatic</strong> — Claude calls tools proactively, but you guide what&apos;s important</span>
+                </li>
+                <li className="flex gap-2">
+                  <X className="w-3 h-3 text-yellow-500 mt-1 flex-shrink-0" />
+                  <span><strong className="text-foreground">Not instant savings</strong> — Benefits compound over time across sessions</span>
+                </li>
+                <li className="flex gap-2">
+                  <X className="w-3 h-3 text-yellow-500 mt-1 flex-shrink-0" />
+                  <span><strong className="text-foreground">Store high-signal only</strong> — Decisions, patterns, not everything</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          <div className="bg-muted/50 rounded-lg p-4 border">
+            <h4 className="font-medium mb-2 flex items-center gap-2">
+              <Users className="w-4 h-4 text-primary" />
+              Key Feature: Real-Time Knowledge Sharing
+            </h4>
+            <p className="text-sm text-muted-foreground">
+              <strong className="text-foreground">One Claude learns, all others know instantly.</strong> Share knowledge
+              across your entire organization in real-time. No syncing, no waiting — when any Claude instance stores
+              a memory, it&apos;s immediately available to 10s, 100s, or 1000s of other instances. Perfect for teams,
+              CI/CD pipelines, or distributed AI workflows.
+            </p>
+          </div>
+
+          <div className="bg-primary/5 rounded-lg p-4 border border-primary/20">
+            <h4 className="font-medium mb-2">Best Practices</h4>
+            <ol className="text-sm text-muted-foreground space-y-1 list-decimal list-inside">
+              <li>Start sessions with: <code className="bg-muted px-1 rounded">auto_session_start</code> (loads relevant context)</li>
+              <li>After decisions: <code className="bg-muted px-1 rounded">quick_store_decision</code> (stores with reasoning)</li>
+              <li>End sessions with: <code className="bg-muted px-1 rounded">summarize_session</code> (creates snapshot)</li>
+              <li>Store decisions and patterns, not code implementations</li>
+            </ol>
           </div>
         </CardContent>
       </Card>

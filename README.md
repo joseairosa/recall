@@ -54,16 +54,129 @@ By using Recall, you acknowledge that you understand these risks and accept full
 
 ## What is This?
 
-Recall is a **brain extension** for Claude that stores memories in Redis or Valkey. It solves the context window problem by:
+Recall is a **brain extension** for Claude that stores memories persistently. It solves the context window problem by:
 
-- 📝 **Remembering** directives, decisions, code patterns, and important information  
-- 🔍 **Retrieving** relevant context automatically when you need it  
-- 🔄 **Persisting** across sessions – memories survive restarts and context compaction  
+- 📝 **Remembering** directives, decisions, code patterns, and important information
+- 🔍 **Retrieving** relevant context automatically when you need it
+- 🔄 **Persisting** across sessions – memories survive restarts and context compaction
 - 🗂️ **Organizing** by workspace – Project A memories don't pollute Project B
 
 ---
 
-## Quick Start (5 Minutes)
+## Recall Cloud (Easiest Setup)
+
+**No Redis setup required!** Get started in 2 minutes with the managed cloud service.
+
+### 1. Sign Up
+
+Go to **[recallmcp.com](https://recallmcp.com)** and create a free account.
+
+### 2. Get Your API Key
+
+1. Sign in to your dashboard at [recallmcp.com/dashboard](https://recallmcp.com/dashboard)
+2. Go to **API Keys** section
+3. Copy your API key (starts with `sk-recall-`)
+
+### 3. Configure Claude Desktop
+
+Add to your Claude Desktop configuration file:
+
+**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+
+**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "recall": {
+      "url": "https://recallmcp.com/mcp",
+      "headers": {
+        "Authorization": "Bearer sk-recall-your-api-key-here"
+      }
+    }
+  }
+}
+```
+
+> **Note**: Replace `sk-recall-your-api-key-here` with your actual API key from the dashboard.
+
+### 4. Restart Claude Desktop
+
+Quit and reopen Claude Desktop to load the MCP server.
+
+### 5. Test It
+
+Ask Claude:
+
+```text
+"Store a memory that I prefer TypeScript for all projects"
+```
+
+Then in a new conversation:
+
+```text
+"What do you know about my coding preferences?"
+```
+
+**It remembers across all your devices!**
+
+---
+
+### Cloud Plans
+
+| Plan       | Price    | Memories | Features                                  |
+| ---------- | -------- | -------- | ----------------------------------------- |
+| **Free**   | $0/mo    | 500      | 1 workspace, basic search                 |
+| **Pro**    | $4.99/mo | 5,000    | 3 workspaces, API access, semantic search |
+| **Team**   | $9.99/mo | 25,000   | Unlimited workspaces, shared memories     |
+
+Upgrade anytime at [recallmcp.com/dashboard/billing](https://recallmcp.com/dashboard/billing)
+
+---
+
+### Claude Desktop Custom Connector (OAuth)
+
+**Alternative Setup**: Claude Desktop supports native OAuth connections, so you don't need to edit config files manually.
+
+#### 1. Open Claude Desktop Settings
+
+1. Open Claude Desktop
+2. Click on your profile icon → **Settings**
+3. Go to **Integrations** → **Custom Connectors**
+
+#### 2. Add Recall Connector
+
+Click **"Add custom connector"** and enter:
+
+| Field                      | Value                                  |
+| -------------------------- | -------------------------------------- |
+| **Name**                   | `Recall`                               |
+| **Remote MCP server URL**  | `https://recallmcp.com/mcp`            |
+| **OAuth Client ID**        | `claude-desktop`                       |
+| **OAuth Client Secret**    | *(leave empty)*                        |
+
+#### 3. Authenticate
+
+1. Click **Add** to save the connector
+2. Claude Desktop will open a browser window to **recallmcp.com**
+3. Sign in with your Google or GitHub account
+4. Grant access to connect your Recall account
+
+#### 4. Start Using Recall
+
+Once authenticated, Recall tools are automatically available in Claude Desktop. Ask Claude:
+
+```text
+"Store a memory that I prefer dark mode for all applications"
+```
+
+Your memories sync across all sessions and devices!
+
+> **Note**: The OAuth connection refreshes automatically. If you see authentication errors, remove and re-add the connector.
+
+---
+
+## Self-Hosted Setup (5 Minutes)
 
 ### 1. Prerequisites
 
@@ -229,19 +342,97 @@ or for Valkey:
 
 Restart Claude Code or Claude Desktop to load the MCP server.
 
-### 5. Test It!
+### 5. Verify It Works
 
 Ask Claude:
-```
+
+```text
 "Store a memory that I prefer using TypeScript for all new projects"
 ```
 
 Then in a new conversation:
-```
+
+```text
 "What do you know about my coding preferences?"
 ```
 
-✨ **It remembers!**
+**It remembers!**
+
+---
+
+## Claude Code Plugin (One-Liner Install)
+
+Install the Recall plugin for Claude Code with a single command. This gives you enhanced commands, agents, and hooks for working with large files and RLM (Recursive Language Model) features.
+
+### Quick Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/joseairosa/recall/main/scripts/install-plugin.sh | bash
+```
+
+This script will:
+- Download the Recall plugin to `~/.claude/plugins/recall-rlm/`
+- Configure the MCP server in `~/.claude/settings.json`
+- Support updates (re-run the same command to update)
+- Create backups before updates
+
+### After Installation
+
+1. **Get your API key** from [recallmcp.com](https://recallmcp.com)
+
+2. **Set the environment variable:**
+   ```bash
+   export RECALL_API_KEY=sk-recall-your-key-here
+
+   # Add to your shell profile for persistence:
+   echo 'export RECALL_API_KEY=sk-recall-your-key-here' >> ~/.zshrc
+   ```
+
+3. **Restart Claude Code** to load the plugin
+
+### Plugin Features
+
+The plugin adds:
+
+| Feature | Description |
+|---------|-------------|
+| `/load-context <file>` | Load large files into RLM system for chunk-based analysis |
+| `/decompose <chain_id>` | Break tasks into subtasks with strategies (filter, chunk, recursive) |
+| `/rlm-status <chain_id>` | Check execution progress and results |
+
+**Hooks (automatic behaviors):**
+- Context injection before each prompt
+- Large file detection (suggests RLM for >100KB files)
+- Session summarization reminders
+- Decision storage prompts
+
+### Self-Hosted Configuration
+
+If you prefer Redis locally instead of Recall Cloud, edit `~/.claude/settings.json` after installation:
+
+```json
+{
+  "mcpServers": {
+    "recall": {
+      "command": "npx",
+      "args": ["-y", "@joseairosa/recall"],
+      "env": {
+        "REDIS_URL": "redis://localhost:6379"
+      }
+    }
+  }
+}
+```
+
+### Update & Uninstall
+
+```bash
+# Update to latest version
+curl -fsSL https://raw.githubusercontent.com/joseairosa/recall/main/scripts/install-plugin.sh | bash
+
+# Uninstall
+curl -fsSL https://raw.githubusercontent.com/joseairosa/recall/main/scripts/uninstall-plugin.sh | bash
+```
 
 ---
 

@@ -101,7 +101,7 @@ export class OpenAICompatibleProvider implements EmbeddingProvider {
         throw new Error(`${this.name} API error: ${response.status} - ${errorBody}`);
       }
 
-      const data: OpenAIEmbeddingResponse = await response.json();
+      const data = (await response.json()) as OpenAIEmbeddingResponse;
 
       // Sort by index to ensure order matches input
       const sortedData = data.data.sort((a, b) => a.index - b.index);

@@ -36,8 +36,9 @@ dist/
 web/.next/
 web/out/
 
-# Local config
-.claude/
+# Local config (machine-specific overrides)
+.claude/*.local.json
+.claude/todo.json
 .mcp.json
 
 #test build files

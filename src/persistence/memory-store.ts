@@ -494,6 +494,30 @@ export class MemoryStore {
     return true;
   }
 
+  /**
+   * Delete all memories in the current workspace
+   * Returns the number of memories deleted
+   */
+  async clearWorkspace(): Promise<number> {
+    const ids = await this.storageClient.smembers(StorageKeys.memories(this.workspaceId));
+
+    if (ids.length === 0) {
+      return 0;
+    }
+
+    console.log(`[MemoryStore] Clearing workspace ${this.workspaceId}: ${ids.length} memories to delete`);
+
+    let deleted = 0;
+    for (const id of ids) {
+      if (await this.deleteMemory(id)) {
+        deleted++;
+      }
+    }
+
+    console.log(`[MemoryStore] Cleared workspace ${this.workspaceId}: ${deleted} memories deleted`);
+    return deleted;
+  }
+
   // Semantic search (respects workspace mode with global memory weighting)
   async searchMemories(
     query: string,
@@ -1675,5 +1699,570 @@ export class MemoryStore {
     }
 
     return categories;
+  }
+
+  // ============================================================================
+  // RLM Execution Chains (v1.8.0)
+  // Recursive Language Model support for handling large contexts
+  // Based on MIT CSAIL paper: arxiv:2512.24601
+  // ============================================================================
+
+  /**
+   * Create a new execution context for processing large contexts
+   */
+  async createExecutionContext(
+    task: string,
+    context: string,
+    maxDepth: number = 3,
+    parentChainId?: string
+  ): Promise<import('../types.js').ExecutionContext> {
+    const { RLMStorageKeys } = await import('../types.js');
+    const chainId = ulid();
+    const timestamp = Date.now();
+
+    // Estimate token count (rough approximation: 4 chars per token)
+    const estimatedTokens = Math.ceil(context.length / 4);
+
+    // Auto-detect recommended strategy based on context characteristics
+    const strategy = this.detectDecompositionStrategy(context, task, estimatedTokens);
+
+    const executionContext: import('../types.js').ExecutionContext = {
+      chain_id: chainId,
+      parent_chain_id: parentChainId,
+      depth: parentChainId ? (await this.getExecutionContext(parentChainId))?.depth ?? 0 + 1 : 0,
+      status: 'active',
+      original_task: task,
+      context_ref: `context:${chainId}`,
+      strategy,
+      estimated_tokens: estimatedTokens,
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
+
+    // Store execution context metadata
+    const pipeline = this.storageClient.pipeline();
+
+    pipeline.hset(RLMStorageKeys.execution(this.workspaceId, chainId), {
+      chain_id: chainId,
+      parent_chain_id: parentChainId || '',
+      depth: executionContext.depth.toString(),
+      status: executionContext.status,
+      original_task: task,
+      context_ref: executionContext.context_ref,
+      strategy: strategy || '',
+      estimated_tokens: estimatedTokens.toString(),
+      created_at: timestamp.toString(),
+      updated_at: timestamp.toString(),
+    });
+
+    // Store the large context separately
+    pipeline.set(RLMStorageKeys.executionContext(this.workspaceId, chainId), context);
+
+    // Add to active executions set
+    pipeline.sadd(RLMStorageKeys.executionActive(this.workspaceId), chainId);
+    pipeline.sadd(RLMStorageKeys.executions(this.workspaceId), chainId);
+
+    await pipeline.exec();
+
+    console.error(`[MemoryStore] Created execution chain ${chainId}, ~${estimatedTokens} tokens, strategy: ${strategy}`);
+
+    return executionContext;
+  }
+
+  /**
+   * Auto-detect the best decomposition strategy based on content
+   */
+  private detectDecompositionStrategy(
+    context: string,
+    task: string,
+    estimatedTokens: number
+  ): import('../types.js').DecompositionStrategy {
+    const taskLower = task.toLowerCase();
+
+    // Filter strategy: Task mentions specific patterns/keywords
+    if (
+      taskLower.includes('find') ||
+      taskLower.includes('search') ||
+      taskLower.includes('extract') ||
+      taskLower.includes('error') ||
+      taskLower.includes('warning')
+    ) {
+      return 'filter';
+    }
+
+    // Aggregate strategy: Task mentions combining/summarizing
+    if (
+      taskLower.includes('summarize') ||
+      taskLower.includes('combine') ||
+      taskLower.includes('aggregate') ||
+      taskLower.includes('overview')
+    ) {
+      return 'aggregate';
+    }
+
+    // Recursive strategy: Very large context or complex analysis
+    if (estimatedTokens > 50000 || taskLower.includes('analyze')) {
+      return 'recursive';
+    }
+
+    // Default: Chunk for sequential processing
+    return 'chunk';
+  }
+
+  /**
+   * Get an execution context by chain ID
+   */
+  async getExecutionContext(chainId: string): Promise<import('../types.js').ExecutionContext | null> {
+    const { RLMStorageKeys } = await import('../types.js');
+    const data = await this.storageClient.hgetall(RLMStorageKeys.execution(this.workspaceId, chainId));
+
+    if (!data || Object.keys(data).length === 0) {
+      return null;
+    }
+
+    return {
+      chain_id: data.chain_id,
+      parent_chain_id: data.parent_chain_id || undefined,
+      depth: parseInt(data.depth, 10),
+      status: data.status as import('../types.js').ExecutionStatus,
+      original_task: data.original_task,
+      context_ref: data.context_ref,
+      strategy: data.strategy as import('../types.js').DecompositionStrategy || undefined,
+      estimated_tokens: data.estimated_tokens ? parseInt(data.estimated_tokens, 10) : undefined,
+      created_at: parseInt(data.created_at, 10),
+      updated_at: parseInt(data.updated_at, 10),
+      completed_at: data.completed_at ? parseInt(data.completed_at, 10) : undefined,
+      error_message: data.error_message || undefined,
+    };
+  }
+
+  /**
+   * Update execution context status
+   */
+  async updateExecutionContext(
+    chainId: string,
+    updates: Partial<Pick<import('../types.js').ExecutionContext, 'status' | 'error_message'>>
+  ): Promise<import('../types.js').ExecutionContext | null> {
+    const { RLMStorageKeys } = await import('../types.js');
+    const context = await this.getExecutionContext(chainId);
+
+    if (!context) {
+      return null;
+    }
+
+    const timestamp = Date.now();
+    const updateData: Record<string, string> = {
+      updated_at: timestamp.toString(),
+    };
+
+    if (updates.status) {
+      updateData.status = updates.status;
+      if (updates.status === 'completed' || updates.status === 'failed') {
+        updateData.completed_at = timestamp.toString();
+        // Remove from active set
+        await this.storageClient.srem(RLMStorageKeys.executionActive(this.workspaceId), chainId);
+      }
+    }
+
+    if (updates.error_message) {
+      updateData.error_message = updates.error_message;
+    }
+
+    await this.storageClient.hset(RLMStorageKeys.execution(this.workspaceId, chainId), updateData);
+
+    return {
+      ...context,
+      ...updates,
+      updated_at: timestamp,
+      completed_at: updates.status === 'completed' || updates.status === 'failed' ? timestamp : context.completed_at,
+    };
+  }
+
+  /**
+   * Create a subtask for an execution chain
+   */
+  async createSubtask(
+    chainId: string,
+    description: string,
+    order: number,
+    query?: string
+  ): Promise<import('../types.js').Subtask> {
+    const { RLMStorageKeys } = await import('../types.js');
+    const subtaskId = ulid();
+    const timestamp = Date.now();
+
+    const subtask: import('../types.js').Subtask = {
+      id: subtaskId,
+      chain_id: chainId,
+      order,
+      description,
+      status: 'pending',
+      query,
+      memory_ids: [],
+      created_at: timestamp,
+    };
+
+    const pipeline = this.storageClient.pipeline();
+
+    // Store subtask
+    pipeline.hset(RLMStorageKeys.executionSubtask(this.workspaceId, chainId, subtaskId), {
+      id: subtaskId,
+      chain_id: chainId,
+      order: order.toString(),
+      description,
+      status: 'pending',
+      query: query || '',
+      memory_ids: JSON.stringify([]),
+      created_at: timestamp.toString(),
+    });
+
+    // Add to subtasks sorted set (ordered by 'order' field)
+    pipeline.zadd(RLMStorageKeys.executionSubtasks(this.workspaceId, chainId), order, subtaskId);
+
+    await pipeline.exec();
+
+    return subtask;
+  }
+
+  /**
+   * Create multiple subtasks at once
+   */
+  async createSubtasks(
+    chainId: string,
+    subtasks: Array<{ description: string; query?: string }>
+  ): Promise<import('../types.js').Subtask[]> {
+    const results: import('../types.js').Subtask[] = [];
+
+    for (let i = 0; i < subtasks.length; i++) {
+      const subtask = await this.createSubtask(chainId, subtasks[i].description, i, subtasks[i].query);
+      results.push(subtask);
+    }
+
+    return results;
+  }
+
+  /**
+   * Get a subtask by ID
+   */
+  async getSubtask(chainId: string, subtaskId: string): Promise<import('../types.js').Subtask | null> {
+    const { RLMStorageKeys } = await import('../types.js');
+    const data = await this.storageClient.hgetall(
+      RLMStorageKeys.executionSubtask(this.workspaceId, chainId, subtaskId)
+    );
+
+    if (!data || Object.keys(data).length === 0) {
+      return null;
+    }
+
+    return {
+      id: data.id,
+      chain_id: data.chain_id,
+      order: parseInt(data.order, 10),
+      description: data.description,
+      status: data.status as import('../types.js').SubtaskStatus,
+      query: data.query || undefined,
+      result: data.result || undefined,
+      memory_ids: data.memory_ids ? JSON.parse(data.memory_ids) : [],
+      tokens_used: data.tokens_used ? parseInt(data.tokens_used, 10) : undefined,
+      created_at: parseInt(data.created_at, 10),
+      completed_at: data.completed_at ? parseInt(data.completed_at, 10) : undefined,
+    };
+  }
+
+  /**
+   * Get all subtasks for an execution chain
+   */
+  async getSubtasks(chainId: string): Promise<import('../types.js').Subtask[]> {
+    const { RLMStorageKeys } = await import('../types.js');
+    const subtaskIds = await this.storageClient.zrange(
+      RLMStorageKeys.executionSubtasks(this.workspaceId, chainId),
+      0,
+      -1
+    );
+
+    const subtasks: import('../types.js').Subtask[] = [];
+    for (const subtaskId of subtaskIds) {
+      const subtask = await this.getSubtask(chainId, subtaskId);
+      if (subtask) {
+        subtasks.push(subtask);
+      }
+    }
+
+    return subtasks;
+  }
+
+  /**
+   * Update a subtask with result
+   */
+  async updateSubtaskResult(
+    chainId: string,
+    subtaskId: string,
+    result: string,
+    status: import('../types.js').SubtaskStatus = 'completed',
+    tokensUsed?: number,
+    memoryIds?: string[]
+  ): Promise<import('../types.js').Subtask | null> {
+    const { RLMStorageKeys } = await import('../types.js');
+    const subtask = await this.getSubtask(chainId, subtaskId);
+
+    if (!subtask) {
+      return null;
+    }
+
+    const timestamp = Date.now();
+    const updateData: Record<string, string> = {
+      result,
+      status,
+      completed_at: timestamp.toString(),
+    };
+
+    if (tokensUsed !== undefined) {
+      updateData.tokens_used = tokensUsed.toString();
+    }
+
+    if (memoryIds) {
+      updateData.memory_ids = JSON.stringify(memoryIds);
+    }
+
+    await this.storageClient.hset(
+      RLMStorageKeys.executionSubtask(this.workspaceId, chainId, subtaskId),
+      updateData
+    );
+
+    return {
+      ...subtask,
+      result,
+      status,
+      tokens_used: tokensUsed,
+      memory_ids: memoryIds || subtask.memory_ids,
+      completed_at: timestamp,
+    };
+  }
+
+  /**
+   * Get the stored context for an execution chain
+   */
+  async getExecutionContextData(chainId: string): Promise<string | null> {
+    const { RLMStorageKeys } = await import('../types.js');
+    return this.storageClient.get(RLMStorageKeys.executionContext(this.workspaceId, chainId));
+  }
+
+  /**
+   * Extract a snippet from the stored context based on query
+   * Uses simple pattern matching and windowing
+   */
+  async getContextSnippet(
+    chainId: string,
+    query: string,
+    maxTokens: number = 4000
+  ): Promise<import('../types.js').ContextSnippet | null> {
+    const context = await this.getExecutionContextData(chainId);
+
+    if (!context) {
+      return null;
+    }
+
+    // Calculate max characters (rough: 4 chars per token)
+    const maxChars = maxTokens * 4;
+
+    // If query contains a regex pattern (e.g., ERROR|WARN), use it
+    let matches: string[] = [];
+    let relevanceScore = 0;
+
+    try {
+      const regexPattern = new RegExp(query, 'gi');
+      const lines = context.split('\n');
+      const matchingLines: string[] = [];
+
+      for (const line of lines) {
+        if (regexPattern.test(line)) {
+          matchingLines.push(line);
+        }
+      }
+
+      matches = matchingLines;
+      relevanceScore = matchingLines.length / lines.length;
+    } catch {
+      // Not a valid regex, do simple text search
+      const queryLower = query.toLowerCase();
+      const lines = context.split('\n');
+      const matchingLines = lines.filter(line => line.toLowerCase().includes(queryLower));
+      matches = matchingLines;
+      relevanceScore = matchingLines.length / lines.length;
+    }
+
+    // Build snippet from matches, respecting token limit
+    let snippet = '';
+    for (const match of matches) {
+      if (snippet.length + match.length + 1 > maxChars) {
+        break;
+      }
+      snippet += match + '\n';
+    }
+
+    // If no matches, return a chunked portion of the context
+    if (snippet.length === 0) {
+      snippet = context.substring(0, maxChars);
+      relevanceScore = 0.1; // Low relevance for fallback
+    }
+
+    const tokensUsed = Math.ceil(snippet.length / 4);
+
+    return {
+      snippet: snippet.trim(),
+      relevance_score: relevanceScore,
+      tokens_used: tokensUsed,
+    };
+  }
+
+  /**
+   * Get execution chain summary with progress
+   */
+  async getExecutionChainSummary(chainId: string): Promise<import('../types.js').ExecutionChainSummary | null> {
+    const context = await this.getExecutionContext(chainId);
+
+    if (!context) {
+      return null;
+    }
+
+    const subtasks = await this.getSubtasks(chainId);
+
+    const progress = {
+      total: subtasks.length,
+      completed: subtasks.filter(s => s.status === 'completed').length,
+      failed: subtasks.filter(s => s.status === 'failed').length,
+      pending: subtasks.filter(s => s.status === 'pending').length,
+      in_progress: subtasks.filter(s => s.status === 'in_progress').length,
+    };
+
+    // Estimate remaining tokens
+    const completedTokens = subtasks
+      .filter(s => s.status === 'completed' && s.tokens_used)
+      .reduce((sum, s) => sum + (s.tokens_used || 0), 0);
+
+    const avgTokensPerSubtask = progress.completed > 0 ? completedTokens / progress.completed : 4000;
+    const estimatedRemainingTokens = (progress.pending + progress.in_progress) * avgTokensPerSubtask;
+
+    return {
+      context,
+      subtasks,
+      progress,
+      estimated_remaining_tokens: Math.ceil(estimatedRemainingTokens),
+    };
+  }
+
+  /**
+   * Store merged results for an execution chain
+   */
+  async storeMergedResults(
+    chainId: string,
+    results: import('../types.js').MergedResults
+  ): Promise<void> {
+    const { RLMStorageKeys } = await import('../types.js');
+
+    await this.storageClient.hset(RLMStorageKeys.executionResults(this.workspaceId, chainId), {
+      aggregated_result: results.aggregated_result,
+      confidence: results.confidence.toString(),
+      source_coverage: results.source_coverage.toString(),
+      subtasks_completed: results.subtasks_completed.toString(),
+      subtasks_total: results.subtasks_total.toString(),
+    });
+  }
+
+  /**
+   * Get merged results for an execution chain
+   */
+  async getMergedResults(chainId: string): Promise<import('../types.js').MergedResults | null> {
+    const { RLMStorageKeys } = await import('../types.js');
+    const data = await this.storageClient.hgetall(RLMStorageKeys.executionResults(this.workspaceId, chainId));
+
+    if (!data || Object.keys(data).length === 0) {
+      return null;
+    }
+
+    return {
+      aggregated_result: data.aggregated_result,
+      confidence: parseFloat(data.confidence),
+      source_coverage: parseFloat(data.source_coverage),
+      subtasks_completed: parseInt(data.subtasks_completed, 10),
+      subtasks_total: parseInt(data.subtasks_total, 10),
+    };
+  }
+
+  /**
+   * List all execution chains (optionally filtered by status)
+   */
+  async listExecutionChains(
+    status?: import('../types.js').ExecutionStatus,
+    limit: number = 20
+  ): Promise<import('../types.js').ExecutionContext[]> {
+    const { RLMStorageKeys } = await import('../types.js');
+
+    // Get chain IDs based on status filter
+    let chainIds: string[];
+    if (status === 'active') {
+      chainIds = await this.storageClient.smembers(RLMStorageKeys.executionActive(this.workspaceId));
+    } else {
+      chainIds = await this.storageClient.smembers(RLMStorageKeys.executions(this.workspaceId));
+    }
+
+    const chains: import('../types.js').ExecutionContext[] = [];
+    for (const chainId of chainIds.slice(0, limit)) {
+      const chain = await this.getExecutionContext(chainId);
+      if (chain && (!status || chain.status === status)) {
+        chains.push(chain);
+      }
+    }
+
+    // Sort by created_at descending
+    chains.sort((a, b) => b.created_at - a.created_at);
+
+    return chains;
+  }
+
+  /**
+   * Delete an execution chain and all its data
+   */
+  async deleteExecutionChain(chainId: string): Promise<boolean> {
+    const { RLMStorageKeys } = await import('../types.js');
+    const context = await this.getExecutionContext(chainId);
+
+    if (!context) {
+      return false;
+    }
+
+    // Get all subtask IDs
+    const subtaskIds = await this.storageClient.zrange(
+      RLMStorageKeys.executionSubtasks(this.workspaceId, chainId),
+      0,
+      -1
+    );
+
+    const pipeline = this.storageClient.pipeline();
+
+    // Delete all subtasks
+    for (const subtaskId of subtaskIds) {
+      pipeline.del(RLMStorageKeys.executionSubtask(this.workspaceId, chainId, subtaskId));
+    }
+
+    // Delete subtasks sorted set
+    pipeline.del(RLMStorageKeys.executionSubtasks(this.workspaceId, chainId));
+
+    // Delete context data
+    pipeline.del(RLMStorageKeys.executionContext(this.workspaceId, chainId));
+
+    // Delete results
+    pipeline.del(RLMStorageKeys.executionResults(this.workspaceId, chainId));
+
+    // Delete execution metadata
+    pipeline.del(RLMStorageKeys.execution(this.workspaceId, chainId));
+
+    // Remove from sets
+    pipeline.srem(RLMStorageKeys.executions(this.workspaceId), chainId);
+    pipeline.srem(RLMStorageKeys.executionActive(this.workspaceId), chainId);
+
+    await pipeline.exec();
+
+    return true;
   }
 }

@@ -7,17 +7,44 @@
 import { Request } from 'express';
 
 /**
+ * Workspace context for request scoping
+ */
+export interface WorkspaceContext {
+  id: string; // Hashed workspace ID
+  path: string; // Original path from header
+  isDefault: boolean; // True if no header was provided
+}
+
+/**
+ * Team role types for team management
+ */
+export type TeamRole = 'owner' | 'admin' | 'member' | 'viewer';
+
+/**
+ * Team context for team members
+ */
+export interface TeamContext {
+  id: string;
+  memberId: string;
+  role: TeamRole;
+}
+
+/**
  * Tenant information attached to authenticated requests
  */
 export interface TenantContext {
   tenantId: string;
   apiKey: string;
-  apiKeyId: string;       // Key ID for audit logging
+  apiKeyId: string; // Key ID for audit logging
   plan: 'free' | 'pro' | 'team' | 'enterprise';
   limits: {
     maxMemories: number;
-    maxWorkspaces: number;
+    maxWorkspaces: number;      // Total = baseWorkspaces + addonWorkspaces
+    baseWorkspaces: number;     // Plan limit only
+    addonWorkspaces: number;    // Purchased add-ons
   };
+  workspace: WorkspaceContext;
+  team?: TeamContext;           // Present if user is part of a team
 }
 
 /**
@@ -45,12 +72,12 @@ export interface ApiKeyRecord {
 /**
  * Audit log action types
  */
-export type AuditAction = 'create' | 'read' | 'update' | 'delete' | 'search' | 'list';
+export type AuditAction = 'create' | 'read' | 'update' | 'delete' | 'search' | 'list' | 'mcp_call';
 
 /**
  * Audit log resource types
  */
-export type AuditResource = 'memory' | 'session' | 'apikey' | 'stats';
+export type AuditResource = 'memory' | 'session' | 'apikey' | 'stats' | 'mcp_tool';
 
 /**
  * Audit log entry stored in Redis
@@ -91,17 +118,21 @@ export const PLAN_LIMITS = {
   free: {
     maxMemories: 500,
     maxWorkspaces: 1,
+    maxTeamMembers: 1, // Owner only (can't create teams on free)
   },
   pro: {
-    maxMemories: 10000,
-    maxWorkspaces: 5,
+    maxMemories: 5000,
+    maxWorkspaces: 3,
+    maxTeamMembers: 1, // Owner only (can't create teams on pro)
   },
   team: {
-    maxMemories: 50000,
+    maxMemories: 25000,
     maxWorkspaces: -1, // unlimited
+    maxTeamMembers: 10, // 10 members included
   },
   enterprise: {
     maxMemories: -1, // unlimited
     maxWorkspaces: -1,
+    maxTeamMembers: -1, // unlimited
   },
 } as const;

@@ -84,7 +84,7 @@ export class VoyageProvider implements EmbeddingProvider {
         throw new Error(`Voyage API error: ${response.status} - ${errorBody}`);
       }
 
-      const data: VoyageEmbeddingResponse = await response.json();
+      const data = (await response.json()) as VoyageEmbeddingResponse;
 
       // Sort by index to ensure order matches input
       const sortedData = data.data.sort((a, b) => a.index - b.index);

@@ -23,7 +23,11 @@ import {
   X,
   Github,
   Twitter,
+  Users,
+  RefreshCw,
+  AlertCircle,
 } from "lucide-react";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 export default function HomePage() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -83,6 +87,7 @@ export default function HomePage() {
             </div>
 
             <div className="hidden md:flex items-center gap-4">
+              <ThemeToggle />
               <Link href="/sign-in">
                 <Button variant="ghost">Sign In</Button>
               </Link>
@@ -128,6 +133,10 @@ export default function HomePage() {
                 How it Works
               </a>
               <div className="pt-4 flex flex-col gap-2">
+                <div className="flex items-center justify-between pb-2">
+                  <span className="text-sm text-muted-foreground">Theme</span>
+                  <ThemeToggle />
+                </div>
                 <Link href="/sign-in">
                   <Button variant="ghost" className="w-full">
                     Sign In
@@ -160,9 +169,9 @@ export default function HomePage() {
             </h1>
 
             <p className="text-xl text-muted-foreground max-w-2xl mx-auto mb-10">
-              Give your AI agents persistent memory that survives context
-              windows. Semantic search, multi-tenant isolation, and native MCP
-              protocol support.
+              External memory for AI agents that persists across sessions and
+              survives context compaction. Share knowledge across teams of
+              Claude instances.
             </p>
 
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
@@ -201,9 +210,9 @@ export default function HomePage() {
                   {`{
   "mcpServers": {
     "recall": {
-      "url": "https://api.recall.dev/mcp",
+      "url": "https://recallmcp.com/mcp",
       "headers": {
-        "Authorization": "Bearer sk-your-api-key"
+        "Authorization": "Bearer YOUR_API_KEY"
       }
     }
   }
@@ -211,6 +220,94 @@ export default function HomePage() {
                 </code>
               </pre>
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* What Recall Is Section */}
+      <section className="py-16 px-4 sm:px-6 lg:px-8 border-t border-b">
+        <div className="max-w-7xl mx-auto">
+          <div className="text-center mb-12">
+            <h2 className="text-3xl sm:text-4xl font-bold mb-4">
+              Understanding <span className="gradient-text">Recall</span>
+            </h2>
+            <p className="text-muted-foreground max-w-2xl mx-auto">
+              Clear expectations for what Recall does and doesn&apos;t do.
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+            {/* What Recall IS */}
+            <Card className="bg-card/50 border-green-500/20">
+              <CardHeader>
+                <div className="flex items-center gap-2 text-green-500 mb-2">
+                  <Check className="w-5 h-5" />
+                  <CardTitle className="text-lg">What Recall IS</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex gap-3">
+                  <Check className="w-4 h-4 text-green-500 mt-1 flex-shrink-0" />
+                  <p className="text-sm text-muted-foreground">
+                    <strong className="text-foreground">Cross-session memory</strong> — Knowledge persists between conversations. Start a new chat and retrieve previous decisions.
+                  </p>
+                </div>
+                <div className="flex gap-3">
+                  <Check className="w-4 h-4 text-green-500 mt-1 flex-shrink-0" />
+                  <p className="text-sm text-muted-foreground">
+                    <strong className="text-foreground">Survives context compaction</strong> — When Claude&apos;s context window fills up and gets summarized, your memories remain intact externally.
+                  </p>
+                </div>
+                <div className="flex gap-3">
+                  <Check className="w-4 h-4 text-green-500 mt-1 flex-shrink-0" />
+                  <p className="text-sm text-muted-foreground">
+                    <strong className="text-foreground">Real-time team collaboration</strong> — One Claude learns something, all others know instantly. Share across 10s-1000s of instances.
+                  </p>
+                </div>
+                <div className="flex gap-3">
+                  <Check className="w-4 h-4 text-green-500 mt-1 flex-shrink-0" />
+                  <p className="text-sm text-muted-foreground">
+                    <strong className="text-foreground">Long-term knowledge base</strong> — Store decisions, patterns, and preferences that accumulate over weeks and months.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* What Recall is NOT */}
+            <Card className="bg-card/50 border-yellow-500/20">
+              <CardHeader>
+                <div className="flex items-center gap-2 text-yellow-500 mb-2">
+                  <AlertCircle className="w-5 h-5" />
+                  <CardTitle className="text-lg">What Recall is NOT</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex gap-3">
+                  <X className="w-4 h-4 text-yellow-500 mt-1 flex-shrink-0" />
+                  <p className="text-sm text-muted-foreground">
+                    <strong className="text-foreground">Not within-conversation compression</strong> — Your current chat still grows with each message. Recall helps across sessions, not within one.
+                  </p>
+                </div>
+                <div className="flex gap-3">
+                  <X className="w-4 h-4 text-yellow-500 mt-1 flex-shrink-0" />
+                  <p className="text-sm text-muted-foreground">
+                    <strong className="text-foreground">Semi-automatic</strong> — Claude calls tools proactively, but you guide what&apos;s important. Not magic context reduction.
+                  </p>
+                </div>
+                <div className="flex gap-3">
+                  <X className="w-4 h-4 text-yellow-500 mt-1 flex-shrink-0" />
+                  <p className="text-sm text-muted-foreground">
+                    <strong className="text-foreground">Not a replacement for good prompting</strong> — Store high-signal information (decisions, patterns), not everything.
+                  </p>
+                </div>
+                <div className="flex gap-3">
+                  <X className="w-4 h-4 text-yellow-500 mt-1 flex-shrink-0" />
+                  <p className="text-sm text-muted-foreground">
+                    <strong className="text-foreground">Not instant token savings</strong> — Benefits compound over time as knowledge accumulates externally.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </div>
       </section>
@@ -261,6 +358,16 @@ export default function HomePage() {
               title="Context Types"
               description="Organize memories by type: decisions, patterns, preferences, errors, and more."
             />
+            <FeatureCard
+              icon={<Users className="w-6 h-6" />}
+              title="Real-Time Knowledge Sharing"
+              description="One Claude learns, all others know instantly. Share knowledge across 10s-1000s of instances in real-time."
+            />
+            <FeatureCard
+              icon={<RefreshCw className="w-6 h-6" />}
+              title="Survives Compaction"
+              description="When context windows fill up and get summarized, your memories persist externally for retrieval."
+            />
           </div>
         </div>
       </section>
@@ -291,23 +398,23 @@ export default function HomePage() {
             />
             <PricingCard
               name="Pro"
-              price="$9"
+              price="$4.99"
               description="For individual developers"
               features={[
-                "10,000 memories",
-                "5 workspaces",
+                "5,000 memories",
+                "3 workspaces",
                 "Advanced search",
                 "REST API access",
-                "Email support",
+                "Priority support",
               ]}
               highlighted
             />
             <PricingCard
               name="Team"
-              price="$29"
+              price="$9.99"
               description="For teams and production apps"
               features={[
-                "50,000 memories",
+                "25,000 memories",
                 "Unlimited workspaces",
                 "Shared memories",
                 "Priority support",

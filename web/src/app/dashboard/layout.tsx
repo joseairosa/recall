@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -15,17 +15,22 @@ import {
   LogOut,
   Menu,
   X,
+  Users,
+  BookOpen,
 } from "lucide-react";
-import { useState } from "react";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
+import { api, TenantInfo } from "@/lib/api";
 
 const navigation = [
   { name: "Overview", href: "/dashboard", icon: LayoutDashboard },
   { name: "API Keys", href: "/dashboard/keys", icon: Key },
   { name: "Memories", href: "/dashboard/memories", icon: Database },
   { name: "Audit Log", href: "/dashboard/audit", icon: FileText },
+  { name: "Docs", href: "/dashboard/docs", icon: BookOpen },
+  { name: "Team", href: "/dashboard/team", icon: Users },
   { name: "Billing", href: "/dashboard/billing", icon: CreditCard },
   { name: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
@@ -36,7 +41,8 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const { user, loading, signOut } = useAuth();
+  const [tenantInfo, setTenantInfo] = useState<TenantInfo | null>(null);
+  const { user, loading, signOut, apiKey } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -46,6 +52,21 @@ export default function DashboardLayout({
       router.push("/sign-in");
     }
   }, [user, loading, router]);
+
+  // Fetch tenant info for plan display
+  useEffect(() => {
+    const loadTenantInfo = async () => {
+      if (!apiKey) return;
+
+      api.setApiKey(apiKey);
+      const response = await api.getMe();
+      if (response.success && response.data) {
+        setTenantInfo(response.data);
+      }
+    };
+
+    loadTenantInfo();
+  }, [apiKey]);
 
   const handleSignOut = async () => {
     await signOut();
@@ -170,7 +191,10 @@ export default function DashboardLayout({
           <div className="flex-1" />
 
           <div className="flex items-center gap-4">
-            <span className="text-sm text-muted-foreground">Free Plan</span>
+            <span className="text-sm text-muted-foreground capitalize">
+              {tenantInfo?.plan || "Free"} Plan
+            </span>
+            <ThemeToggle />
           </div>
         </header>
 

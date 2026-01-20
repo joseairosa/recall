@@ -457,24 +457,13 @@ export function createMcpHandler(storageClient: StorageClient) {
         return;
       }
 
-      // If client sends a stale session ID (e.g., after server restart), return 410 Gone
-      // with a clear message. The MCP client should handle this by clearing the session
-      // and re-initializing. We set a header hint to help debugging.
-      if (sessionId && !sessions.has(sessionId)) {
-        console.log(`[MCP] Stale session ID detected: ${sessionId}, returning 410 to trigger re-init`);
-        res.setHeader('X-Mcp-Session-Expired', 'true');
-        res.status(410).json({
-          jsonrpc: '2.0',
-          error: {
-            code: -32000,
-            message: 'Session expired or server restarted. Client should clear session ID and reconnect.',
-          },
-          id: req.body?.id || null,
-        });
-        return;
+      // Check if this is a stale session (client has session ID we don't recognize)
+      const isStaleSession = sessionId && !sessions.has(sessionId);
+      if (isStaleSession) {
+        console.log(`[MCP] Stale session ID detected: ${sessionId}, will force-initialize transport`);
       }
 
-      // For new sessions (no session ID), create new server + transport
+      // For new sessions (no session ID) or stale sessions, create server + transport
       const { server, state } = createTenantMcpServer(
         storageClient,
         tenant.tenantId,
@@ -486,7 +475,7 @@ export function createMcpHandler(storageClient: StorageClient) {
       );
 
       const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID(),
+        sessionIdGenerator: () => isStaleSession ? sessionId : randomUUID(),
         enableJsonResponse: true, // Allow simple JSON responses
         onsessioninitialized: (newSessionId) => {
           console.log(
@@ -509,6 +498,27 @@ export function createMcpHandler(storageClient: StorageClient) {
 
       // Connect server to transport
       await server.connect(transport);
+
+      // For stale sessions, force-initialize the transport to bypass the "Server not initialized" check
+      // This is a workaround because MCP protocol requires initialize request first, but clients with
+      // stale sessions send tool calls directly (thinking the session is still active)
+      if (isStaleSession) {
+        console.log(`[MCP] Force-initializing transport for stale session: ${sessionId}`);
+        // Access internal properties to force initialization state
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const transportInternal = transport as any;
+        transportInternal._initialized = true;
+        transportInternal.sessionId = sessionId;
+        // Register the session manually since onsessioninitialized won't be called
+        sessions.set(sessionId, {
+          server,
+          transport,
+          tenantId: tenant.tenantId,
+          state,
+          plan: tenant.plan,
+          lastAccess: Date.now(),
+        });
+      }
 
       // Handle the request
       await transport.handleRequest(req, res, req.body);

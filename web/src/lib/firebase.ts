@@ -11,18 +11,28 @@ const firebaseConfig = {
   measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID || "G-63LTZ71RJE",
 };
 
-// Initialize Firebase (prevent re-initialization in development)
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+// Initialize Firebase only in browser environment
+// This prevents SSG errors during build
+let app;
+let auth;
+let githubProvider: GithubAuthProvider;
+let googleProvider: GoogleAuthProvider;
 
-// Auth instance
-export const auth = getAuth(app);
+if (typeof window !== "undefined") {
+  // Initialize Firebase (prevent re-initialization in development)
+  app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 
-// Auth providers
-export const githubProvider = new GithubAuthProvider();
-export const googleProvider = new GoogleAuthProvider();
+  // Auth instance
+  auth = getAuth(app);
 
-// Add scopes for GitHub
-githubProvider.addScope("read:user");
-githubProvider.addScope("user:email");
+  // Auth providers
+  githubProvider = new GithubAuthProvider();
+  googleProvider = new GoogleAuthProvider();
 
+  // Add scopes for GitHub
+  githubProvider.addScope("read:user");
+  githubProvider.addScope("user:email");
+}
+
+export { auth, githubProvider, googleProvider };
 export default app;

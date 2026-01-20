@@ -123,12 +123,13 @@ export class WorkspaceService {
     );
 
     console.log(
-      `[Workspace] getWorkspaceCount for tenant ${tenantId}: found ${workspaceIds.length} IDs in set`
+      `[Workspace] getWorkspaceCount for tenant ${tenantId}: found ${workspaceIds.length} IDs in set: [${workspaceIds.join(', ')}]`
     );
 
     // Count only those with valid metadata
     let validCount = 0;
     const orphanedIds: string[] = [];
+    const validWorkspaces: { id: string; path: string }[] = [];
 
     for (const wsId of workspaceIds) {
       const meta = await this.storageClient.hgetall(
@@ -136,7 +137,8 @@ export class WorkspaceService {
       );
       if (meta && Object.keys(meta).length > 0) {
         validCount++;
-        console.log(`[Workspace] Valid workspace: ${wsId}`);
+        validWorkspaces.push({ id: wsId, path: meta.path || 'unknown' });
+        console.log(`[Workspace] Valid workspace: ${wsId} -> ${meta.path || 'unknown'}`);
       } else {
         orphanedIds.push(wsId);
         console.log(`[Workspace] Orphaned workspace ID (no metadata): ${wsId}`);
@@ -154,7 +156,7 @@ export class WorkspaceService {
     }
 
     console.log(
-      `[Workspace] getWorkspaceCount result: ${validCount} valid, ${orphanedIds.length} orphaned (cleaned up)`
+      `[Workspace] getWorkspaceCount result: ${validCount} valid workspaces: ${JSON.stringify(validWorkspaces)}, ${orphanedIds.length} orphaned (cleaned up)`
     );
 
     return validCount;

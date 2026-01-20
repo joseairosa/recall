@@ -2,13 +2,13 @@ import { initializeApp, getApps } from "firebase/app";
 import { getAuth, GithubAuthProvider, GoogleAuthProvider } from "firebase/auth";
 
 const firebaseConfig = {
-  apiKey: "REDACTED_FIREBASE_KEY",
-  authDomain: "recallmcp.firebaseapp.com",
-  projectId: "recallmcp",
-  storageBucket: "recallmcp.firebasestorage.app",
-  messagingSenderId: "130108573765",
-  appId: "1:130108573765:web:0abb4a2b547c6d299cfb2c",
-  measurementId: "G-63LTZ71RJE",
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || "recallmcp.firebaseapp.com",
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "recallmcp",
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "recallmcp.firebasestorage.app",
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "130108573765",
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "1:130108573765:web:0abb4a2b547c6d299cfb2c",
+  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID || "G-63LTZ71RJE",
 };
 
 // Initialize Firebase (prevent re-initialization in development)

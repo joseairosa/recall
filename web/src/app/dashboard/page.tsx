@@ -316,7 +316,7 @@ export default function DashboardPage() {
                 </li>
                 <li className="flex gap-2">
                   <X className="w-3 h-3 text-yellow-500 mt-1 flex-shrink-0" />
-                  <span><strong className="text-foreground">Not automatic</strong> — Tell Claude to store/retrieve memories explicitly</span>
+                  <span><strong className="text-foreground">Semi-automatic</strong> — Claude calls tools proactively, but you guide what&apos;s important</span>
                 </li>
                 <li className="flex gap-2">
                   <X className="w-3 h-3 text-yellow-500 mt-1 flex-shrink-0" />
@@ -346,9 +346,9 @@ export default function DashboardPage() {
           <div className="bg-primary/5 rounded-lg p-4 border border-primary/20">
             <h4 className="font-medium mb-2">Best Practices</h4>
             <ol className="text-sm text-muted-foreground space-y-1 list-decimal list-inside">
-              <li>Start new sessions with: <code className="bg-muted px-1 rounded">recall context about [topic]</code></li>
-              <li>After important decisions: <code className="bg-muted px-1 rounded">analyze and remember this discussion</code></li>
-              <li>End long sessions with: <code className="bg-muted px-1 rounded">summarize this session</code></li>
+              <li>Start sessions with: <code className="bg-muted px-1 rounded">auto_session_start</code> (loads relevant context)</li>
+              <li>After decisions: <code className="bg-muted px-1 rounded">quick_store_decision</code> (stores with reasoning)</li>
+              <li>End sessions with: <code className="bg-muted px-1 rounded">summarize_session</code> (creates snapshot)</li>
               <li>Store decisions and patterns, not code implementations</li>
             </ol>
           </div>

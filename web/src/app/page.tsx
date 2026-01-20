@@ -291,7 +291,7 @@ export default function HomePage() {
                 <div className="flex gap-3">
                   <X className="w-4 h-4 text-yellow-500 mt-1 flex-shrink-0" />
                   <p className="text-sm text-muted-foreground">
-                    <strong className="text-foreground">Not automatic</strong> — You need to tell Claude to store and retrieve memories. It&apos;s a tool, not magic context reduction.
+                    <strong className="text-foreground">Semi-automatic</strong> — Claude calls tools proactively, but you guide what&apos;s important. Not magic context reduction.
                   </p>
                 </div>
                 <div className="flex gap-3">

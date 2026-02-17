@@ -95,6 +95,11 @@ export class RedisAdapter implements StorageClient {
     await this.client.set(key, value);
   }
 
+  async setnx(key: string, value: string): Promise<boolean> {
+    const result = await this.client.setnx(key, value);
+    return result === 1;
+  }
+
   async sadd(key: string, ...members: string[]): Promise<void> {
     if (members.length > 0) {
       await this.client.sadd(key, ...members);

@@ -1,5 +1,4 @@
 export interface StorageClient {
-  // Basic Operations
   hget(key: string, field: string): Promise<string | null>;
   hset(key: string, data: Record<string, string>): Promise<void>;
   hgetall(key: string): Promise<Record<string, string>>;
@@ -8,15 +7,14 @@ export interface StorageClient {
   exists(key: string): Promise<boolean>;
   get(key: string): Promise<string | null>;
   set(key: string, value: string): Promise<void>;
+  setnx(key: string, value: string): Promise<boolean>;
   
-  // Set Operations
   sadd(key: string, ...members: string[]): Promise<void>;
   srem(key: string, ...members: string[]): Promise<void>;
   smembers(key: string): Promise<string[]>;
   sunion(...keys: string[]): Promise<string[]>;
   scard(key: string): Promise<number>;
   
-  // Sorted Set Operations
   zadd(key: string, score: number, member: string): Promise<void>;
   zrem(key: string, member: string): Promise<void>;
   zrange(key: string, start: number, stop: number): Promise<string[]>;
@@ -28,10 +26,8 @@ export interface StorageClient {
   zscore(key: string, member: string): Promise<string | null>;
   zcount(key: string, min: number | string, max: number | string): Promise<number>;
 
-  // Key Operations
   expire(key: string, seconds: number): Promise<boolean>;
   
-  // Pipeline Operations
   pipeline(): IPipelineOperations;
 
   closeClient(): Promise<void>;
@@ -50,6 +46,5 @@ export interface IPipelineOperations {
   expire(key: string, seconds: number): void;
   zremrangebyrank(key: string, start: number, stop: number): void;
 
-  // execute/commit queued operations
   exec(): Promise<void>;
 }

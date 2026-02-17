@@ -39,11 +39,11 @@ import { versionTools, setVersionMemoryStore } from './version-tools.js';
 import { templateTools, setTemplateMemoryStore } from './template-tools.js';
 import { categoryTools, setCategoryMemoryStore } from './category-tools.js';
 import { rlmTools, setRLMMemoryStore } from './rlm-tools.js';
+import { workflowTools, setWorkflowMemoryStore } from './workflow-tools.js';
+import { consolidationTools, setConsolidationMemoryStore } from './consolidation-tools.js';
 
-// Default memory store for stdio mode (singleton)
 let defaultMemoryStore: MemoryStore | null = null;
 
-// Injected memory store for HTTP multi-tenant mode
 let injectedMemoryStore: MemoryStore | null = null;
 
 /**
@@ -64,7 +64,6 @@ export function getMemoryStore(): MemoryStore {
  */
 export function setMemoryStore(store: MemoryStore): void {
   injectedMemoryStore = store;
-  // Propagate to sub-modules
   setContextMemoryStore(store);
   setExportImportMemoryStore(store);
   setRelationshipMemoryStore(store);
@@ -72,6 +71,8 @@ export function setMemoryStore(store: MemoryStore): void {
   setTemplateMemoryStore(store);
   setCategoryMemoryStore(store);
   setRLMMemoryStore(store);
+  setWorkflowMemoryStore(store);
+  setConsolidationMemoryStore(store);
 }
 
 /**
@@ -87,30 +88,24 @@ export function clearMemoryStore(): void {
 export async function initializeDefaultMemoryStore(): Promise<void> {
   if (!defaultMemoryStore) {
     defaultMemoryStore = await MemoryStore.create();
-    // Set as the active store for sub-modules
     setMemoryStore(defaultMemoryStore);
   }
 }
 
-// For backward compatibility with stdio mode, initialize on import
-// This is a no-op in HTTP mode where setMemoryStore() is called per-request
 initializeDefaultMemoryStore().catch(err => {
   console.error('[Tools] Failed to initialize default memory store:', err);
 });
 
 export const tools = {
-  // Context management tools
   recall_relevant_context,
   analyze_and_remember,
   summarize_session,
   get_time_window_context,
 
-  // Automatic hooks (v1.8.0) - makes Recall automatic
-  auto_session_start,      // Call at start of every session
-  quick_store_decision,    // Quickly store decisions after making them
-  should_use_rlm,          // Check if content needs RLM processing
+  auto_session_start,
+  quick_store_decision,
+  should_use_rlm,
 
-  // Export/Import tools
   export_memories: {
     description: 'Export memories to JSON format with optional filtering',
     inputSchema: zodToJsonSchema(ExportMemoriesSchema),
@@ -171,7 +166,6 @@ export const tools = {
     },
   },
 
-  // Original memory tools
   store_memory: {
     description: 'Store a new memory/context entry for long-term persistence',
     inputSchema: zodToJsonSchema(CreateMemorySchema),
@@ -309,15 +303,10 @@ export const tools = {
           args.regex
         );
 
-        // Format results based on output_mode (v1.8.1)
-        // - compact: minimal fields for maximum context efficiency (~83% reduction)
-        // - summary: all fields except content (~73% reduction) - DEFAULT
-        // - full: all fields including content (original behavior)
         const outputMode = args.output_mode || 'summary';
 
         const formattedResults = results.map(r => {
           if (outputMode === 'compact') {
-            // Minimal: just enough to identify and decide if full content is needed
             return {
               memory_id: r.id,
               summary: r.summary || r.content.substring(0, 100) + (r.content.length > 100 ? '...' : ''),
@@ -327,7 +316,6 @@ export const tools = {
           }
 
           if (outputMode === 'full') {
-            // Full: all fields including content (original behavior)
             return {
               memory_id: r.id,
               content: r.content,
@@ -341,7 +329,6 @@ export const tools = {
             };
           }
 
-          // Default: summary mode - all fields except content
           return {
             memory_id: r.id,
             summary: r.summary || r.content.substring(0, 150) + (r.content.length > 150 ? '...' : ''),
@@ -370,7 +357,6 @@ export const tools = {
                   context_types: args.context_types,
                 },
                 results: formattedResults,
-                // Hint for retrieving full content if needed
                 ...(outputMode !== 'full' && results.length > 0 && {
                   hint: 'Use get_memory with memory_id to retrieve full content for specific memories',
                 }),
@@ -421,7 +407,6 @@ export const tools = {
     },
   },
 
-  // Global memory conversion tools
   convert_to_global: {
     description: 'Convert a workspace-specific memory to global (accessible across all workspaces)',
     inputSchema: zodToJsonSchema(ConvertToGlobalSchema),
@@ -502,26 +487,22 @@ export const tools = {
     },
   },
 
-  // Relationship tools (v1.4.0)
   ...relationshipTools,
 
-  // Version history tools (v1.5.0)
   ...versionTools,
 
-  // Template tools (v1.5.0)
   ...templateTools,
 
-  // Category tools (v1.5.0)
   ...categoryTools,
 
-  // RLM (Recursive Language Model) tools (v1.8.0)
-  // For handling large contexts that exceed context window limits
   ...rlmTools,
+
+  ...Object.fromEntries(workflowTools.map(t => [t.name, { description: t.description, inputSchema: t.inputSchema, handler: t.handler }])),
+
+  ...Object.fromEntries(consolidationTools.map(t => [t.name, { description: t.description, inputSchema: t.inputSchema, handler: t.handler }])),
 };
 
-// Helper function to convert Zod schema to JSON Schema
 function zodToJsonSchema(schema: z.ZodType): any {
-  // Simple conversion - in production you'd use @anatine/zod-to-json-schema
   if (schema instanceof z.ZodObject) {
     const shape = schema._def.shape();
     const properties: any = {};

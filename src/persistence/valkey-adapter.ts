@@ -81,7 +81,6 @@ export class ValkeyAdapter implements StorageClient {
     const result = await this.client.hgetall(key);
     if (!result) return {};
 
-    // Convert HashDataType to Record<string, string>
     return Object.entries(result).reduce((acc, [key, value]) => {
       acc[String(value.field)] = String(value.value);
       return acc;
@@ -112,6 +111,12 @@ export class ValkeyAdapter implements StorageClient {
   async set(key: string, value: string): Promise<void> {
     if (!key) return;
     await this.client.set(key, value);
+  }
+
+  async setnx(key: string, value: string): Promise<boolean> {
+    if (!key) return false;
+    const result = await this.client.set(key, value, { conditionalSet: 'onlyIfDoesNotExist' });
+    return result !== null;
   }
 
   async sadd(key: string, ...members: string[]): Promise<void> {
@@ -146,7 +151,7 @@ export class ValkeyAdapter implements StorageClient {
 
   async zadd(key: string, score: number, member: string): Promise<void> {
     if (!key || !member) return;
-    await this.client.zadd(key, { [member]: score }); // Fix object format
+    await this.client.zadd(key, { [member]: score });
   }
 
   async zrem(key: string, member: string): Promise<void> {
@@ -179,12 +184,12 @@ export class ValkeyAdapter implements StorageClient {
     if (!key) return [];
     try {
       const result = await this.client.zrangeWithScores(key, {
-        start: { value: min, isInclusive: true }, // Changed to inclusive
+        start: { value: min, isInclusive: true },
         end: { value: max, isInclusive: true },
         type: "byScore",
       });
       if (!result) return [];
-      return result.map(item => item.element.toString()); // Extract the 'element' from each object in the array
+      return result.map(item => item.element.toString());
     } catch (error) {
       console.error("Error in zrangebyscore:", error);
       return [];

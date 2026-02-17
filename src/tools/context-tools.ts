@@ -12,9 +12,6 @@ import {
   type ContextType,
 } from '../types.js';
 
-// ============================================================================
-// Auto-Hook Schemas (v1.8.0)
-// ============================================================================
 
 /**
  * Schema for auto_session_start - automatically retrieves relevant context at session start
@@ -53,10 +50,8 @@ export const ShouldUseRLMSchema = z.object({
 
 export type ShouldUseRLM = z.infer<typeof ShouldUseRLMSchema>;
 
-// Injected memory store for multi-tenant support
 let memoryStore: MemoryStore | null = null;
 
-// Lazy-loaded analyzer - only initialized when needed (requires ANTHROPIC_API_KEY)
 let _analyzer: ConversationAnalyzer | null = null;
 function getAnalyzer(): ConversationAnalyzer {
   if (!_analyzer) {
@@ -89,21 +84,16 @@ export const recall_relevant_context = {
   inputSchema: zodToJsonSchema(RecallContextSchema),
   handler: async (args: z.infer<typeof RecallContextSchema>) => {
     try {
-      // Enhance the search query
       const enhancedQuery = await getAnalyzer().enhanceQuery(args.current_task, args.query);
 
-      // Semantic search with filters
       const results = await getStore().searchMemories(
         enhancedQuery,
         args.limit,
         args.min_importance
       );
 
-      // Format results for context efficiency (v1.8.1)
-      // Returns summary instead of full content to reduce context bloat
       const formattedResults = results.map(r => ({
         memory_id: r.id,
-        // Use summary if available, otherwise truncate content
         summary: r.summary || (r.content.length > 150 ? r.content.substring(0, 150) + '...' : r.content),
         context_type: r.context_type,
         importance: r.importance,
@@ -119,7 +109,6 @@ export const recall_relevant_context = {
               current_task: args.current_task,
               found: results.length,
               relevant_memories: formattedResults,
-              // Hint for retrieving full content if needed
               ...(results.length > 0 && {
                 hint: 'Use get_memory with memory_id to retrieve full content for specific memories',
               }),
@@ -144,7 +133,6 @@ export const analyze_and_remember = {
   inputSchema: zodToJsonSchema(AnalyzeConversationSchema),
   handler: async (args: z.infer<typeof AnalyzeConversationSchema>) => {
     try {
-      // Analyze conversation to extract memories
       const extracted = await getAnalyzer().analyzeConversation(args.conversation_text);
 
       const result: AnalysisResult = {
@@ -152,7 +140,6 @@ export const analyze_and_remember = {
         total_count: extracted.length,
       };
 
-      // Auto-store if requested
       if (args.auto_store && extracted.length > 0) {
         const memories = await getStore().createMemories(
           extracted.map(e => ({
@@ -168,7 +155,6 @@ export const analyze_and_remember = {
         result.stored_ids = memories.map(m => m.id);
       }
 
-      // Format response
       const response = {
         success: true,
         analyzed: result.total_count,
@@ -214,7 +200,6 @@ export const summarize_session = {
   inputSchema: zodToJsonSchema(SummarizeSessionSchema),
   handler: async (args: z.infer<typeof SummarizeSessionSchema>) => {
     try {
-      // Get recent memories from the lookback period
       const lookbackMs = args.lookback_minutes * 60 * 1000;
       const cutoffTime = Date.now() - lookbackMs;
 
@@ -236,7 +221,6 @@ export const summarize_session = {
         };
       }
 
-      // Generate summary using Claude
       const summary = await getAnalyzer().summarizeSession(
         sessionMemories.map(m => ({
           content: m.content,
@@ -247,7 +231,6 @@ export const summarize_session = {
 
       let sessionInfo = null;
 
-      // Create session snapshot if requested
       if (args.auto_create_snapshot) {
         const sessionName = args.session_name || `Session ${new Date().toISOString().split('T')[0]}`;
         sessionInfo = await getStore().createSession(
@@ -287,7 +270,6 @@ export const summarize_session = {
   },
 };
 
-// Helper function to convert Zod schema to JSON Schema (same as in tools/index.ts)
 function zodToJsonSchema(schema: z.ZodType): any {
   if (schema instanceof z.ZodObject) {
     const shape = schema._def.shape();
@@ -373,29 +355,23 @@ export const get_time_window_context = {
   inputSchema: zodToJsonSchema(GetTimeWindowContextSchema),
   handler: async (args: z.infer<typeof GetTimeWindowContextSchema>) => {
     try {
-      // Calculate time window
       let startTime: number;
       let endTime: number;
 
       if (args.start_timestamp && args.end_timestamp) {
-        // Explicit time range
         startTime = args.start_timestamp;
         endTime = args.end_timestamp;
       } else if (args.hours !== undefined) {
-        // Hours lookback
         endTime = Date.now();
         startTime = endTime - (args.hours * 60 * 60 * 1000);
       } else if (args.minutes !== undefined) {
-        // Minutes lookback
         endTime = Date.now();
         startTime = endTime - (args.minutes * 60 * 1000);
       } else {
-        // Default: last hour
         endTime = Date.now();
         startTime = endTime - (60 * 60 * 1000);
       }
 
-      // Get memories in time window
       const memories = await getStore().getMemoriesByTimeWindow(
         startTime,
         endTime,
@@ -419,10 +395,8 @@ export const get_time_window_context = {
         };
       }
 
-      // Group memories based on user preference
       const groupedMemories = groupMemories(memories, args.group_by);
 
-      // Format output
       let output: string;
       if (args.format === 'json') {
         output = formatAsJSON(groupedMemories, memories, startTime, endTime, args.include_metadata);
@@ -449,7 +423,6 @@ export const get_time_window_context = {
   },
 };
 
-// Helper functions for formatting
 
 function groupMemories(memories: MemoryEntry[], groupBy: string): Map<string, MemoryEntry[]> {
   const groups = new Map<string, MemoryEntry[]>();
@@ -598,10 +571,6 @@ function formatAsText(
   return lines.join('\n');
 }
 
-// ============================================================================
-// Automatic Hooks (v1.8.0)
-// These tools make Recall automatic - no manual intervention needed
-// ============================================================================
 
 /**
  * auto_session_start - CALL THIS AT THE START OF EVERY SESSION
@@ -628,17 +597,15 @@ export const auto_session_start = {
       let totalTokens = 0;
       const maxTokens = args.max_context_tokens;
 
-      // Helper to estimate tokens (rough: 4 chars per token)
       const estimateTokens = (text: string) => Math.ceil(text.length / 4);
 
-      // 1. Get active directives (always important)
       if (args.include_directives) {
         const directives = await store.getMemoriesByType('directive' as ContextType);
         const activeDirectives = directives.filter(d => d.importance >= 7);
 
         if (activeDirectives.length > 0) {
           const directivesText = activeDirectives
-            .slice(0, 5) // Max 5 directives
+            .slice(0, 5)
             .map(d => `- ${d.content}`)
             .join('\n');
 
@@ -652,7 +619,46 @@ export const auto_session_start = {
         }
       }
 
-      // 2. Get recent decisions (last 24h)
+      {
+        const activeWorkflow = await store.getActiveWorkflow();
+        if (activeWorkflow) {
+          const memoryIds = await store.getWorkflowMemories(activeWorkflow.id);
+
+          const truncate = (s: string, max: number) =>
+            s.length > max ? s.substring(0, max - 3) + '...' : s;
+
+          const lines: string[] = [
+            `## Active Workflow`,
+            `**${truncate(activeWorkflow.name, 50)}** — ${memoryIds.length} memories linked`,
+          ];
+
+          if (activeWorkflow.description) {
+            lines.push(`Description: ${truncate(activeWorkflow.description, 200)}`);
+          }
+
+          const recentIds = memoryIds.slice(-5);
+          if (recentIds.length > 0) {
+            lines.push('');
+            lines.push('Recent context:');
+            for (const mid of recentIds) {
+              const mem = await store.getMemory(mid);
+              if (mem) {
+                const text = mem.summary || mem.content;
+                lines.push(`- ${truncate(text, 80)}`);
+              }
+            }
+          }
+
+          const section = lines.join('\n');
+          const sectionTokens = estimateTokens(section);
+
+          if (totalTokens + sectionTokens < maxTokens) {
+            contextParts.push(section);
+            totalTokens += sectionTokens;
+          }
+        }
+      }
+
       if (args.include_recent_decisions) {
         const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
         const decisions = await store.getMemoriesByType('decision' as ContextType);
@@ -676,7 +682,6 @@ export const auto_session_start = {
         }
       }
 
-      // 3. Get code patterns
       if (args.include_patterns) {
         const patterns = await store.getMemoriesByType('code_pattern' as ContextType);
         const importantPatterns = patterns
@@ -699,7 +704,6 @@ export const auto_session_start = {
         }
       }
 
-      // 4. If task hint provided, do a targeted search
       if (args.task_hint && totalTokens < maxTokens) {
         try {
           const enhancedQuery = await getAnalyzer().enhanceQuery(args.task_hint, args.task_hint);
@@ -719,11 +723,9 @@ export const auto_session_start = {
             }
           }
         } catch {
-          // Analyzer may not be available, skip targeted search
         }
       }
 
-      // 5. Get high-importance items if space remains
       if (totalTokens < maxTokens * 0.8) {
         const important = await store.getImportantMemories(9, 3);
         const criticalItems = important.filter(
@@ -745,7 +747,6 @@ export const auto_session_start = {
         }
       }
 
-      // Build final context
       const hasContext = contextParts.length > 0;
       const contextOutput = hasContext
         ? `# Session Context\n\n${contextParts.join('\n\n')}`
@@ -793,7 +794,6 @@ export const quick_store_decision = {
     try {
       const store = getStore();
 
-      // Format decision with structured content
       let content = `DECISION: ${args.decision}`;
 
       if (args.reasoning) {
@@ -804,7 +804,6 @@ export const quick_store_decision = {
         content += `\n\nALTERNATIVES CONSIDERED:\n${args.alternatives_considered.map(a => `- ${a}`).join('\n')}`;
       }
 
-      // Store with appropriate metadata
       const memory = await store.createMemory({
         content,
         context_type: 'decision',
@@ -850,15 +849,12 @@ export const should_use_rlm = {
   inputSchema: zodToJsonSchema(ShouldUseRLMSchema),
   handler: async (args: z.infer<typeof ShouldUseRLMSchema>) => {
     try {
-      // Estimate token count (rough: 4 chars per token)
       const estimatedTokens = Math.ceil(args.content.length / 4);
 
-      // Thresholds
-      const SAFE_THRESHOLD = 4000;      // Under this: process directly
-      const WARNING_THRESHOLD = 8000;    // This range: consider RLM
-      const RLM_REQUIRED_THRESHOLD = 15000; // Above this: must use RLM
+      const SAFE_THRESHOLD = 4000;
+      const WARNING_THRESHOLD = 8000;
+      const RLM_REQUIRED_THRESHOLD = 15000;
 
-      // Determine recommendation
       let recommendation: 'direct' | 'consider_rlm' | 'use_rlm';
       let reason: string;
       let suggestedStrategy: string | null = null;
@@ -876,7 +872,6 @@ export const should_use_rlm = {
         suggestedStrategy = detectSuggestedStrategy(args.content, args.task);
       }
 
-      // Build guidance
       const guidance = recommendation === 'direct'
         ? 'Process the content directly in your analysis.'
         : `To use RLM:\n1. Call create_execution_context(task="${args.task}", context=<content>)\n2. Call decompose_task(chain_id, strategy="${suggestedStrategy || 'chunk'}")\n3. Process each subtask with inject_context_snippet\n4. Call merge_results when done`;
@@ -917,7 +912,6 @@ function detectSuggestedStrategy(content: string, task: string): string {
   const taskLower = task.toLowerCase();
   const contentSample = content.substring(0, 1000).toLowerCase();
 
-  // Filter strategy indicators
   if (
     taskLower.includes('find') ||
     taskLower.includes('search') ||
@@ -930,7 +924,6 @@ function detectSuggestedStrategy(content: string, task: string): string {
     return 'filter';
   }
 
-  // Aggregate strategy indicators
   if (
     taskLower.includes('summarize') ||
     taskLower.includes('overview') ||
@@ -939,11 +932,9 @@ function detectSuggestedStrategy(content: string, task: string): string {
     return 'aggregate';
   }
 
-  // Recursive for very complex content
   if (content.length > 200000) {
     return 'recursive';
   }
 
-  // Default: chunk
   return 'chunk';
 }

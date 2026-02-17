@@ -13,13 +13,18 @@ export class MockStorageClient implements StorageClient {
   private setStore: Map<string, Set<string>> = new Map();
   private sortedSetStore: Map<string, Map<string, number>> = new Map();
 
-  // String operations
   async get(key: string): Promise<string | null> {
     return this.store.get(key) ?? null;
   }
 
   async set(key: string, value: string): Promise<void> {
     this.store.set(key, value);
+  }
+
+  async setnx(key: string, value: string): Promise<boolean> {
+    if (this.store.has(key)) return false;
+    this.store.set(key, value);
+    return true;
   }
 
   async del(key: string): Promise<void> {
@@ -38,7 +43,6 @@ export class MockStorageClient implements StorageClient {
     );
   }
 
-  // Hash operations
   async hget(key: string, field: string): Promise<string | null> {
     const hash = this.hashStore.get(key);
     return hash?.[field] ?? null;
@@ -60,7 +64,6 @@ export class MockStorageClient implements StorageClient {
     }
   }
 
-  // Set operations
   async sadd(key: string, ...members: string[]): Promise<void> {
     const set = this.setStore.get(key) || new Set();
     members.forEach((m) => set.add(m));
@@ -95,7 +98,6 @@ export class MockStorageClient implements StorageClient {
     return set ? set.size : 0;
   }
 
-  // Sorted set operations
   async zadd(key: string, score: number, member: string): Promise<void> {
     const zset = this.sortedSetStore.get(key) || new Map();
     zset.set(member, score);
@@ -115,7 +117,6 @@ export class MockStorageClient implements StorageClient {
 
     const entries = [...zset.entries()].sort((a, b) => a[1] - b[1]);
 
-    // Handle negative indices
     const len = entries.length;
     const startIdx = start < 0 ? Math.max(0, len + start) : start;
     const endIdx = stop < 0 ? len + stop + 1 : stop + 1;
@@ -128,7 +129,6 @@ export class MockStorageClient implements StorageClient {
 
     const entries = [...zset.entries()].sort((a, b) => b[1] - a[1]);
 
-    // Handle negative indices
     const len = entries.length;
     const startIdx = start < 0 ? Math.max(0, len + start) : start;
     const endIdx = stop < 0 ? len + stop + 1 : stop + 1;
@@ -200,9 +200,7 @@ export class MockStorageClient implements StorageClient {
     return score !== undefined ? String(score) : null;
   }
 
-  // Key Operations
   async expire(key: string, _seconds: number): Promise<boolean> {
-    // In-memory mock doesn't implement TTL, just return true if key exists
     return (
       this.store.has(key) ||
       this.hashStore.has(key) ||
@@ -211,7 +209,6 @@ export class MockStorageClient implements StorageClient {
     );
   }
 
-  // Pipeline operations (sync, returns IPipelineOperations)
   pipeline(): IPipelineOperations {
     const operations: Array<() => Promise<void>> = [];
     const self = this;
@@ -254,7 +251,6 @@ export class MockStorageClient implements StorageClient {
     };
   }
 
-  // Connection methods
   async closeClient(): Promise<void> {
     this.clear();
   }
@@ -263,7 +259,6 @@ export class MockStorageClient implements StorageClient {
     return true;
   }
 
-  // Test helpers
   clear(): void {
     this.store.clear();
     this.hashStore.clear();

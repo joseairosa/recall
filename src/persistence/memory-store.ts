@@ -1,8 +1,9 @@
 import { ulid } from 'ulid';
 import { generateEmbedding, cosineSimilarity } from '../embeddings/generator.js';
-import { ContextType, StorageKeys, createWorkspaceId, getWorkspaceMode, WorkspaceMode, type MemoryEntry, type CreateMemory, type SessionInfo, type MemoryRelationship, type RelationshipType, type RelatedMemoryResult, type MemoryGraph, type MemoryGraphNode, type MemoryVersion } from '../types.js';
+import { ContextType, StorageKeys, WorkflowStorageKeys, createWorkspaceId, getWorkspaceMode, WorkspaceMode, type MemoryEntry, type CreateMemory, type SessionInfo, type MemoryRelationship, type RelationshipType, type RelatedMemoryResult, type MemoryGraph, type MemoryGraphNode, type MemoryVersion } from '../types.js';
 import { StorageClient } from './storage-client.js';
 import { createStorageClient } from './storage-client.factory.js';
+import { WorkflowStore, type CreateWorkflowInput, type UpdateWorkflowInput } from './workflow-store.js';
 
 
 
@@ -10,6 +11,7 @@ export class MemoryStore {
   private storageClient: StorageClient;
   private workspaceId: string;
   private workspacePath: string;
+  private workflowStore!: WorkflowStore;
 
   /**
    * Create a MemoryStore with an existing storage client.
@@ -19,9 +21,17 @@ export class MemoryStore {
     this.workspacePath = workspacePath || process.cwd();
     this.workspaceId = createWorkspaceId(this.workspacePath);
     this.storageClient = storageClient;
-    // Log workspace info for debugging
+    this.workflowStore = new WorkflowStore(storageClient, this.workspaceId);
     console.error(`[MemoryStore] Workspace: ${this.workspacePath}`);
     console.error(`[MemoryStore] Workspace ID: ${this.workspaceId}`);
+  }
+
+  getStorageClient(): StorageClient {
+    return this.storageClient;
+  }
+
+  getWorkspaceId(): string {
+    return this.workspaceId;
   }
 
   /**
@@ -33,19 +43,15 @@ export class MemoryStore {
     return new MemoryStore(storageClient, workspacePath);
   }
 
-  // Store a new memory
   async createMemory(data: CreateMemory): Promise<MemoryEntry> {
     const id = ulid();
     const timestamp = Date.now();
 
-    // Generate embedding for the content
     const embedding = await generateEmbedding(data.content);
 
 
-    // Auto-generate summary if not provided
     const summary = data.summary || this.generateSummary(data.content);
 
-    // Calculate expiration if TTL provided
     let expiresAt: number | undefined;
     if (data.ttl_seconds) {
       expiresAt = timestamp + (data.ttl_seconds * 1000);
@@ -67,14 +73,12 @@ export class MemoryStore {
       expires_at: expiresAt,
       is_global: isGlobal,
       workspace_id: isGlobal ? '' : this.workspaceId,
-      category: data.category, // v1.5.0
+      category: data.category,
     };
 
     
-    // Store in Redis (workspace or global based on is_global flag)
     const pipeline = this.storageClient.pipeline();
 
-    // Main memory hash
     const memoryKey = isGlobal
       ? StorageKeys.globalMemory(id)
       : StorageKeys.memory(this.workspaceId, id);
@@ -83,12 +87,10 @@ export class MemoryStore {
     let toBeSerializedMemory = this.serializeMemory(memory);
     pipeline.hset(memoryKey, toBeSerializedMemory);
 
-    // Set TTL on the hash if specified
     if (data.ttl_seconds) {
       pipeline.expire(memoryKey, data.ttl_seconds);
     }
 
-    // Add to global set
     if (isGlobal) {
       pipeline.sadd(StorageKeys.globalMemories(), id);
       pipeline.zadd(StorageKeys.globalTimeline(), timestamp, id);
@@ -102,7 +104,6 @@ export class MemoryStore {
         pipeline.zadd(StorageKeys.globalImportant(), data.importance, id);
       }
 
-      // Add to category index if specified (v1.5.0)
       if (data.category) {
         pipeline.set(StorageKeys.globalMemoryCategory(id), data.category);
         pipeline.sadd(StorageKeys.globalCategory(data.category), id);
@@ -121,11 +122,18 @@ export class MemoryStore {
         pipeline.zadd(StorageKeys.important(this.workspaceId), data.importance, id);
       }
 
-      // Add to category index if specified (v1.5.0)
       if (data.category) {
         pipeline.set(StorageKeys.memoryCategory(this.workspaceId, id), data.category);
         pipeline.sadd(StorageKeys.category(this.workspaceId, data.category), id);
         pipeline.zadd(StorageKeys.categories(this.workspaceId), timestamp, data.category);
+      }
+
+      const activeWorkflowId = await this.workflowStore.getActiveWorkflowId();
+      if (activeWorkflowId) {
+        pipeline.sadd(
+          WorkflowStorageKeys.workflowMemories(this.workspaceId, activeWorkflowId),
+          id,
+        );
       }
     }
 
@@ -134,7 +142,6 @@ export class MemoryStore {
     return memory;
   }
 
-  // Batch create memories
   async createMemories(memories: CreateMemory[]): Promise<MemoryEntry[]> {
     const results: MemoryEntry[] = [];
 
@@ -146,9 +153,7 @@ export class MemoryStore {
     return results;
   }
 
-  // Get memory by ID (checks both workspace and global)
   async getMemory(id: string, isGlobal?: boolean): Promise<MemoryEntry | null> {
-    // If we know it's global, check global first
     if (isGlobal === true) {
       const globalData = await this.storageClient.hgetall(StorageKeys.globalMemory(id));
       if (globalData && Object.keys(globalData).length > 0) {
@@ -157,7 +162,6 @@ export class MemoryStore {
       return null;
     }
 
-    // If we know it's workspace, check workspace only
     if (isGlobal === false) {
       const wsData = await this.storageClient.hgetall(StorageKeys.memory(this.workspaceId, id));
       if (wsData && Object.keys(wsData).length > 0) {
@@ -166,7 +170,6 @@ export class MemoryStore {
       return null;
     }
 
-    // If unknown, check workspace first, then global
     const wsData = await this.storageClient.hgetall(StorageKeys.memory(this.workspaceId, id));
     if (wsData && Object.keys(wsData).length > 0) {
       return this.deserializeMemory(wsData);
@@ -179,7 +182,6 @@ export class MemoryStore {
     return null;
   }
 
-  // Get multiple memories by IDs
   async getMemories(ids: string[]): Promise<MemoryEntry[]> {
     const memories: MemoryEntry[] = [];
 
@@ -192,33 +194,32 @@ export class MemoryStore {
     return memories;
   }
 
-  // Get recent memories (respects workspace mode)
   async getRecentMemories(limit: number = 50): Promise<MemoryEntry[]> {
     const mode = getWorkspaceMode();
 
     if (mode === WorkspaceMode.GLOBAL) {
-      // Global mode: only global memories
       const ids = await this.storageClient.zrevrange(StorageKeys.globalTimeline(), 0, limit - 1);
       return this.getMemories(ids);
     } else if (mode === WorkspaceMode.ISOLATED) {
-      // Isolated mode: only workspace memories
       const ids = await this.storageClient.zrevrange(StorageKeys.timeline(this.workspaceId), 0, limit - 1);
       return this.getMemories(ids);
     } else {
-      // Hybrid mode: merge workspace + global
       const wsIds = await this.storageClient.zrevrange(StorageKeys.timeline(this.workspaceId), 0, limit - 1);
       const globalIds = await this.storageClient.zrevrange(StorageKeys.globalTimeline(), 0, limit - 1);
 
       const allMemories = await this.getMemories([...wsIds, ...globalIds]);
 
-      // Sort by timestamp descending
       allMemories.sort((a, b) => b.timestamp - a.timestamp);
 
       return allMemories.slice(0, limit);
     }
   }
 
-  // Get memories by time window (v1.6.0)
+  async getGlobalMemories(limit: number = 50): Promise<MemoryEntry[]> {
+    const ids = await this.storageClient.zrevrange(StorageKeys.globalTimeline(), 0, limit - 1);
+    return this.getMemories(ids);
+  }
+
   async getMemoriesByTimeWindow(
     startTime: number,
     endTime: number,
@@ -229,37 +230,30 @@ export class MemoryStore {
     let ids: string[] = [];
 
     if (mode === WorkspaceMode.GLOBAL) {
-      // Global mode: only global memories
       ids = await this.storageClient.zrangebyscore(StorageKeys.globalTimeline(), startTime, endTime);
     } else if (mode === WorkspaceMode.ISOLATED) {
-      // Isolated mode: only workspace memories
       ids = await this.storageClient.zrangebyscore(StorageKeys.timeline(this.workspaceId), startTime, endTime);
     } else {
-      // Hybrid mode: merge workspace + global
       const wsIds = await this.storageClient.zrangebyscore(StorageKeys.timeline(this.workspaceId), startTime, endTime);
       const globalIds = await this.storageClient.zrangebyscore(StorageKeys.globalTimeline(), startTime, endTime);
-      ids = [...new Set([...wsIds, ...globalIds])]; // Deduplicate
+      ids = [...new Set([...wsIds, ...globalIds])];
     }
 
     let memories = await this.getMemories(ids);
 
-    // Filter by importance if specified
     if (minImportance !== undefined) {
       memories = memories.filter(m => m.importance >= minImportance);
     }
 
-    // Filter by context types if specified
     if (contextTypes && contextTypes.length > 0) {
       memories = memories.filter(m => contextTypes.includes(m.context_type));
     }
 
-    // Sort by timestamp ascending (chronological order)
     memories.sort((a, b) => a.timestamp - b.timestamp);
 
     return memories;
   }
 
-  // Get memories by type (respects workspace mode)
   async getMemoriesByType(type: ContextType, limit?: number): Promise<MemoryEntry[]> {
     const mode = getWorkspaceMode();
     let ids: string[] = [];
@@ -269,21 +263,18 @@ export class MemoryStore {
     } else if (mode === WorkspaceMode.ISOLATED) {
       ids = await this.storageClient.smembers(StorageKeys.byType(this.workspaceId, type));
     } else {
-      // Hybrid: merge both
       const wsIds = await this.storageClient.smembers(StorageKeys.byType(this.workspaceId, type));
       const globalIds = await this.storageClient.smembers(StorageKeys.globalByType(type));
-      ids = [...new Set([...wsIds, ...globalIds])]; // Deduplicate
+      ids = [...new Set([...wsIds, ...globalIds])];
     }
 
     const memories = await this.getMemories(ids);
 
-    // Sort by timestamp descending
     memories.sort((a, b) => b.timestamp - a.timestamp);
 
     return limit ? memories.slice(0, limit) : memories;
   }
 
-  // Get memories by tag (respects workspace mode)
   async getMemoriesByTag(tag: string, limit?: number): Promise<MemoryEntry[]> {
     const mode = getWorkspaceMode();
     let ids: string[] = [];
@@ -293,21 +284,18 @@ export class MemoryStore {
     } else if (mode === WorkspaceMode.ISOLATED) {
       ids = await this.storageClient.smembers(StorageKeys.byTag(this.workspaceId, tag));
     } else {
-      // Hybrid: merge both
       const wsIds = await this.storageClient.smembers(StorageKeys.byTag(this.workspaceId, tag));
       const globalIds = await this.storageClient.smembers(StorageKeys.globalByTag(tag));
-      ids = [...new Set([...wsIds, ...globalIds])]; // Deduplicate
+      ids = [...new Set([...wsIds, ...globalIds])];
     }
 
     const memories = await this.getMemories(ids);
 
-    // Sort by timestamp descending
     memories.sort((a, b) => b.timestamp - a.timestamp);
 
     return limit ? memories.slice(0, limit) : memories;
   }
 
-  // Get important memories (respects workspace mode)
   async getImportantMemories(minImportance: number = 8, limit?: number): Promise<MemoryEntry[]> {
     const mode = getWorkspaceMode();
     let results: string[] = [];
@@ -331,7 +319,6 @@ export class MemoryStore {
         count: limit || 100}
       );
     } else {
-      // Hybrid: get from both and merge
       const wsResults = await this.storageClient.zrevrangebyscore(
         StorageKeys.important(this.workspaceId),
         10,
@@ -350,7 +337,6 @@ export class MemoryStore {
       );
 
       const allMemories = await this.getMemories([...wsResults, ...globalResults]);
-      // Sort by importance descending
       allMemories.sort((a, b) => b.importance - a.importance);
       return allMemories.slice(0, limit || 100);
     }
@@ -358,19 +344,16 @@ export class MemoryStore {
     return this.getMemories(results);
   }
 
-  // Update memory (handles both workspace and global)
   async updateMemory(id: string, updates: Partial<CreateMemory>): Promise<MemoryEntry | null> {
     const existing = await this.getMemory(id);
     if (!existing) {
       return null;
     }
 
-    // Create version before updating (v1.5.0)
     await this.createVersion(existing, 'user', 'Memory updated');
 
     const pipeline = this.storageClient.pipeline();
 
-    // Update content and regenerate embedding if content changed
     let embedding = existing.embedding;
     if (updates.content && updates.content !== existing.content) {
       embedding = await generateEmbedding(updates.content);
@@ -385,14 +368,12 @@ export class MemoryStore {
 
     const isGlobal = existing.is_global;
 
-    // Update hash (use appropriate key based on is_global)
     const memoryKey = isGlobal
       ? StorageKeys.globalMemory(id)
       : StorageKeys.memory(this.workspaceId, id);
 
     pipeline.hset(memoryKey, this.serializeMemory(updated));
 
-    // Update type index if changed
     if (updates.context_type && updates.context_type !== existing.context_type) {
       if (isGlobal) {
         pipeline.srem(StorageKeys.globalByType(existing.context_type), id);
@@ -403,9 +384,7 @@ export class MemoryStore {
       }
     }
 
-    // Update tag indexes if changed
     if (updates.tags) {
-      // Remove from old tags
       for (const tag of existing.tags) {
         if (!updates.tags.includes(tag)) {
           if (isGlobal) {
@@ -415,7 +394,6 @@ export class MemoryStore {
           }
         }
       }
-      // Add to new tags
       for (const tag of updates.tags) {
         if (!existing.tags.includes(tag)) {
           if (isGlobal) {
@@ -427,7 +405,6 @@ export class MemoryStore {
       }
     }
 
-    // Update importance index if changed
     if (updates.importance !== undefined) {
       if (existing.importance >= 8) {
         if (isGlobal) {
@@ -450,7 +427,6 @@ export class MemoryStore {
     return updated;
   }
 
-  // Delete memory (handles both workspace and global)
   async deleteMemory(id: string): Promise<boolean> {
     const memory = await this.getMemory(id);
     if (!memory) {
@@ -460,7 +436,6 @@ export class MemoryStore {
     const pipeline = this.storageClient.pipeline();
     const isGlobal = memory.is_global;
 
-    // Remove from all indexes (use appropriate keys based on is_global)
     if (isGlobal) {
       pipeline.del(StorageKeys.globalMemory(id));
       pipeline.srem(StorageKeys.globalMemories(), id);
@@ -518,7 +493,6 @@ export class MemoryStore {
     return deleted;
   }
 
-  // Semantic search (respects workspace mode with global memory weighting)
   async searchMemories(
     query: string,
     limit: number = 10,
@@ -528,15 +502,12 @@ export class MemoryStore {
     fuzzy: boolean = false,
     regex?: string
   ): Promise<Array<MemoryEntry & { similarity: number }>> {
-    // Generate embedding for query
     const queryEmbedding = await generateEmbedding(query);
 
     const mode = getWorkspaceMode();
     let memories: MemoryEntry[] = [];
 
-    // Get all memories based on workspace mode
     if (mode === WorkspaceMode.GLOBAL) {
-      // Global mode: only global memories
       let ids: string[];
       if (contextTypes && contextTypes.length > 0) {
         const sets = contextTypes.map(type => StorageKeys.globalByType(type));
@@ -546,7 +517,6 @@ export class MemoryStore {
       }
       memories = await this.getMemories(ids);
     } else if (mode === WorkspaceMode.ISOLATED) {
-      // Isolated mode: only workspace memories
       let ids: string[];
       if (contextTypes && contextTypes.length > 0) {
         const sets = contextTypes.map(type => StorageKeys.byType(this.workspaceId, type));
@@ -556,7 +526,6 @@ export class MemoryStore {
       }
       memories = await this.getMemories(ids);
     } else {
-      // Hybrid mode: merge workspace + global
       let wsIds: string[];
       let globalIds: string[];
 
@@ -573,42 +542,35 @@ export class MemoryStore {
       memories = await this.getMemories([...wsIds, ...globalIds]);
     }
 
-    // Filter by importance if specified
     let filtered = memories;
     if (minImportance !== undefined) {
       filtered = memories.filter(m => m.importance >= minImportance);
     }
 
-    // Filter by category if specified (v1.5.0)
     if (category) {
       filtered = filtered.filter(m => m.category === category);
     }
 
-    // Apply regex filter if specified (v1.5.0)
     if (regex) {
       try {
         const regexPattern = new RegExp(regex, 'i');
         filtered = filtered.filter(m => regexPattern.test(m.content));
       } catch (error) {
-        // Invalid regex, skip filtering
         console.error('Invalid regex pattern:', error);
       }
     }
 
-    // Calculate similarities
     const withSimilarity = filtered.map(memory => {
       let baseSimilarity = memory.embedding ? cosineSimilarity(queryEmbedding, memory.embedding) : 0;
 
-      // Fuzzy search boost (v1.5.0) - boost exact word matches
       if (fuzzy) {
         const queryWords = query.toLowerCase().split(/\s+/);
         const contentWords = memory.content.toLowerCase().split(/\s+/);
         const matchCount = queryWords.filter(qw => contentWords.some(cw => cw.includes(qw))).length;
-        const fuzzyBoost = (matchCount / queryWords.length) * 0.2; // Up to 20% boost
+        const fuzzyBoost = (matchCount / queryWords.length) * 0.2;
         baseSimilarity = Math.min(1, baseSimilarity + fuzzyBoost);
       }
 
-      // In hybrid mode, weight global memories slightly lower (0.9x) to prefer local context
       const similarity = (mode === WorkspaceMode.HYBRID && memory.is_global)
         ? baseSimilarity * 0.9
         : baseSimilarity;
@@ -618,18 +580,15 @@ export class MemoryStore {
       };
     });
 
-    // Sort by similarity descending
     withSimilarity.sort((a, b) => b.similarity - a.similarity);
 
     return withSimilarity.slice(0, limit);
   }
 
-  // Create session
   async createSession(name: string, memoryIds: string[], summary?: string): Promise<SessionInfo> {
     const sessionId = ulid();
     const timestamp = Date.now();
 
-    // Verify all memory IDs exist
     const validIds: string[] = [];
     for (const id of memoryIds) {
       const exists = await this.storageClient.exists(StorageKeys.memory(this.workspaceId, id));
@@ -647,7 +606,6 @@ export class MemoryStore {
       memory_ids: validIds,
     };
 
-    // Store session
     await this.storageClient.hset(StorageKeys.session(this.workspaceId, sessionId), {
       session_id: sessionId,
       session_name: name,
@@ -662,7 +620,6 @@ export class MemoryStore {
     return session;
   }
 
-  // Get session
   async getSession(sessionId: string): Promise<SessionInfo | null> {
     const data = await this.storageClient.hgetall(StorageKeys.session(this.workspaceId, sessionId));
 
@@ -680,7 +637,6 @@ export class MemoryStore {
     };
   }
 
-  // Get all sessions
   async getAllSessions(): Promise<SessionInfo[]> {
     const ids = await this.storageClient.smembers(StorageKeys.sessions(this.workspaceId));
     const sessions: SessionInfo[] = [];
@@ -695,7 +651,6 @@ export class MemoryStore {
     return sessions.sort((a, b) => b.created_at - a.created_at);
   }
 
-  // Get memories in session
   async getSessionMemories(sessionId: string): Promise<MemoryEntry[]> {
     const session = await this.getSession(sessionId);
     if (!session) {
@@ -705,7 +660,6 @@ export class MemoryStore {
     return this.getMemories(session.memory_ids);
   }
 
-  // Generate summary stats
   async getSummaryStats(): Promise<{
     total_memories: number;
     by_type: Record<ContextType, number>;
@@ -733,16 +687,13 @@ export class MemoryStore {
     };
   }
 
-  // Merge multiple memories into one
   async mergeMemories(memoryIds: string[], keepId?: string): Promise<MemoryEntry | null> {
-    // Get all memories to merge
     const memories = await this.getMemories(memoryIds);
 
     if (memories.length === 0) {
       return null;
     }
 
-    // Determine which memory to keep
     const toKeep = keepId
       ? memories.find(m => m.id === keepId)
       : memories.reduce((prev, current) =>
@@ -753,7 +704,6 @@ export class MemoryStore {
       return null;
     }
 
-    // Merge content, tags, and metadata
     const allTags = new Set<string>();
     const contentParts: string[] = [];
 
@@ -764,19 +714,16 @@ export class MemoryStore {
       memory.tags.forEach(tag => allTags.add(tag));
     }
 
-    // Create merged content
     const mergedContent = contentParts.length > 0
       ? `${toKeep.content}\n\n--- Merged content ---\n${contentParts.join('\n\n')}`
       : toKeep.content;
 
-    // Update the memory to keep with merged data
     const updated = await this.updateMemory(toKeep.id, {
       content: mergedContent,
       tags: Array.from(allTags),
       importance: Math.max(...memories.map(m => m.importance)),
     });
 
-    // Delete the other memories
     for (const memory of memories) {
       if (memory.id !== toKeep.id) {
         await this.deleteMemory(memory.id);
@@ -786,12 +733,10 @@ export class MemoryStore {
     return updated;
   }
 
-  // Helper: Generate summary from content (first 100 chars)
   private generateSummary(content: string): string {
     return content.length > 100 ? content.substring(0, 100) + '...' : content;
   }
 
-  // Helper: Serialize memory for Redis
   private serializeMemory(memory: MemoryEntry): Record<string, string> {
     return {
       id: memory.id,
@@ -807,11 +752,10 @@ export class MemoryStore {
       expires_at: memory.expires_at?.toString() || '',
       is_global: memory.is_global ? 'true' : 'false',
       workspace_id: memory.workspace_id || '',
-      category: memory.category || '', // v1.5.0
+      category: memory.category || '',
     };
   }
 
-  // Helper: Deserialize memory from Redis
   private deserializeMemory(data: Record<string, string>): MemoryEntry {
     return {
       id: data.id,
@@ -827,25 +771,22 @@ export class MemoryStore {
       expires_at: data.expires_at ? parseInt(data.expires_at, 10) : undefined,
       is_global: data.is_global === 'true',
       workspace_id: data.workspace_id || '',
-      category: data.category || undefined, // v1.5.0
+      category: data.category || undefined,
     };
   }
 
-  // Convert workspace memory to global
   async convertToGlobal(memoryId: string): Promise<MemoryEntry | null> {
     const memory = await this.getMemory(memoryId);
     if (!memory) {
       return null;
     }
 
-    // Already global
     if (memory.is_global) {
       return memory;
     }
 
     const pipeline = this.storageClient.pipeline();
 
-    // Delete from workspace indexes
     pipeline.del(StorageKeys.memory(this.workspaceId, memoryId));
     pipeline.srem(StorageKeys.memories(this.workspaceId), memoryId);
     pipeline.zrem(StorageKeys.timeline(this.workspaceId), memoryId);
@@ -859,14 +800,12 @@ export class MemoryStore {
       pipeline.zrem(StorageKeys.important(this.workspaceId), memoryId);
     }
 
-    // Update memory to global
     const globalMemory: MemoryEntry = {
       ...memory,
       is_global: true,
       workspace_id: '',
     };
 
-    // Add to global indexes
     pipeline.hset(StorageKeys.globalMemory(memoryId), this.serializeMemory(globalMemory));
     pipeline.sadd(StorageKeys.globalMemories(), memoryId);
     pipeline.zadd(StorageKeys.globalTimeline(), memory.timestamp, memoryId);
@@ -885,14 +824,12 @@ export class MemoryStore {
     return globalMemory;
   }
 
-  // Convert global memory to workspace
   async convertToWorkspace(memoryId: string, targetWorkspaceId?: string): Promise<MemoryEntry | null> {
     const memory = await this.getMemory(memoryId);
     if (!memory) {
       return null;
     }
 
-    // Already workspace-specific
     if (!memory.is_global) {
       return memory;
     }
@@ -900,7 +837,6 @@ export class MemoryStore {
     const workspaceId = targetWorkspaceId || this.workspaceId;
     const pipeline = this.storageClient.pipeline();
 
-    // Delete from global indexes
     pipeline.del(StorageKeys.globalMemory(memoryId));
     pipeline.srem(StorageKeys.globalMemories(), memoryId);
     pipeline.zrem(StorageKeys.globalTimeline(), memoryId);
@@ -914,14 +850,12 @@ export class MemoryStore {
       pipeline.zrem(StorageKeys.globalImportant(), memoryId);
     }
 
-    // Update memory to workspace-specific
     const workspaceMemory: MemoryEntry = {
       ...memory,
       is_global: false,
       workspace_id: workspaceId,
     };
 
-    // Add to workspace indexes
     pipeline.hset(StorageKeys.memory(workspaceId, memoryId), this.serializeMemory(workspaceMemory));
     pipeline.sadd(StorageKeys.memories(workspaceId), memoryId);
     pipeline.zadd(StorageKeys.timeline(workspaceId), memory.timestamp, memoryId);
@@ -940,11 +874,7 @@ export class MemoryStore {
     return workspaceMemory;
   }
 
-  // ============================================================================
-  // Memory Relationships (v1.4.0)
-  // ============================================================================
 
-  // Serialize relationship for Redis storage
   private serializeRelationship(relationship: MemoryRelationship): Record<string, string> {
     return {
       id: relationship.id,
@@ -956,7 +886,6 @@ export class MemoryStore {
     };
   }
 
-  // Deserialize relationship from Redis
   private deserializeRelationship(data: Record<string, string>): MemoryRelationship {
     return {
       id: data.id,
@@ -968,14 +897,12 @@ export class MemoryStore {
     };
   }
 
-  // Create a relationship between two memories
   async createRelationship(
     fromMemoryId: string,
     toMemoryId: string,
     relationshipType: RelationshipType,
     metadata?: Record<string, unknown>
   ): Promise<MemoryRelationship> {
-    // Validate both memories exist
     const fromMemory = await this.getMemory(fromMemoryId);
     const toMemory = await this.getMemory(toMemoryId);
 
@@ -986,15 +913,13 @@ export class MemoryStore {
       throw new Error(`Target memory not found: ${toMemoryId}`);
     }
 
-    // Prevent self-references
     if (fromMemoryId === toMemoryId) {
       throw new Error('Cannot create relationship to self');
     }
 
-    // Check if relationship already exists
     const existing = await this.findRelationship(fromMemoryId, toMemoryId, relationshipType);
     if (existing) {
-      return existing; // Idempotent
+      return existing;
     }
 
     const id = ulid();
@@ -1007,7 +932,6 @@ export class MemoryStore {
       metadata,
     };
 
-    // Determine if this is a global relationship (both memories are global)
     const isGlobal = fromMemory.is_global && toMemory.is_global;
 
     const pipeline = this.storageClient.pipeline();
@@ -1031,13 +955,11 @@ export class MemoryStore {
     return relationship;
   }
 
-  // Find existing relationship
   private async findRelationship(
     fromMemoryId: string,
     toMemoryId: string,
     relationshipType: RelationshipType
   ): Promise<MemoryRelationship | null> {
-    // Get all relationships for from memory
     const relationshipIds = await this.getMemoryRelationshipIds(fromMemoryId, 'outgoing');
 
     for (const relId of relationshipIds) {
@@ -1055,15 +977,12 @@ export class MemoryStore {
     return null;
   }
 
-  // Get a single relationship by ID
   async getRelationship(relationshipId: string): Promise<MemoryRelationship | null> {
-    // Try workspace first
     const wsData = await this.storageClient.hgetall(StorageKeys.relationship(this.workspaceId, relationshipId));
     if (wsData && Object.keys(wsData).length > 0) {
       return this.deserializeRelationship(wsData);
     }
 
-    // Try global
     const globalData = await this.storageClient.hgetall(StorageKeys.globalRelationship(relationshipId));
     if (globalData && Object.keys(globalData).length > 0) {
       return this.deserializeRelationship(globalData);
@@ -1072,7 +991,6 @@ export class MemoryStore {
     return null;
   }
 
-  // Get relationship IDs for a memory
   private async getMemoryRelationshipIds(
     memoryId: string,
     direction: 'outgoing' | 'incoming' | 'both' = 'both'
@@ -1080,13 +998,11 @@ export class MemoryStore {
     const mode = getWorkspaceMode();
     const ids = new Set<string>();
 
-    // Helper to add IDs from a Redis key
     const addIds = async (key: string) => {
       const keyIds = await this.storageClient.smembers(key);
       keyIds.forEach(id => ids.add(id));
     };
 
-    // Workspace relationships
     if (mode === WorkspaceMode.ISOLATED || mode === WorkspaceMode.HYBRID) {
       if (direction === 'outgoing' || direction === 'both') {
         await addIds(StorageKeys.memoryRelationshipsOut(this.workspaceId, memoryId));
@@ -1096,7 +1012,6 @@ export class MemoryStore {
       }
     }
 
-    // Global relationships
     if (mode === WorkspaceMode.GLOBAL || mode === WorkspaceMode.HYBRID) {
       if (direction === 'outgoing' || direction === 'both') {
         await addIds(StorageKeys.globalMemoryRelationshipsOut(memoryId));
@@ -1109,7 +1024,6 @@ export class MemoryStore {
     return Array.from(ids);
   }
 
-  // Get all relationships for a memory
   async getMemoryRelationships(
     memoryId: string,
     direction: 'outgoing' | 'incoming' | 'both' = 'both'
@@ -1127,7 +1041,6 @@ export class MemoryStore {
     return relationships;
   }
 
-  // Get related memories with graph traversal
   async getRelatedMemories(
     memoryId: string,
     options: {
@@ -1146,7 +1059,6 @@ export class MemoryStore {
     return results;
   }
 
-  // Traverse relationship graph
   private async traverseGraph(
     memoryId: string,
     maxDepth: number,
@@ -1162,10 +1074,8 @@ export class MemoryStore {
 
     visited.add(memoryId);
 
-    // Get relationships for this memory
     const relationships = await this.getMemoryRelationships(memoryId, direction);
 
-    // Filter by type if specified
     const filtered = relationshipTypes
       ? relationships.filter(r => relationshipTypes.includes(r.relationship_type))
       : relationships;
@@ -1185,7 +1095,6 @@ export class MemoryStore {
             depth: currentDepth + 1,
           });
 
-          // Recurse if not at max depth
           if (currentDepth + 1 < maxDepth) {
             await this.traverseGraph(
               relatedMemoryId,
@@ -1202,14 +1111,12 @@ export class MemoryStore {
     }
   }
 
-  // Delete a relationship
   async deleteRelationship(relationshipId: string): Promise<boolean> {
     const relationship = await this.getRelationship(relationshipId);
     if (!relationship) {
       return false;
     }
 
-    // Check if global based on memories
     const fromMemory = await this.getMemory(relationship.from_memory_id);
     const isGlobal = fromMemory?.is_global || false;
 
@@ -1234,7 +1141,6 @@ export class MemoryStore {
     return true;
   }
 
-  // Get full memory graph
   async getMemoryGraph(
     rootMemoryId: string,
     maxDepth: number = 2,
@@ -1246,7 +1152,6 @@ export class MemoryStore {
 
     await this.buildGraph(rootMemoryId, maxDepth, maxNodes, nodes, visited, 0);
 
-    // Track max depth actually reached
     for (const node of Object.values(nodes)) {
       maxDepthReached = Math.max(maxDepthReached, node.depth);
     }
@@ -1259,7 +1164,6 @@ export class MemoryStore {
     };
   }
 
-  // Build graph recursively
   private async buildGraph(
     memoryId: string,
     maxDepth: number,
@@ -1287,7 +1191,6 @@ export class MemoryStore {
       depth: currentDepth,
     };
 
-    // Recurse for related memories
     for (const relationship of relationships) {
       const relatedId =
         relationship.from_memory_id === memoryId
@@ -1300,9 +1203,6 @@ export class MemoryStore {
     }
   }
 
-  // ============================================================================
-  // Memory Versioning & History (v1.5.0)
-  // ============================================================================
   private serializeVersion(version: MemoryVersion): Record<string, string> {
     return {
       version_id: version.version_id,
@@ -1342,7 +1242,6 @@ export class MemoryStore {
     const isGlobal = memory.is_global;
     const timestamp = Date.now();
 
-    // Store version and add to sorted set
     const pipeline = this.storageClient.pipeline();
 
     if (isGlobal) {
@@ -1359,12 +1258,11 @@ export class MemoryStore {
       pipeline.zadd(StorageKeys.memoryVersions(this.workspaceId, memory.id), timestamp, versionId);
     }
 
-    // Enforce version limit (keep 50 most recent)
     const versionsKey = isGlobal
       ? StorageKeys.globalMemoryVersions(memory.id)
       : StorageKeys.memoryVersions(this.workspaceId, memory.id);
 
-    pipeline.zremrangebyrank(versionsKey, 0, -51); // Keep last 50
+    pipeline.zremrangebyrank(versionsKey, 0, -51);
 
     await pipeline.exec();
 
@@ -1382,14 +1280,12 @@ export class MemoryStore {
       ? StorageKeys.globalMemoryVersions(memoryId)
       : StorageKeys.memoryVersions(this.workspaceId, memoryId);
 
-    // Get version IDs (most recent first)
     const versionIds = await this.storageClient.zrevrange(versionsKey, 0, limit - 1);
 
     if (versionIds.length === 0) {
       return [];
     }
 
-    // Fetch all versions
     const versions: import('../types.js').MemoryVersion[] = [];
     for (const versionId of versionIds) {
       const versionKey = isGlobal
@@ -1426,7 +1322,6 @@ export class MemoryStore {
       throw new Error('Memory not found');
     }
 
-    // Get the target version
     const isGlobal = memory.is_global;
     const versionKey = isGlobal
       ? StorageKeys.globalMemoryVersion(memoryId, versionId)
@@ -1437,10 +1332,8 @@ export class MemoryStore {
       throw new Error('Version not found');
     }
 
-    // Save current state as a version before rollback
     await this.createVersion(memory, 'system', `Before rollback to version ${versionId}`);
 
-    // Prepare rollback updates
     const updates = {
       content: versionData.content,
       context_type: versionData.context_type as import('../types.js').ContextType,
@@ -1449,18 +1342,15 @@ export class MemoryStore {
       summary: versionData.summary,
     };
 
-    // Update the memory
     const rolledBackMemory = await this.updateMemory(memoryId, updates);
 
     if (rolledBackMemory) {
-      // Create a new version recording the rollback
       await this.createVersion(rolledBackMemory, 'system', `Rolled back to version ${versionId}`);
     }
 
     return rolledBackMemory;
   }
 
-  // Helper: Serialize template for Redis/Valkey
   private serializeTemplate(template: import('../types.js').MemoryTemplate): Record<string, string> {
     return {
       template_id: template.template_id,
@@ -1475,9 +1365,6 @@ export class MemoryStore {
     };
   }
 
-  // ============================================================================
-  // Memory Templates (v1.5.0)
-  // ============================================================================
 
    
 
@@ -1490,7 +1377,7 @@ export class MemoryStore {
       context_type: data.context_type,
       content_template: data.content_template,
       default_tags: data.default_tags,
-      default_importance: data.default_importance ?? 5, // Ensure a default value
+      default_importance: data.default_importance ?? 5,
       is_builtin: false,
       created_at: new Date().toISOString(),
     };
@@ -1504,10 +1391,8 @@ export class MemoryStore {
   }
 
   async getTemplate(templateId: string): Promise<import('../types.js').MemoryTemplate | null> {
-    // Check workspace templates first
     let templateData = await this.storageClient.hgetall(StorageKeys.template(this.workspaceId, templateId));
 
-    // Check builtin templates if not found
     if (!templateData || Object.keys(templateData).length === 0) {
       templateData = await this.storageClient.hgetall(StorageKeys.builtinTemplate(templateId));
     }
@@ -1558,19 +1443,16 @@ export class MemoryStore {
       throw new Error('Template not found');
     }
 
-    // Replace variables in content template
     let content = template.content_template;
     for (const [key, value] of Object.entries(variables)) {
       content = content.replace(new RegExp(`{{${key}}}`, 'g'), value);
     }
 
-    // Check for unreplaced variables
     const unreplacedVars = content.match(/{{(\w+)}}/g);
     if (unreplacedVars) {
       throw new Error(`Missing variables: ${unreplacedVars.join(', ')}`);
     }
 
-    // Create memory from template
     const memoryData: import('../types.js').CreateMemory = {
       content,
       context_type: template.context_type,
@@ -1600,9 +1482,6 @@ export class MemoryStore {
     return true;
   }
 
-  // ============================================================================
-  // Memory Categories (v1.5.0)
-  // ============================================================================
 
   async setMemoryCategory(memoryId: string, category: string): Promise<MemoryEntry | null> {
     const memory = await this.getMemory(memoryId);
@@ -1619,7 +1498,6 @@ export class MemoryStore {
       : StorageKeys.category(this.workspaceId, category);
     const categoriesKey = isGlobal ? StorageKeys.globalCategories() : StorageKeys.categories(this.workspaceId);
 
-    // Remove from old category if exists
     const oldCategory = await this.storageClient.get(categoryKey);
     if (oldCategory) {
       const oldCategorySetKey = isGlobal
@@ -1630,17 +1508,14 @@ export class MemoryStore {
 
     const pipeline = this.storageClient.pipeline();
 
-    // Set new category
     pipeline.set(categoryKey, category);
     pipeline.sadd(categorySetKey, memoryId);
-    pipeline.zadd(categoriesKey, Date.now(), category); // Track last used
+    pipeline.zadd(categoriesKey, Date.now(), category);
 
     await pipeline.exec();
 
-    // Update memory object
     memory.category = category;
 
-    // Also update the memory hash to include category
     const memoryKey = isGlobal ? StorageKeys.globalMemory(memoryId) : StorageKeys.memory(this.workspaceId, memoryId);
     await this.storageClient.hset(memoryKey, {'category': category});
 
@@ -1677,7 +1552,6 @@ export class MemoryStore {
       categoryNames.push(...globalCategories);
     }
 
-    // Deduplicate
     const uniqueCategories = [...new Set(categoryNames)];
 
     const categories: import('../types.js').CategoryInfo[] = [];
@@ -1701,11 +1575,6 @@ export class MemoryStore {
     return categories;
   }
 
-  // ============================================================================
-  // RLM Execution Chains (v1.8.0)
-  // Recursive Language Model support for handling large contexts
-  // Based on MIT CSAIL paper: arxiv:2512.24601
-  // ============================================================================
 
   /**
    * Create a new execution context for processing large contexts
@@ -1720,10 +1589,8 @@ export class MemoryStore {
     const chainId = ulid();
     const timestamp = Date.now();
 
-    // Estimate token count (rough approximation: 4 chars per token)
     const estimatedTokens = Math.ceil(context.length / 4);
 
-    // Auto-detect recommended strategy based on context characteristics
     const strategy = this.detectDecompositionStrategy(context, task, estimatedTokens);
 
     const executionContext: import('../types.js').ExecutionContext = {
@@ -1739,7 +1606,6 @@ export class MemoryStore {
       updated_at: timestamp,
     };
 
-    // Store execution context metadata
     const pipeline = this.storageClient.pipeline();
 
     pipeline.hset(RLMStorageKeys.execution(this.workspaceId, chainId), {
@@ -1755,10 +1621,8 @@ export class MemoryStore {
       updated_at: timestamp.toString(),
     });
 
-    // Store the large context separately
     pipeline.set(RLMStorageKeys.executionContext(this.workspaceId, chainId), context);
 
-    // Add to active executions set
     pipeline.sadd(RLMStorageKeys.executionActive(this.workspaceId), chainId);
     pipeline.sadd(RLMStorageKeys.executions(this.workspaceId), chainId);
 
@@ -1779,7 +1643,6 @@ export class MemoryStore {
   ): import('../types.js').DecompositionStrategy {
     const taskLower = task.toLowerCase();
 
-    // Filter strategy: Task mentions specific patterns/keywords
     if (
       taskLower.includes('find') ||
       taskLower.includes('search') ||
@@ -1790,7 +1653,6 @@ export class MemoryStore {
       return 'filter';
     }
 
-    // Aggregate strategy: Task mentions combining/summarizing
     if (
       taskLower.includes('summarize') ||
       taskLower.includes('combine') ||
@@ -1800,12 +1662,10 @@ export class MemoryStore {
       return 'aggregate';
     }
 
-    // Recursive strategy: Very large context or complex analysis
     if (estimatedTokens > 50000 || taskLower.includes('analyze')) {
       return 'recursive';
     }
 
-    // Default: Chunk for sequential processing
     return 'chunk';
   }
 
@@ -1859,7 +1719,6 @@ export class MemoryStore {
       updateData.status = updates.status;
       if (updates.status === 'completed' || updates.status === 'failed') {
         updateData.completed_at = timestamp.toString();
-        // Remove from active set
         await this.storageClient.srem(RLMStorageKeys.executionActive(this.workspaceId), chainId);
       }
     }
@@ -1904,7 +1763,6 @@ export class MemoryStore {
 
     const pipeline = this.storageClient.pipeline();
 
-    // Store subtask
     pipeline.hset(RLMStorageKeys.executionSubtask(this.workspaceId, chainId, subtaskId), {
       id: subtaskId,
       chain_id: chainId,
@@ -1916,7 +1774,6 @@ export class MemoryStore {
       created_at: timestamp.toString(),
     });
 
-    // Add to subtasks sorted set (ordered by 'order' field)
     pipeline.zadd(RLMStorageKeys.executionSubtasks(this.workspaceId, chainId), order, subtaskId);
 
     await pipeline.exec();
@@ -2062,10 +1919,8 @@ export class MemoryStore {
       return null;
     }
 
-    // Calculate max characters (rough: 4 chars per token)
     const maxChars = maxTokens * 4;
 
-    // If query contains a regex pattern (e.g., ERROR|WARN), use it
     let matches: string[] = [];
     let relevanceScore = 0;
 
@@ -2083,7 +1938,6 @@ export class MemoryStore {
       matches = matchingLines;
       relevanceScore = matchingLines.length / lines.length;
     } catch {
-      // Not a valid regex, do simple text search
       const queryLower = query.toLowerCase();
       const lines = context.split('\n');
       const matchingLines = lines.filter(line => line.toLowerCase().includes(queryLower));
@@ -2091,7 +1945,6 @@ export class MemoryStore {
       relevanceScore = matchingLines.length / lines.length;
     }
 
-    // Build snippet from matches, respecting token limit
     let snippet = '';
     for (const match of matches) {
       if (snippet.length + match.length + 1 > maxChars) {
@@ -2100,10 +1953,9 @@ export class MemoryStore {
       snippet += match + '\n';
     }
 
-    // If no matches, return a chunked portion of the context
     if (snippet.length === 0) {
       snippet = context.substring(0, maxChars);
-      relevanceScore = 0.1; // Low relevance for fallback
+      relevanceScore = 0.1;
     }
 
     const tokensUsed = Math.ceil(snippet.length / 4);
@@ -2135,7 +1987,6 @@ export class MemoryStore {
       in_progress: subtasks.filter(s => s.status === 'in_progress').length,
     };
 
-    // Estimate remaining tokens
     const completedTokens = subtasks
       .filter(s => s.status === 'completed' && s.tokens_used)
       .reduce((sum, s) => sum + (s.tokens_used || 0), 0);
@@ -2198,7 +2049,6 @@ export class MemoryStore {
   ): Promise<import('../types.js').ExecutionContext[]> {
     const { RLMStorageKeys } = await import('../types.js');
 
-    // Get chain IDs based on status filter
     let chainIds: string[];
     if (status === 'active') {
       chainIds = await this.storageClient.smembers(RLMStorageKeys.executionActive(this.workspaceId));
@@ -2214,7 +2064,6 @@ export class MemoryStore {
       }
     }
 
-    // Sort by created_at descending
     chains.sort((a, b) => b.created_at - a.created_at);
 
     return chains;
@@ -2231,7 +2080,6 @@ export class MemoryStore {
       return false;
     }
 
-    // Get all subtask IDs
     const subtaskIds = await this.storageClient.zrange(
       RLMStorageKeys.executionSubtasks(this.workspaceId, chainId),
       0,
@@ -2240,24 +2088,18 @@ export class MemoryStore {
 
     const pipeline = this.storageClient.pipeline();
 
-    // Delete all subtasks
     for (const subtaskId of subtaskIds) {
       pipeline.del(RLMStorageKeys.executionSubtask(this.workspaceId, chainId, subtaskId));
     }
 
-    // Delete subtasks sorted set
     pipeline.del(RLMStorageKeys.executionSubtasks(this.workspaceId, chainId));
 
-    // Delete context data
     pipeline.del(RLMStorageKeys.executionContext(this.workspaceId, chainId));
 
-    // Delete results
     pipeline.del(RLMStorageKeys.executionResults(this.workspaceId, chainId));
 
-    // Delete execution metadata
     pipeline.del(RLMStorageKeys.execution(this.workspaceId, chainId));
 
-    // Remove from sets
     pipeline.srem(RLMStorageKeys.executions(this.workspaceId), chainId);
     pipeline.srem(RLMStorageKeys.executionActive(this.workspaceId), chainId);
 
@@ -2265,4 +2107,17 @@ export class MemoryStore {
 
     return true;
   }
+
+
+  createWorkflow(input: CreateWorkflowInput) { return this.workflowStore.createWorkflow(input); }
+  getWorkflow(id: string) { return this.workflowStore.getWorkflow(id); }
+  getActiveWorkflowId() { return this.workflowStore.getActiveWorkflowId(); }
+  getActiveWorkflow() { return this.workflowStore.getActiveWorkflow(); }
+  setActiveWorkflow(id: string) { return this.workflowStore.setActiveWorkflow(id); }
+  clearActiveWorkflow() { return this.workflowStore.clearActiveWorkflow(); }
+  updateWorkflow(id: string, update: UpdateWorkflowInput) { return this.workflowStore.updateWorkflow(id, update); }
+  linkMemoryToWorkflow(workflowId: string, memoryId: string) { return this.workflowStore.linkMemoryToWorkflow(workflowId, memoryId); }
+  getWorkflowMemories(workflowId: string) { return this.workflowStore.getWorkflowMemories(workflowId); }
+  getWorkflowMemoryCount(workflowId: string) { return this.workflowStore.getWorkflowMemoryCount(workflowId); }
+  getAllWorkflows(status?: import('../types.js').WorkflowStatus) { return this.workflowStore.getAllWorkflows(status); }
 }

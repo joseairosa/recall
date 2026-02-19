@@ -12,10 +12,10 @@
  * @version 1.8.0
  */
 
-import { z } from 'zod';
-import { zodToJsonSchema } from 'zod-to-json-schema';
-import { MemoryStore } from '../persistence/memory-store.js';
-import { RLMService } from '../services/rlm.service.js';
+import { z } from "zod";
+import { zodToJsonSchema } from "zod-to-json-schema";
+import { MemoryStore } from "../persistence/memory-store.js";
+import { RLMService } from "../services/rlm.service.js";
 import {
   CreateExecutionContextSchema,
   DecomposeTaskSchema,
@@ -24,11 +24,7 @@ import {
   VerifyAnswerSchema,
   UpdateSubtaskResultSchema,
   GetExecutionStatusSchema,
-} from '../types.js';
-
-// ==========================================================================
-// Module State & Dependency Injection
-// ==========================================================================
+} from "../types.js";
 
 let memoryStore: MemoryStore | null = null;
 let rlmService: RLMService | null = null;
@@ -47,7 +43,9 @@ export function setRLMMemoryStore(store: MemoryStore): void {
  */
 function getStore(): MemoryStore {
   if (!memoryStore) {
-    throw new Error('RLM memory store not initialized. Call setRLMMemoryStore first.');
+    throw new Error(
+      "RLM memory store not initialized. Call setRLMMemoryStore first.",
+    );
   }
   return memoryStore;
 }
@@ -57,14 +55,22 @@ function getStore(): MemoryStore {
  */
 function getService(): RLMService {
   if (!rlmService) {
-    throw new Error('RLM service not initialized. Call setRLMMemoryStore first.');
+    throw new Error(
+      "RLM service not initialized. Call setRLMMemoryStore first.",
+    );
   }
   return rlmService;
 }
 
-// ==========================================================================
-// Response Helpers
-// ==========================================================================
+/** Exported accessor for use by consolidated tool handlers */
+export function getRLMService(): RLMService {
+  return getService();
+}
+
+/** Exported accessor for use by consolidated tool handlers */
+export function getRLMStore(): MemoryStore {
+  return getStore();
+}
 
 /**
  * Creates a successful MCP response
@@ -73,7 +79,7 @@ function successResponse(data: Record<string, unknown>) {
   return {
     content: [
       {
-        type: 'text' as const,
+        type: "text" as const,
         text: JSON.stringify(data, null, 2),
       },
     ],
@@ -87,7 +93,7 @@ function errorResponse(message: string) {
   return {
     content: [
       {
-        type: 'text' as const,
+        type: "text" as const,
         text: message,
       },
     ],
@@ -102,10 +108,6 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-// ==========================================================================
-// Tool Handlers
-// ==========================================================================
-
 /**
  * create_execution_context
  *
@@ -114,9 +116,9 @@ function getErrorMessage(error: unknown): string {
  */
 export const create_execution_context = {
   description:
-    'Create an execution context for processing large content that exceeds context window limits. ' +
-    'Stores the content externally and returns a chain ID with recommended processing strategy. ' +
-    'Use this when you need to analyze documents, logs, or codebases larger than ~100KB.',
+    "Create an execution context for processing large content that exceeds context window limits. " +
+    "Stores the content externally and returns a chain ID with recommended processing strategy. " +
+    "Use this when you need to analyze documents, logs, or codebases larger than ~100KB.",
   inputSchema: zodToJsonSchema(CreateExecutionContextSchema),
   handler: async (args: z.infer<typeof CreateExecutionContextSchema>) => {
     try {
@@ -124,7 +126,7 @@ export const create_execution_context = {
       const result = await service.createExecutionContext(
         args.task,
         args.context,
-        args.max_depth
+        args.max_depth,
       );
 
       return successResponse({
@@ -139,7 +141,9 @@ export const create_execution_context = {
           `Next step: Call decompose_task with chain_id="${result.chain_id}"`,
       });
     } catch (error) {
-      return errorResponse(`Error creating execution context: ${getErrorMessage(error)}`);
+      return errorResponse(
+        `Error creating execution context: ${getErrorMessage(error)}`,
+      );
     }
   },
 };
@@ -152,9 +156,9 @@ export const create_execution_context = {
  */
 export const decompose_task = {
   description:
-    'Decompose a large task into smaller subtasks based on the recommended strategy. ' +
-    'Creates subtasks with queries for extracting relevant context snippets. ' +
-    'Strategies: filter (regex/pattern), chunk (sequential), recursive (nested), aggregate (combine).',
+    "Decompose a large task into smaller subtasks based on the recommended strategy. " +
+    "Creates subtasks with queries for extracting relevant context snippets. " +
+    "Strategies: filter (regex/pattern), chunk (sequential), recursive (nested), aggregate (combine).",
   inputSchema: zodToJsonSchema(DecomposeTaskSchema),
   handler: async (args: z.infer<typeof DecomposeTaskSchema>) => {
     try {
@@ -162,7 +166,7 @@ export const decompose_task = {
       const result = await service.decomposeTask(
         args.chain_id,
         args.strategy,
-        args.num_chunks
+        args.num_chunks,
       );
 
       return successResponse({
@@ -191,9 +195,9 @@ export const decompose_task = {
  */
 export const inject_context_snippet = {
   description:
-    'Extract a relevant snippet from the stored context for a specific subtask. ' +
-    'Uses the query to filter content (supports regex patterns like ERROR|WARN). ' +
-    'Returns content within token limits for processing.',
+    "Extract a relevant snippet from the stored context for a specific subtask. " +
+    "Uses the query to filter content (supports regex patterns like ERROR|WARN). " +
+    "Returns content within token limits for processing.",
   inputSchema: zodToJsonSchema(InjectContextSnippetSchema),
   handler: async (args: z.infer<typeof InjectContextSnippetSchema>) => {
     try {
@@ -202,7 +206,7 @@ export const inject_context_snippet = {
         args.chain_id,
         args.subtask_id,
         args.query,
-        args.max_tokens
+        args.max_tokens,
       );
 
       return successResponse({
@@ -217,7 +221,9 @@ export const inject_context_snippet = {
           `Process this snippet and call update_subtask_result with your analysis.`,
       });
     } catch (error) {
-      return errorResponse(`Error injecting context: ${getErrorMessage(error)}`);
+      return errorResponse(
+        `Error injecting context: ${getErrorMessage(error)}`,
+      );
     }
   },
 };
@@ -229,8 +235,8 @@ export const inject_context_snippet = {
  */
 export const update_subtask_result = {
   description:
-    'Update a subtask with the result of your analysis. ' +
-    'Call this after processing each context snippet.',
+    "Update a subtask with the result of your analysis. " +
+    "Call this after processing each context snippet.",
   inputSchema: zodToJsonSchema(UpdateSubtaskResultSchema),
   handler: async (args: z.infer<typeof UpdateSubtaskResultSchema>) => {
     try {
@@ -239,7 +245,7 @@ export const update_subtask_result = {
         args.chain_id,
         args.subtask_id,
         args.result,
-        args.status
+        args.status,
       );
 
       return successResponse({
@@ -248,7 +254,7 @@ export const update_subtask_result = {
         status: result.status,
         progress: result.progress,
         message: result.all_complete
-          ? 'All subtasks complete! Call merge_results to aggregate.'
+          ? "All subtasks complete! Call merge_results to aggregate."
           : `${result.progress.completed}/${result.progress.total} subtasks complete.`,
       });
     } catch (error) {
@@ -264,13 +270,16 @@ export const update_subtask_result = {
  */
 export const merge_results = {
   description:
-    'Aggregate results from all completed subtasks into a final answer. ' +
-    'Call this after all subtasks are complete.',
+    "Aggregate results from all completed subtasks into a final answer. " +
+    "Call this after all subtasks are complete.",
   inputSchema: zodToJsonSchema(MergeResultsSchema),
   handler: async (args: z.infer<typeof MergeResultsSchema>) => {
     try {
       const service = getService();
-      const result = await service.mergeResults(args.chain_id, args.include_failed);
+      const result = await service.mergeResults(
+        args.chain_id,
+        args.include_failed,
+      );
 
       return successResponse({
         success: true,
@@ -297,8 +306,8 @@ export const merge_results = {
  */
 export const verify_answer = {
   description:
-    'Verify a proposed answer by cross-checking against the source context. ' +
-    'Use verification queries to spot-check specific claims.',
+    "Verify a proposed answer by cross-checking against the source context. " +
+    "Use verification queries to spot-check specific claims.",
   inputSchema: zodToJsonSchema(VerifyAnswerSchema),
   handler: async (args: z.infer<typeof VerifyAnswerSchema>) => {
     try {
@@ -306,10 +315,9 @@ export const verify_answer = {
       const result = await service.verifyAnswer(
         args.chain_id,
         args.answer,
-        args.verification_queries
+        args.verification_queries,
       );
 
-      // Get detailed verification for response
       const store = getStore();
       const verificationDetails: Array<{
         query: string;
@@ -319,13 +327,19 @@ export const verify_answer = {
       }> = [];
 
       for (const query of args.verification_queries) {
-        const snippet = await store.getContextSnippet(args.chain_id, query, 1000);
+        const snippet = await store.getContextSnippet(
+          args.chain_id,
+          query,
+          1000,
+        );
         if (snippet) {
           const found = snippet.relevance_score > 0.01;
           verificationDetails.push({
             query,
             found,
-            snippet: found ? snippet.snippet.substring(0, 200) + '...' : undefined,
+            snippet: found
+              ? snippet.snippet.substring(0, 200) + "..."
+              : undefined,
             relevance: snippet.relevance_score,
           });
         }
@@ -336,7 +350,7 @@ export const verify_answer = {
         chain_id: args.chain_id,
         verified: result.verified,
         confidence: result.confidence.toFixed(2),
-        queries_verified: `${verificationDetails.filter(v => v.found).length}/${args.verification_queries.length}`,
+        queries_verified: `${verificationDetails.filter((v) => v.found).length}/${args.verification_queries.length}`,
         discrepancies: result.discrepancies,
         verification_details: verificationDetails,
         message: result.verified
@@ -356,8 +370,8 @@ export const verify_answer = {
  */
 export const get_execution_status = {
   description:
-    'Get the current status and progress of an RLM execution chain. ' +
-    'Shows subtask progress, estimated remaining tokens, and current status.',
+    "Get the current status and progress of an RLM execution chain. " +
+    "Shows subtask progress, estimated remaining tokens, and current status.",
   inputSchema: zodToJsonSchema(GetExecutionStatusSchema),
   handler: async (args: z.infer<typeof GetExecutionStatusSchema>) => {
     try {
@@ -375,7 +389,7 @@ export const get_execution_status = {
       };
 
       if (args.include_subtasks) {
-        response.subtasks = summary.subtasks.map(s => ({
+        response.subtasks = summary.subtasks.map((s) => ({
           id: s.id,
           order: s.order,
           description: s.description,
@@ -385,8 +399,7 @@ export const get_execution_status = {
         }));
       }
 
-      // Get merged results if completed
-      if (summary.context.status === 'completed') {
+      if (summary.context.status === "completed") {
         const results = await service.getMergedResults(args.chain_id);
         if (results) {
           response.merged_results = {
@@ -403,10 +416,6 @@ export const get_execution_status = {
     }
   },
 };
-
-// ==========================================================================
-// Exports
-// ==========================================================================
 
 /**
  * Export all RLM tools as a collection

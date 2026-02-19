@@ -1,7 +1,7 @@
 {
   "name": "@joseairosa/recall",
-  "version": "1.10.0",
-  "description": "Give Claude perfect recall - Redis-powered persistent memory for LLMs",
+  "version": "1.10.1",
+  "description": "Persistent cross-session memory for Claude and AI agents. Self-host on Redis/Valkey, or use the managed cloud at recallmcp.com.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {

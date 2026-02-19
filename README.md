@@ -1,8 +1,59 @@
-# Recall 🧠 (Redis or Valkey Compatible)
+# Recall 🧠
 
-**Give Claude perfect recall with persistent memory that survives context limits and session restarts.**
+**Persistent cross-session memory for Claude and other AI agents. Survives context limits, session restarts, and compaction.**
 
-Your AI assistant can now remember important context, decisions, and patterns across all conversations—no more repeating yourself or losing critical information when the context window fills up.
+Store decisions, patterns, and knowledge once — retrieve them automatically across every future conversation. No more repeating yourself. No more losing critical context when the window fills up.
+
+---
+
+## Cloud vs. Self-Hosted
+
+Recall comes in two flavours. Choose the one that fits your situation:
+
+### ☁️ [recallmcp.com](https://recallmcp.com) — Managed SaaS (Recommended for most users)
+
+Zero infrastructure. Sign up, get an API key, add one config block, done.
+
+| What you get | Detail |
+|---|---|
+| **No Redis required** | Fully managed storage — nothing to install or maintain |
+| **Up in 2 minutes** | One config block in Claude Desktop or Claude Code |
+| **Team sharing** | One Claude learns something, all others know instantly |
+| **Enterprise security** | AES-256-GCM encryption at rest, per-tenant key isolation |
+| **Auto-consolidation** | Automatically clusters and merges similar memories |
+| **Cross-session workflows** | Named threads that span multiple sessions |
+| **7 embedding providers** | Voyage AI, Cohere, OpenAI, Deepseek, Grok, Anthropic, Ollama |
+| **Pricing** | Free (500 memories) · Pro $4.99/mo (5K) · Team $9.99/mo (25K) |
+
+```json
+{
+  "mcpServers": {
+    "recall": {
+      "url": "https://recallmcp.com/mcp",
+      "headers": { "Authorization": "Bearer YOUR_API_KEY" }
+    }
+  }
+}
+```
+
+→ **[Get started at recallmcp.com](https://recallmcp.com)**
+
+---
+
+### 🖥️ This Repository — Self-Hosted (Redis or Valkey)
+
+Run Recall entirely on your own infrastructure. Your data never leaves your servers.
+
+| What you get | Detail |
+|---|---|
+| **Full data ownership** | Memories stored in your own Redis or Valkey instance |
+| **No usage limits** | No memory caps, no subscription required |
+| **Air-gapped deployments** | Works fully offline, no external API calls for storage |
+| **Bring your own embeddings** | Configure any of 7 providers, or use the Anthropic keyword fallback |
+| **Open source** | MIT licensed, fully auditable, fork-friendly |
+| **Requires** | Redis ≥ 6 or Valkey, Node.js ≥ 18, your own server/VPS |
+
+Best for: developers who need full control, on-premise requirements, or who already run Redis infrastructure.
 
 ---
 

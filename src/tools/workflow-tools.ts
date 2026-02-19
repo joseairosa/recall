@@ -9,9 +9,9 @@
  *   get_active_workflow, list_workflows, get_workflow_context
  */
 
-import { zodToJsonSchema } from 'zod-to-json-schema';
-import { MemoryStore } from '../persistence/memory-store.js';
-import { WorkflowService } from '../services/workflow.service.js';
+import { zodToJsonSchema } from "zod-to-json-schema";
+import { MemoryStore } from "../persistence/memory-store.js";
+import { WorkflowService } from "../services/workflow.service.js";
 import {
   StartWorkflowSchema,
   CompleteWorkflowSchema,
@@ -19,8 +19,7 @@ import {
   ResumeWorkflowSchema,
   ListWorkflowsSchema,
   GetWorkflowContextSchema,
-} from '../types.js';
-
+} from "../types.js";
 
 let _service: WorkflowService | null = null;
 
@@ -29,28 +28,34 @@ export function setWorkflowMemoryStore(store: MemoryStore): void {
 }
 
 function getService(): WorkflowService {
-  if (!_service) throw new Error('Workflow service not initialized. Call setWorkflowMemoryStore first.');
+  if (!_service)
+    throw new Error(
+      "Workflow service not initialized. Call setWorkflowMemoryStore first.",
+    );
   return _service;
 }
 
+/** Exported accessor for use by consolidated tool handlers */
+export function getWorkflowService(): WorkflowService {
+  return getService();
+}
 
 type ToolResponse = {
-  content: Array<{ type: 'text'; text: string }>;
+  content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
 };
 
 function ok(data: Record<string, unknown>): ToolResponse {
-  return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+  return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
 }
 
 function toolErr(message: string): ToolResponse {
-  return { content: [{ type: 'text', text: message }], isError: true };
+  return { content: [{ type: "text", text: message }], isError: true };
 }
 
 function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
-
 
 export type WorkflowTool = {
   name: string;
@@ -61,11 +66,11 @@ export type WorkflowTool = {
 
 export const workflowTools: WorkflowTool[] = [
   {
-    name: 'start_workflow',
+    name: "start_workflow",
     description:
-      'Start a named workflow that spans multiple sessions. ' +
-      'Memories stored while this workflow is active are automatically tagged with the workflow ID. ' +
-      'Only one workflow can be active at a time — pause or complete the current one first.',
+      "Start a named workflow that spans multiple sessions. " +
+      "Memories stored while this workflow is active are automatically tagged with the workflow ID. " +
+      "Only one workflow can be active at a time — pause or complete the current one first.",
     inputSchema: zodToJsonSchema(StartWorkflowSchema),
     handler: async (args) => {
       try {
@@ -79,10 +84,10 @@ export const workflowTools: WorkflowTool[] = [
   },
 
   {
-    name: 'complete_workflow',
+    name: "complete_workflow",
     description:
-      'Complete the active workflow (or a specific workflow by ID). ' +
-      'Generates a summary from linked memories and clears the active slot.',
+      "Complete the active workflow (or a specific workflow by ID). " +
+      "Generates a summary from linked memories and clears the active slot.",
     inputSchema: zodToJsonSchema(CompleteWorkflowSchema),
     handler: async (args) => {
       try {
@@ -96,10 +101,10 @@ export const workflowTools: WorkflowTool[] = [
   },
 
   {
-    name: 'pause_workflow',
+    name: "pause_workflow",
     description:
-      'Pause the active workflow, freeing the active slot so a new workflow can start. ' +
-      'A paused workflow can be resumed later with resume_workflow.',
+      "Pause the active workflow, freeing the active slot so a new workflow can start. " +
+      "A paused workflow can be resumed later with resume_workflow.",
     inputSchema: zodToJsonSchema(PauseWorkflowSchema),
     handler: async (args) => {
       try {
@@ -113,10 +118,10 @@ export const workflowTools: WorkflowTool[] = [
   },
 
   {
-    name: 'resume_workflow',
+    name: "resume_workflow",
     description:
-      'Resume a paused workflow, making it the active workflow. ' +
-      'Fails if another workflow is currently active.',
+      "Resume a paused workflow, making it the active workflow. " +
+      "Fails if another workflow is currently active.",
     inputSchema: zodToJsonSchema(ResumeWorkflowSchema),
     handler: async (args) => {
       try {
@@ -130,11 +135,13 @@ export const workflowTools: WorkflowTool[] = [
   },
 
   {
-    name: 'get_active_workflow',
+    name: "get_active_workflow",
     description:
-      'Get the currently active workflow and its memory count. ' +
-      'Returns null if no workflow is active.',
-    inputSchema: zodToJsonSchema(StartWorkflowSchema.pick({ name: true }).partial()),
+      "Get the currently active workflow and its memory count. " +
+      "Returns null if no workflow is active.",
+    inputSchema: zodToJsonSchema(
+      StartWorkflowSchema.pick({ name: true }).partial(),
+    ),
     handler: async (_args) => {
       try {
         const workflow = await getService().getActiveWorkflow();
@@ -146,10 +153,10 @@ export const workflowTools: WorkflowTool[] = [
   },
 
   {
-    name: 'list_workflows',
+    name: "list_workflows",
     description:
-      'List all workflows in the current workspace, sorted by creation date (newest first). ' +
-      'Optionally filter by status: active | paused | completed.',
+      "List all workflows in the current workspace, sorted by creation date (newest first). " +
+      "Optionally filter by status: active | paused | completed.",
     inputSchema: zodToJsonSchema(ListWorkflowsSchema),
     handler: async (args) => {
       try {
@@ -163,10 +170,10 @@ export const workflowTools: WorkflowTool[] = [
   },
 
   {
-    name: 'get_workflow_context',
+    name: "get_workflow_context",
     description:
-      'Get the active workflow context formatted for injection into the conversation. ' +
-      'Use this to restore context at the start of a new session on the same workflow.',
+      "Get the active workflow context formatted for injection into the conversation. " +
+      "Use this to restore context at the start of a new session on the same workflow.",
     inputSchema: zodToJsonSchema(GetWorkflowContextSchema),
     handler: async (args) => {
       try {

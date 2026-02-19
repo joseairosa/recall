@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.10.0] - 2026-02-19
+
+### Changed
+
+- **Tool Consolidation** - Reduced visible MCP tools from 48 to 16 by grouping related operations under multi-action consolidated tools with an `action` discriminated-union parameter
+  - `memory_graph` — replaces link_memories, unlink_memories, get_related_memories, get_memory_graph, get_memory_history, rollback_memory
+  - `memory_template` — replaces create_template, create_from_template, list_templates
+  - `memory_category` — replaces set_memory_category, list_categories, get_memories_by_category
+  - `rlm_process` — replaces should_use_rlm, create_execution_context, decompose_task, inject_context_snippet, update_subtask_result, merge_results, verify_answer, get_execution_status
+  - `workflow` — replaces start_workflow, complete_workflow, pause_workflow, resume_workflow, get_active_workflow, list_workflows, get_workflow_context
+  - `memory_maintain` — replaces auto_consolidate, force_consolidate, consolidation_status, export_memories, import_memories, find_duplicates, consolidate_memories
+
+### Added
+
+- **Environment-variable visibility gating**
+  - `RECALL_DISABLE_ADVANCED_TOOLS=true` — exposes only 10 core tools (recall, analyze, summarize, store, search, update, delete, get_time_window_context, auto_session_start, quick_store_decision)
+  - `RECALL_SHOW_DEPRECATED_TOOLS=true` — additionally exposes 34 backwards-compatible aliases for all pre-consolidation tool names
+
+### Deprecated
+
+- All 34 individual tool names replaced by consolidated tools above are deprecated. They remain accessible via `RECALL_SHOW_DEPRECATED_TOOLS=true` for backwards compatibility.
+
+---
+
 ## [1.8.2] - 2026-01-20
 
 ### Added

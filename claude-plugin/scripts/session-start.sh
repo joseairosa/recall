@@ -135,7 +135,7 @@ INSTALLED_VERSION="${INSTALLED_VERSION:-1.0.0}"
 # Self-heal: if the running script is newer than plugin.json (e.g. background update
 # downloaded new scripts but plugin.json write failed), update plugin.json immediately
 # so version detection is always accurate. SCRIPT_VERSION must match every release.
-SCRIPT_VERSION="1.15.9"
+SCRIPT_VERSION="1.15.10"
 if "${IS_PLUGIN_INSTALL}"; then
   _PLUGIN_JSON="${SCRIPT_DIR}/../.claude-plugin/plugin.json"
   if [[ -f "${_PLUGIN_JSON}" ]]; then

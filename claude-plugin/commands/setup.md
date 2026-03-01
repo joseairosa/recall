@@ -17,7 +17,7 @@ EOF
 chmod 600 ~/.claude/recall/config.json
 ```
 
-4. Inject RECALL_API_KEY into ~/.claude/settings.json env section so the plugin MCP server picks it up at startup (the .mcp.json uses ${RECALL_API_KEY} in the Authorization header):
+4. Inject RECALL_API_KEY into ~/.claude/settings.json env section (belt-and-suspenders for hooks that read from env):
 
 ```bash
 python3 - <<'PYEOF'

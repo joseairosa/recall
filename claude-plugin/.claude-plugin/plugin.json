@@ -1,6 +1,6 @@
 {
   "name": "recall",
-  "version": "1.15.10",
+  "version": "1.15.11",
   "description": "Recall Memory-as-a-Service — persistent memory, semantic search, and context management across Claude Code sessions. Connects to recallmcp.com or self-hosted instances.",
   "author": {
     "name": "Jose Airosa",

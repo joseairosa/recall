@@ -1,8 +1,14 @@
 {
-  "name": "recall-rlm",
-  "description": "RLM (Recursive Language Model) support for processing large contexts using Recall MCP memory",
+  "name": "recall",
+  "version": "1.15.9",
+  "description": "Recall Memory-as-a-Service — persistent memory, semantic search, and context management across Claude Code sessions. Connects to recallmcp.com or self-hosted instances.",
   "author": {
     "name": "Jose Airosa",
-    "email": "me@joseairosa.com"
-  }
+    "email": "me@joseairosa.com",
+    "url": "https://github.com/joseairosa"
+  },
+  "homepage": "https://recallmcp.com",
+  "repository": "https://github.com/joseairosa/recall",
+  "license": "MIT",
+  "keywords": ["memory", "recall", "mcp", "persistence", "semantic-search", "context", "rlm"]
 }

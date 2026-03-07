@@ -4,7 +4,7 @@
 #
 # Registered in settings.json under:
 #   hooks.PostToolUse[].hooks[].command
-#   matcher: "Write|Edit|MultiEdit|Task|Bash"
+#   matcher: "Write|Edit|MultiEdit|Task|Bash|Read|Grep|Glob"
 #   async: true  (non-blocking — Claude does not wait for this hook)
 #   timeout: 10
 
@@ -118,6 +118,55 @@ except Exception:
     fi
 
     OBSERVATION_CONTENT="[Bash] ${COMMAND:0:200}"
+    ;;
+
+  Read)
+    # Capture file path being read — low-importance activity signal.
+    if command -v jq &>/dev/null; then
+      FILE_PATH="$(echo "${TOOL_INPUT}" | jq -r '.file_path // empty' 2>/dev/null || true)"
+    elif command -v python3 &>/dev/null; then
+      FILE_PATH="$(echo "${TOOL_INPUT}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('file_path',''))" 2>/dev/null || true)"
+    else
+      FILE_PATH=""
+    fi
+    [[ -z "${FILE_PATH}" ]] && exit 0
+    OBSERVATION_CONTENT="[Read] ${FILE_PATH}"
+    IMPORTANCE=1
+    ;;
+
+  Grep)
+    # Capture search pattern + path — signals what Claude was investigating.
+    if command -v jq &>/dev/null; then
+      PATTERN="$(echo "${TOOL_INPUT}" | jq -r '.pattern // empty' 2>/dev/null || true)"
+      SEARCH_PATH="$(echo "${TOOL_INPUT}" | jq -r '.path // empty' 2>/dev/null || true)"
+    elif command -v python3 &>/dev/null; then
+      PATTERN="$(echo "${TOOL_INPUT}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('pattern',''))" 2>/dev/null || true)"
+      SEARCH_PATH="$(echo "${TOOL_INPUT}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('path',''))" 2>/dev/null || true)"
+    else
+      PATTERN=""
+      SEARCH_PATH=""
+    fi
+    [[ -z "${PATTERN}" ]] && exit 0
+    if [[ -n "${SEARCH_PATH}" ]]; then
+      OBSERVATION_CONTENT="[Grep] ${PATTERN:0:100} in ${SEARCH_PATH}"
+    else
+      OBSERVATION_CONTENT="[Grep] ${PATTERN:0:100}"
+    fi
+    IMPORTANCE=1
+    ;;
+
+  Glob)
+    # Capture file pattern — signals what areas of the codebase were being explored.
+    if command -v jq &>/dev/null; then
+      PATTERN="$(echo "${TOOL_INPUT}" | jq -r '.pattern // empty' 2>/dev/null || true)"
+    elif command -v python3 &>/dev/null; then
+      PATTERN="$(echo "${TOOL_INPUT}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('pattern',''))" 2>/dev/null || true)"
+    else
+      PATTERN=""
+    fi
+    [[ -z "${PATTERN}" ]] && exit 0
+    OBSERVATION_CONTENT="[Glob] ${PATTERN:0:100}"
+    IMPORTANCE=1
     ;;
 
   *)

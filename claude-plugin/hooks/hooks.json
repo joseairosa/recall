@@ -24,7 +24,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Write|Edit|MultiEdit|Task|Bash",
+        "matcher": "Write|Edit|MultiEdit|Task|Bash|Read|Grep|Glob",
         "hooks": [
           {
             "type": "command",

@@ -36,10 +36,13 @@ Store without being asked when any of these triggers occur:
 | Non-obvious bug root cause found | `store_memory` | Include symptoms, root cause, fix |
 | Repeatable pattern or convention established | `store_memory` | Tag with relevant topic |
 | External API / third-party behavior discovered | `store_memory` | Include caveats or gotchas |
+| Codebase discovery — found something non-obvious about how code is structured or works | `store_memory` | What file/module/function does, what it contains, key behavior |
+| File or directory structure observed — what lives where and why | `store_memory` | Helps future sessions navigate faster |
+| Tool output reveals important state — test results, build output, git log, error traces | `store_memory` | Include the key finding, not raw output |
 | Multi-session feature started | `workflow` action `start` | |
 | Multi-session feature completed | `workflow` action `complete` | |
 
-**Threshold:** Store when you'd want this context next session. Skip trivial, obvious, or one-off things.
+**Threshold:** Low. Store anything you'd want to know next session — discoveries, findings, observations about the codebase, not just decisions. When in doubt, store it. The hooks capture activity signals automatically; your job is to capture the *meaning* behind them.
 
 ---
 

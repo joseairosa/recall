@@ -58,16 +58,34 @@ def present(event, cmd):
 
 changed = False
 
-if not present("PostToolUse", base + 'observe.sh"'):
+OBSERVE_MATCHER = "Write|Edit|MultiEdit|Task|Bash|Read|Grep|Glob"
+observe_cmd = base + 'observe.sh"'
+observe_ok = any(
+    e.get("matcher", "") == OBSERVE_MATCHER and
+    any(h.get("command", "") == observe_cmd for h in e.get("hooks", []))
+    for e in settings["hooks"]["PostToolUse"]
+)
+if not observe_ok:
+    settings["hooks"]["PostToolUse"] = [
+        e for e in settings["hooks"]["PostToolUse"]
+        if not any(h.get("command", "") == observe_cmd for h in e.get("hooks", []))
+    ]
     settings["hooks"]["PostToolUse"].append({
-        "matcher": "Write|Edit|MultiEdit|Task|Bash",
-        "hooks": [{"type": "command", "command": base + 'observe.sh"', "async": True, "timeout": 10}]
+        "matcher": OBSERVE_MATCHER,
+        "hooks": [{"type": "command", "command": observe_cmd, "async": True, "timeout": 10}]
     })
     changed = True
 
 if not present("SessionStart", base + 'session-start.sh"'):
     settings["hooks"]["SessionStart"].append({
         "hooks": [{"type": "command", "command": base + 'session-start.sh"', "timeout": 15}]
+    })
+    changed = True
+
+if not present("SessionStart", base + 'compact-restore.sh"'):
+    settings["hooks"]["SessionStart"].append({
+        "matcher": "compact",
+        "hooks": [{"type": "command", "command": base + 'compact-restore.sh"', "timeout": 5}]
     })
     changed = True
 
@@ -80,6 +98,12 @@ if not present("PreCompact", base + 'pre-compact.sh"'):
 if not present("Stop", base + 'session-end.sh"'):
     settings["hooks"]["Stop"].append({
         "hooks": [{"type": "command", "command": base + 'session-end.sh"', "async": True, "timeout": 10}]
+    })
+    changed = True
+
+if not present("Stop", base + 'stop-summarize.sh"'):
+    settings["hooks"]["Stop"].append({
+        "hooks": [{"type": "command", "command": base + 'stop-summarize.sh"', "async": True, "timeout": 10}]
     })
     changed = True
 
@@ -135,7 +159,7 @@ INSTALLED_VERSION="${INSTALLED_VERSION:-1.0.0}"
 # Self-heal: if the running script is newer than plugin.json (e.g. background update
 # downloaded new scripts but plugin.json write failed), update plugin.json immediately
 # so version detection is always accurate. SCRIPT_VERSION must match every release.
-SCRIPT_VERSION="1.15.11"
+SCRIPT_VERSION="1.15.12"
 if "${IS_PLUGIN_INSTALL}"; then
   _PLUGIN_JSON="${SCRIPT_DIR}/../.claude-plugin/plugin.json"
   if [[ -f "${_PLUGIN_JSON}" ]]; then

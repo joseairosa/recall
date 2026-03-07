@@ -141,7 +141,7 @@ fi
 
 # Append update indicator if server version is newer than local
 if [[ -n "${LATEST_VERSION}" ]] && _version_newer "${LATEST_VERSION}" "${VERSION}"; then
-  RECALL_SEGMENT="${RECALL_SEGMENT} · ⬆ ${LATEST_VERSION}"
+  RECALL_SEGMENT="${RECALL_SEGMENT} · ⬆ ${LATEST_VERSION} — Restart Claude Code to update."
 fi
 
 # --- Collect previous command output (if configured) ---

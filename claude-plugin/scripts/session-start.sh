@@ -126,6 +126,84 @@ source "${SCRIPT_DIR}/lib/config.sh" || exit 0
 # No API key — nothing to do
 [[ -z "${RECALL_API_KEY}" ]] && exit 0
 
+# ─── Auto-heal revoked API key ────────────────────────────────────────────────
+# The dashboard used to silently rotate keys, leaving config.json stale with a
+# revoked key. Every hook call would fail with 401. This block detects that and
+# automatically syncs the active key from ~/.claude.json (MCP config) so hooks
+# resume working without any user intervention.
+_DEBUG_LOG="${HOME}/.claude/recall/debug.log"
+_heal_status="$(curl --silent --max-time 5 --output /dev/null \
+  --write-out "%{http_code}" \
+  --request GET \
+  --header "Authorization: Bearer ${RECALL_API_KEY}" \
+  "${RECALL_SERVER_URL}/api/memories?limit=1" 2>/dev/null || echo "000")"
+
+if [[ "${_heal_status}" == "401" ]]; then
+  _new_key=""
+  _claude_json="${HOME}/.claude.json"
+
+  # Scan ~/.claude.json for any MCP server with "recall" in the name that has
+  # a Bearer token in its headers — that's the active key for this account.
+  if [[ -f "${_claude_json}" ]]; then
+    if command -v python3 &>/dev/null; then
+      _new_key="$(python3 - <<'HEAL_PY' 2>/dev/null || true
+import json, os
+try:
+    d = json.load(open(os.path.expanduser("~/.claude.json")))
+    for name, srv in d.get("mcpServers", {}).items():
+        if "recall" in name.lower():
+            auth = srv.get("headers", {}).get("Authorization", "")
+            if auth.startswith("Bearer sk-"):
+                print(auth.split(" ", 1)[1])
+                break
+except Exception:
+    pass
+HEAL_PY
+)"
+    elif command -v jq &>/dev/null; then
+      _new_key="$(jq -r '
+        .mcpServers
+        | to_entries[]
+        | select(.key | ascii_downcase | contains("recall"))
+        | .value.headers.Authorization // empty
+      ' "${_claude_json}" 2>/dev/null | sed 's/^Bearer //' | head -1 || true)"
+    fi
+  fi
+
+  if [[ -n "${_new_key}" && "${_new_key}" != "${RECALL_API_KEY}" ]]; then
+    # Verify the candidate key is actually valid before saving
+    _verify_status="$(curl --silent --max-time 5 --output /dev/null \
+      --write-out "%{http_code}" \
+      --request GET \
+      --header "Authorization: Bearer ${_new_key}" \
+      "${RECALL_SERVER_URL}/api/memories?limit=1" 2>/dev/null || echo "000")"
+
+    if [[ "${_verify_status}" != "401" ]]; then
+      _config_file="${HOME}/.claude/recall/config.json"
+      RECALL_NEW_KEY="${_new_key}" python3 - <<'UPDATE_PY' 2>/dev/null || true
+import json, os
+cfg_path = os.path.expanduser("~/.claude/recall/config.json")
+try:
+    cfg = json.load(open(cfg_path))
+except Exception:
+    cfg = {}
+cfg["api_key"] = os.environ["RECALL_NEW_KEY"]
+json.dump(cfg, open(cfg_path, "w"), indent=2)
+UPDATE_PY
+      # Update in-memory key so the rest of this session uses the healed key
+      export RECALL_API_KEY="${_new_key}"
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [session-start] auto-healed: revoked key replaced from .claude.json" \
+        >> "${_DEBUG_LOG}" 2>/dev/null || true
+    else
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [session-start] warning: key revoked, candidate from .claude.json also invalid — hooks disabled" \
+        >> "${_DEBUG_LOG}" 2>/dev/null || true
+    fi
+  else
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [session-start] warning: key revoked, no replacement found in .claude.json — hooks disabled" \
+      >> "${_DEBUG_LOG}" 2>/dev/null || true
+  fi
+fi
+
 # ─── Pure-bash semver comparison: returns 0 if $1 is strictly newer than $2 ──
 _recall_version_newer() {
   local new_ver="$1" cur_ver="$2"
@@ -159,7 +237,7 @@ INSTALLED_VERSION="${INSTALLED_VERSION:-1.0.0}"
 # Self-heal: if the running script is newer than plugin.json (e.g. background update
 # downloaded new scripts but plugin.json write failed), update plugin.json immediately
 # so version detection is always accurate. SCRIPT_VERSION must match every release.
-SCRIPT_VERSION="1.15.13"
+SCRIPT_VERSION="1.15.14"
 if "${IS_PLUGIN_INSTALL}"; then
   _PLUGIN_JSON="${SCRIPT_DIR}/../.claude-plugin/plugin.json"
   if [[ -f "${_PLUGIN_JSON}" ]]; then

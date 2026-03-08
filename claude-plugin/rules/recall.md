@@ -66,6 +66,28 @@ mcp__recall-remote__summarize_session({ session_name: "<brief description of wor
 
 ---
 
+### Scheduled Loops — /loop Integration
+
+Recall integrates with Claude Code's `/loop` scheduler. Use `/recall-loop` to get periodic memory check-ins while you work:
+
+```
+/loop 30m /recall-loop        # Every 30 minutes: recent memories + pending todos
+/loop 1h /recall-loop         # Hourly digest
+```
+
+Or call `loop_digest` directly in a loop prompt:
+
+```
+/loop 30m summarize what's in recall from the last 30 minutes and remind me of any overdue todos
+```
+
+**When to use:**
+- Long coding sessions where you want periodic reminders of stored context
+- Babysitting a deployment while continuing other work
+- Keeping to-dos in view during a focused sprint
+
+---
+
 ### Workspace Rules
 
 - **Always set workspace first** — memories are namespace-isolated per workspace. Skipping `set_workspace` stores to the default namespace, which is shared and polluted.

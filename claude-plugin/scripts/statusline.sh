@@ -150,7 +150,12 @@ if [[ -n "${PREV_CMD}" ]]; then
   # Pipe the same stdin JSON that Claude Code sent us into the previous command
   # so it gets the full session context (model, context window, etc.).
   # timeout 3: if the previous command hangs, fall through to standalone output.
-  PREV_OUTPUT="$(printf '%s' "${STDIN_DATA}" | timeout 3 bash -c "${PREV_CMD}" 2>/dev/null || true)"
+  # timeout is not available on vanilla macOS (GNU coreutils required) — fall back to no timeout.
+  if command -v timeout &>/dev/null; then
+    PREV_OUTPUT="$(printf '%s' "${STDIN_DATA}" | timeout 3 bash -c "${PREV_CMD}" 2>/dev/null || true)"
+  else
+    PREV_OUTPUT="$(printf '%s' "${STDIN_DATA}" | bash -c "${PREV_CMD}" 2>/dev/null || true)"
+  fi
 
   # Detect if the previous command returned a help/configuration message instead of
   # real status data. Pilot outputs this when it cannot detect Claude Code session

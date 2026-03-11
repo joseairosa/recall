@@ -6,6 +6,7 @@
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { MemoryStore } from "../persistence/memory-store.js";
 import { MemoryTemplateActionSchema } from "../types.js";
+import { flattenUnionSchema } from "./schema-utils.js";
 
 let _store: MemoryStore | null = null;
 
@@ -32,7 +33,7 @@ export const memory_template = {
     "Manage memory templates. " +
     "Actions: create (new template with placeholders), use (create memory from template), " +
     "list (show all available templates).",
-  inputSchema: zodToJsonSchema(MemoryTemplateActionSchema),
+  inputSchema: flattenUnionSchema(zodToJsonSchema(MemoryTemplateActionSchema)),
   handler: async (args: unknown) => {
     try {
       const store = getStore();

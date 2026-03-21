@@ -170,6 +170,7 @@ EVENT_TYPE=""
 EVENT_TITLE=""
 EVENT_BODY=""
 EVENT_URL=""
+EVENT_PROMPT=""
 
 if command -v python3 &>/dev/null; then
   HAS_EVENT="$(echo "${RESPONSE}" | python3 -c \
@@ -188,6 +189,9 @@ if command -v python3 &>/dev/null; then
     EVENT_URL="$(echo "${RESPONSE}" | python3 -c \
       "import json,sys; d=json.load(sys.stdin); print(d['data'].get('url','') or '')" \
       2>/dev/null || echo "")"
+    EVENT_PROMPT="$(echo "${RESPONSE}" | python3 -c \
+      "import json,sys; d=json.load(sys.stdin); print(d['data'].get('prompt','') or '')" \
+      2>/dev/null || echo "")"
   fi
 elif command -v jq &>/dev/null; then
   HAS_EVENT="$(echo "${RESPONSE}" | jq -r 'if .success and .data then "yes" else "no" end' 2>/dev/null || echo "no")"
@@ -196,6 +200,7 @@ elif command -v jq &>/dev/null; then
     EVENT_TITLE="$(echo "${RESPONSE}" | jq -r '.data.title // ""' 2>/dev/null || echo "")"
     EVENT_BODY="$(echo "${RESPONSE}" | jq -r '.data.body // ""' 2>/dev/null || echo "")"
     EVENT_URL="$(echo "${RESPONSE}" | jq -r '.data.url // ""' 2>/dev/null || echo "")"
+    EVENT_PROMPT="$(echo "${RESPONSE}" | jq -r '.data.prompt // ""' 2>/dev/null || echo "")"
   fi
 fi
 
@@ -207,6 +212,12 @@ if [[ -n "${EVENT_BODY}" ]]; then
   REASON="${REASON}
 
 ${EVENT_BODY}"
+fi
+if [[ -n "${EVENT_PROMPT}" ]]; then
+  REASON="${REASON}
+
+**Custom Instructions:**
+${EVENT_PROMPT}"
 fi
 if [[ -n "${EVENT_URL}" ]]; then
   REASON="${REASON}

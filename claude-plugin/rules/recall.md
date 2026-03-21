@@ -46,6 +46,22 @@ Store without being asked when any of these triggers occur:
 
 ---
 
+### Pick Up — Resuming After Time Away
+
+When starting a session on a project you haven't touched in a while, or when the user says "catch me up", "what was I doing", or "pick up where I left off":
+
+```
+mcp__recall-remote__pick_up({ lookback_hours: 72 })
+```
+
+This returns a structured narrative brief with: last session summary, active workflows, pending todos, recent decisions, and unfinished work signals. It's more comprehensive than `auto_session_start` — use it when you need the full picture, not just quick context.
+
+**When to use `pick_up` vs `auto_session_start`:**
+- `auto_session_start` — every session start (fast, lightweight, ~2000 tokens)
+- `pick_up` — returning after hours/days, switching projects, or when explicitly asked (~3000 tokens)
+
+---
+
 ### Search Before Answering
 
 When the user asks "how did we implement X", "why did we choose Y", "what was decided about Z", or any question about past work in this project:

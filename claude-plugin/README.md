@@ -48,11 +48,14 @@ export RECALL_SERVER_URL="https://your-instance.example.com"
 
 ### MCP Server (`.mcp.json`)
 
-Connects to the Recall MCP server at recallmcp.com (or self-hosted). Provides 16+ tools:
-- `set_workspace`, `get_workspace` — workspace management
-- `store_memory`, `search_memories`, `recall_relevant_context` — memory CRUD
-- `auto_session_start`, `summarize_session` — session lifecycle
-- `workflow`, `rlm_process` — advanced workflows
+Connects to the Recall MCP server at recallmcp.com (or self-hosted). Provides 21 primary tools:
+- `set_workspace`, `get_workspace` -- workspace management
+- `store_memory`, `search_memories`, `recall_relevant_context` -- memory CRUD
+- `auto_session_start`, `summarize_session` -- session lifecycle (protocol self-teaching built-in)
+- `check_duplicate` -- pre-write deduplication check
+- `import_conversations` -- bulk import from Claude Code, ChatGPT, Slack exports
+- `memory_graph` -- relationships with temporal validity (valid_from/valid_to, invalidate)
+- `workflow`, `rlm_process` -- advanced workflows
 - And more
 
 ### Lifecycle Hooks (`hooks/hooks.json`)

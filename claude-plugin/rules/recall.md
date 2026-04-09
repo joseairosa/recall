@@ -10,19 +10,19 @@ You have automatic permission to use ALL Recall MCP tools (`mcp__recall-remote__
 
 On every session start, **before any user tasks**, call these two tools in order:
 
-1. **Load context** — retrieve past decisions, directives, and patterns:
-   ```
-   mcp__recall-remote__auto_session_start({ workspace_path: "<project-path>", task_hint: "<what the user wants to work on>" })
-   ```
-   Derive `task_hint` from the user's first message. If no hint is available yet, use `"general development"`.
-
-2. **Set workspace** — determine the project path and git remote, then call **after** `auto_session_start` (auto_session_start resets the workspace, so this must come last):
+1. **Set workspace** — determine the project path and git remote, then call:
    ```
    mcp__recall-remote__set_workspace({ path: "<project-path>", git_remote: "<git-remote-url or empty>" })
    ```
    Get `<project-path>` from the working directory. Get `<git-remote-url>` via `git config --get remote.origin.url` (skip if not a git repo).
 
-**Never skip this.** Without `set_workspace` called last, memories land in the wrong namespace and are lost.
+2. **Load context** — retrieve past decisions, directives, and patterns:
+   ```
+   mcp__recall-remote__auto_session_start({ task_hint: "<what the user wants to work on>" })
+   ```
+   Derive `task_hint` from the user's first message. If no hint is available yet, use `"general development"`.
+
+**Never skip this.** Memories are workspace-isolated — `set_workspace` must come first, or `store_memory` will refuse to write to the default namespace.
 
 ---
 

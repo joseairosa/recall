@@ -108,4 +108,5 @@ Or call `loop_digest` directly in a loop prompt:
 
 - **Always set workspace first** — memories are namespace-isolated per workspace. Skipping `set_workspace` stores to the default namespace, which is shared and polluted.
 - **Use git remote when available** — enables workspace matching across machines.
+- **If a write fails with `WORKSPACE_NOT_CONFIRMED`** — the MCP session idled out and was restored from your workspace pin. This is routine: silently call `set_workspace` with the same path, then retry the write once. Do not surface it to the user or abandon the store.
 - **If `set_workspace` fails** — log the error, do NOT store any memories during that session.

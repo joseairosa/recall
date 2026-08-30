@@ -30,12 +30,54 @@ if "${IS_PLUGIN_INSTALL}"; then
   fi
 fi
 
-# ─── Register observe hook in settings.json (plugin mode only) ───────────────
-# Claude Code does not auto-activate PostToolUse hooks defined in a plugin's
-# hooks.json — they must be present in ~/.claude/settings.json to fire.
-# This block is idempotent: it only adds the entry if it is not already there.
-if "${IS_PLUGIN_INSTALL}" && command -v python3 &>/dev/null; then
-  python3 - <<'PYEOF' 2>/dev/null || true
+# --- Reconcile settings.json hook registration -------------------------------
+# History: this block used to ADD every hook to ~/.claude/settings.json on the
+# belief that Claude Code does not fire a plugin's hooks.json. That is no
+# longer true (verified 2026-08-30: with settings stripped, manifest hooks
+# stored 159 observations in 28 minutes) - so those settings entries made
+# every hook fire twice and re-imposed the old noisy PostToolUse matcher on
+# every session start.
+#
+# Now: when a hooks manifest exists next to this script tree, Claude Code
+# fires the hooks natively - REMOVE any legacy settings.json entries so each
+# hook fires exactly once. Only a tree with no manifest (curl|bash
+# standalone install) still needs settings registration, with the current
+# matchers.
+if command -v python3 &>/dev/null; then
+  _MANIFEST="${SCRIPT_DIR}/../hooks/hooks.json"
+  if [[ -f "${_MANIFEST}" ]]; then
+    python3 - <<'PYEOF' 2>/dev/null || true
+import json, os
+
+settings_path = os.path.expanduser("~/.claude/settings.json")
+try:
+    with open(settings_path) as f:
+        settings = json.load(f)
+except Exception:
+    settings = None
+
+if settings is not None and isinstance(settings.get("hooks"), dict):
+    marker = "/plugins/recall/scripts/"
+    changed = False
+    hooks = settings["hooks"]
+    for event in list(hooks.keys()):
+        if not isinstance(hooks[event], list):
+            continue
+        kept = [
+            e for e in hooks[event]
+            if not any(marker in h.get("command", "") for h in e.get("hooks", []))
+        ]
+        if len(kept) != len(hooks[event]):
+            hooks[event] = kept
+            changed = True
+        if not hooks[event]:
+            del hooks[event]
+    if changed:
+        with open(settings_path, "w") as f:
+            json.dump(settings, f, indent=2)
+PYEOF
+  elif "${IS_PLUGIN_INSTALL}"; then
+    python3 - <<'PYEOF' 2>/dev/null || true
 import json, os
 
 settings_path = os.path.expanduser("~/.claude/settings.json")
@@ -45,7 +87,7 @@ try:
 except Exception:
     settings = {}
 
-for event in ("PostToolUse", "SessionStart", "PreCompact", "Stop"):
+for event in ("PostToolUse", "SessionStart", "SessionEnd", "PreCompact", "Stop"):
     settings.setdefault("hooks", {}).setdefault(event, [])
 
 base = 'bash "${HOME}/.claude/plugins/recall/scripts/'
@@ -58,7 +100,8 @@ def present(event, cmd):
 
 changed = False
 
-OBSERVE_MATCHER = "Write|Edit|MultiEdit|Task|Bash|Read|Grep|Glob"
+# observe.sh captures only failing Bash commands since v1.17.0.
+OBSERVE_MATCHER = "Bash"
 observe_cmd = base + 'observe.sh"'
 observe_ok = any(
     e.get("matcher", "") == OBSERVE_MATCHER and
@@ -101,9 +144,19 @@ if not present("Stop", base + 'session-end.sh"'):
     })
     changed = True
 
-if not present("Stop", base + 'stop-summarize.sh"'):
-    settings["hooks"]["Stop"].append({
-        "hooks": [{"type": "command", "command": base + 'stop-summarize.sh"', "async": True, "timeout": 10}]
+# stop-summarize.sh fires once per session on SessionEnd since v1.17.0;
+# migrate any old per-turn Stop registration.
+summarize_cmd = base + 'stop-summarize.sh"'
+old_stop = [
+    e for e in settings["hooks"]["Stop"]
+    if any(h.get("command", "") == summarize_cmd for h in e.get("hooks", []))
+]
+if old_stop:
+    settings["hooks"]["Stop"] = [e for e in settings["hooks"]["Stop"] if e not in old_stop]
+    changed = True
+if not present("SessionEnd", summarize_cmd):
+    settings["hooks"]["SessionEnd"].append({
+        "hooks": [{"type": "command", "command": summarize_cmd, "async": True, "timeout": 10}]
     })
     changed = True
 
@@ -113,10 +166,15 @@ if not present("Stop", base + 'stop.sh"'):
     })
     changed = True
 
+for event in list(settings["hooks"].keys()):
+    if not settings["hooks"][event]:
+        del settings["hooks"][event]
+
 if changed:
     with open(settings_path, "w") as f:
         json.dump(settings, f, indent=2)
 PYEOF
+  fi
 fi
 
 # Load config — silently exit if something goes wrong
@@ -237,7 +295,7 @@ INSTALLED_VERSION="${INSTALLED_VERSION:-1.0.0}"
 # Self-heal: if the running script is newer than plugin.json (e.g. background update
 # downloaded new scripts but plugin.json write failed), update plugin.json immediately
 # so version detection is always accurate. SCRIPT_VERSION must match every release.
-SCRIPT_VERSION="1.16.2"
+SCRIPT_VERSION="1.17.1"
 if "${IS_PLUGIN_INSTALL}"; then
   _PLUGIN_JSON="${SCRIPT_DIR}/../.claude-plugin/plugin.json"
   if [[ -f "${_PLUGIN_JSON}" ]]; then
@@ -419,6 +477,28 @@ except Exception: pass
           elif command -v jq &>/dev/null; then
             _tmp="$(jq --arg v "${_NEW_VERSION}" '.version = $v' "${_PLUGIN_JSON}" 2>/dev/null || true)"
             [[ -n "${_tmp}" ]] && echo "${_tmp}" > "${_PLUGIN_JSON}" || true
+          fi
+        fi
+        # Also refresh the standalone tree when it exists as a different
+        # directory. The settings statusLine points there, and plugin-managed
+        # installs no longer register its session-start, so nothing else
+        # keeps its scripts - or the version it displays - current.
+        _STANDALONE_DIR="${HOME}/.claude/plugins/recall/scripts"
+        if "${_ok}" && [[ -d "${_STANDALONE_DIR}" ]] && [[ "${_STANDALONE_DIR}" != "${SCRIPT_DIR}" ]]; then
+          for _sf in session-start.sh observe.sh statusline.sh stop.sh stop-summarize.sh pre-compact.sh compact-restore.sh session-end.sh; do
+            cp "${SCRIPT_DIR}/${_sf}" "${_STANDALONE_DIR}/${_sf}" 2>/dev/null || true
+          done
+          mkdir -p "${_STANDALONE_DIR}/lib" 2>/dev/null || true
+          cp "${SCRIPT_DIR}/lib/config.sh" "${_STANDALONE_DIR}/lib/config.sh" 2>/dev/null || true
+          _SPJ="${HOME}/.claude/plugins/recall/.claude-plugin/plugin.json"
+          if [[ -f "${_SPJ}" ]] && command -v python3 &>/dev/null; then
+            _NV="${_NEW_VERSION}" _PJ="${_SPJ}" python3 -c "
+import json, os
+pj = os.environ['_PJ']; v = os.environ['_NV']
+try:
+    d = json.load(open(pj)); d['version'] = v; json.dump(d, open(pj, 'w'), indent=2)
+except Exception: pass
+" 2>/dev/null || true
           fi
         fi
       ) > "${UPDATE_LOG}" 2>&1 &

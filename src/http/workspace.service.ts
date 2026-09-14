@@ -50,7 +50,8 @@ export class WorkspaceService {
   async getOrRegisterWorkspace(
     tenantId: string,
     workspacePath: string,
-    plan: string
+    plan: string,
+    options?: { maxWorkspaces?: number }
   ): Promise<{ workspace: WorkspaceRecord; isNew: boolean } | null> {
     const workspaceId = this.generateWorkspaceId(workspacePath);
     const key = `tenant:${tenantId}:workspace:${workspaceId}:meta`;
@@ -72,8 +73,19 @@ export class WorkspaceService {
 
     // New workspace - check limit (including add-ons)
     const workspaceCount = await this.getWorkspaceCount(tenantId);
+    // Callers that know their effective limits (e.g. a self-hosted licence) pass them in;
+    // otherwise SaaS plan limits apply only where billing exists. A deployment without
+    // Stripe/Firebase is self-hosted, and its "plan" string (usually "free") must not cap
+    // it at one workspace — that made every second `set_workspace` fail with
+    // WORKSPACE_LIMIT_EXCEEDED on self-hosted installs.
+    const billingConfigured = Boolean(
+      process.env.STRIPE_SECRET_KEY && process.env.FIREBASE_PROJECT_ID
+    );
     const basePlanLimit =
-      PLAN_LIMITS[plan as keyof typeof PLAN_LIMITS]?.maxWorkspaces ?? 1;
+      options?.maxWorkspaces ??
+      (billingConfigured
+        ? (PLAN_LIMITS[plan as keyof typeof PLAN_LIMITS]?.maxWorkspaces ?? 1)
+        : -1);
 
     // Get workspace add-ons from customer record
     const customerData = await this.storageClient.hgetall(`customer:${tenantId}`);

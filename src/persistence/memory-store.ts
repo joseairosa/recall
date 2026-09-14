@@ -77,69 +77,113 @@ export class MemoryStore {
     };
 
     
+    await this.writeMemory(memory, data.ttl_seconds);
+
+    return memory;
+  }
+
+  /**
+   * Persist a fully-formed MemoryEntry (hash + every index). Shared by createMemory,
+   * which mints id/timestamp/embedding, and importMemory, which keeps the caller's.
+   */
+  private async writeMemory(
+    memory: MemoryEntry,
+    ttlSeconds?: number,
+    linkToActiveWorkflow = true
+  ): Promise<void> {
     const pipeline = this.storageClient.pipeline();
 
-    const memoryKey = isGlobal
-      ? StorageKeys.globalMemory(id)
-      : StorageKeys.memory(this.workspaceId, id);
+    const memoryKey = memory.is_global
+      ? StorageKeys.globalMemory(memory.id)
+      : StorageKeys.memory(this.workspaceId, memory.id);
 
 
     let toBeSerializedMemory = this.serializeMemory(memory);
     pipeline.hset(memoryKey, toBeSerializedMemory);
 
-    if (data.ttl_seconds) {
-      pipeline.expire(memoryKey, data.ttl_seconds);
+    if (ttlSeconds) {
+      pipeline.expire(memoryKey, ttlSeconds);
     }
 
-    if (isGlobal) {
-      pipeline.sadd(StorageKeys.globalMemories(), id);
-      pipeline.zadd(StorageKeys.globalTimeline(), timestamp, id);
-      pipeline.sadd(StorageKeys.globalByType(data.context_type), id);
+    if (memory.is_global) {
+      pipeline.sadd(StorageKeys.globalMemories(), memory.id);
+      pipeline.zadd(StorageKeys.globalTimeline(), memory.timestamp, memory.id);
+      pipeline.sadd(StorageKeys.globalByType(memory.context_type), memory.id);
 
-      for (const tag of data.tags) {
-        pipeline.sadd(StorageKeys.globalByTag(tag), id);
+      for (const tag of memory.tags) {
+        pipeline.sadd(StorageKeys.globalByTag(tag), memory.id);
       }
 
-      if (data.importance >= 8) {
-        pipeline.zadd(StorageKeys.globalImportant(), data.importance, id);
+      if (memory.importance >= 8) {
+        pipeline.zadd(StorageKeys.globalImportant(), memory.importance, memory.id);
       }
 
-      if (data.category) {
-        pipeline.set(StorageKeys.globalMemoryCategory(id), data.category);
-        pipeline.sadd(StorageKeys.globalCategory(data.category), id);
-        pipeline.zadd(StorageKeys.globalCategories(), timestamp, data.category);
+      if (memory.category) {
+        pipeline.set(StorageKeys.globalMemoryCategory(memory.id), memory.category);
+        pipeline.sadd(StorageKeys.globalCategory(memory.category), memory.id);
+        pipeline.zadd(StorageKeys.globalCategories(), memory.timestamp, memory.category);
       }
     } else {
-      pipeline.sadd(StorageKeys.memories(this.workspaceId), id);
-      pipeline.zadd(StorageKeys.timeline(this.workspaceId), timestamp, id);
-      pipeline.sadd(StorageKeys.byType(this.workspaceId, data.context_type), id);
+      pipeline.sadd(StorageKeys.memories(this.workspaceId), memory.id);
+      pipeline.zadd(StorageKeys.timeline(this.workspaceId), memory.timestamp, memory.id);
+      pipeline.sadd(StorageKeys.byType(this.workspaceId, memory.context_type), memory.id);
 
-      for (const tag of data.tags) {
-        pipeline.sadd(StorageKeys.byTag(this.workspaceId, tag), id);
+      for (const tag of memory.tags) {
+        pipeline.sadd(StorageKeys.byTag(this.workspaceId, tag), memory.id);
       }
 
-      if (data.importance >= 8) {
-        pipeline.zadd(StorageKeys.important(this.workspaceId), data.importance, id);
+      if (memory.importance >= 8) {
+        pipeline.zadd(StorageKeys.important(this.workspaceId), memory.importance, memory.id);
       }
 
-      if (data.category) {
-        pipeline.set(StorageKeys.memoryCategory(this.workspaceId, id), data.category);
-        pipeline.sadd(StorageKeys.category(this.workspaceId, data.category), id);
-        pipeline.zadd(StorageKeys.categories(this.workspaceId), timestamp, data.category);
+      if (memory.category) {
+        pipeline.set(StorageKeys.memoryCategory(this.workspaceId, memory.id), memory.category);
+        pipeline.sadd(StorageKeys.category(this.workspaceId, memory.category), memory.id);
+        pipeline.zadd(StorageKeys.categories(this.workspaceId), memory.timestamp, memory.category);
       }
 
-      const activeWorkflowId = await this.workflowStore.getActiveWorkflowId();
+      // Only freshly created memories belong to the workflow that is active right now;
+      // imported history must not be attached to whatever workflow happens to be open.
+      const activeWorkflowId = linkToActiveWorkflow
+        ? await this.workflowStore.getActiveWorkflowId()
+        : null;
       if (activeWorkflowId) {
         pipeline.sadd(
           WorkflowStorageKeys.workflowMemories(this.workspaceId, activeWorkflowId),
-          id,
+          memory.id,
         );
       }
     }
 
     await pipeline.exec();
+  }
 
-    return memory;
+  /**
+   * Store a memory exactly as given — id, timestamp, embedding and category are kept.
+   * Used by memory_maintain(action="import") / import_memories so a JSON export
+   * round-trips without every record being re-minted with a new ULID and "now".
+   * An embedding is generated only when the record carries none.
+   */
+  async importMemory(memory: MemoryEntry): Promise<MemoryEntry> {
+    if (!memory.id || !memory.content) {
+      throw new Error('importMemory requires id and content');
+    }
+    const embedding =
+      memory.embedding && memory.embedding.length > 0
+        ? memory.embedding
+        : await generateEmbedding(memory.content);
+    const entry: MemoryEntry = {
+      ...memory,
+      timestamp: memory.timestamp || Date.now(),
+      summary: memory.summary || this.generateSummary(memory.content),
+      tags: memory.tags || [],
+      importance: memory.importance ?? 5,
+      embedding,
+      is_global: memory.is_global || false,
+      workspace_id: memory.is_global ? '' : this.workspaceId,
+    };
+    await this.writeMemory(entry, entry.ttl_seconds, false);
+    return entry;
   }
 
   async createMemories(memories: CreateMemory[]): Promise<MemoryEntry[]> {

@@ -151,10 +151,8 @@ export async function importMemories(
         await store.updateMemory(memoryData.id, createData);
         results.overwritten++;
       } else {
-        // For new imports, we'll create with the original ID by directly manipulating
-        // We need to recreate the memory with its original ID
-        // This is a special case for imports
-        // TODO: importedMemory isn't used - should it be removed?
+        // Keep the export's id/timestamp/embedding/category: a migration must round-trip
+        // without every record being re-minted with a new ULID and "now".
         const importedMemory: MemoryEntry = {
           id: memoryData.id,
           timestamp: memoryData.timestamp || Date.now(),
@@ -169,16 +167,9 @@ export async function importMemories(
           expires_at: memoryData.expires_at,
           workspace_id: '',
           is_global: false,
+          category: memoryData.category,
         };
-
-        // If we need to regenerate embeddings, create normally
-        if (args.regenerate_embeddings) {
-          await store.createMemory(createData);
-        } else {
-          // Direct import preserving ID and embedding - we'll need a special method
-          // For now, create normally (this will generate new ID)
-          await store.createMemory(createData);
-        }
+        await store.importMemory(importedMemory);
         results.imported++;
       }
     } catch (error) {

@@ -11,7 +11,8 @@ export class ValkeyClientProvider implements IStorageClientProvider {
       const databaseId = Number(process.env.VALKEY_DB) || 0;
       ValkeyClientProvider.client = await GlideClient.createClient({
         addresses: [{ host: valkeyHost, port: valkeyPort }],
-        databaseId: databaseId
+        databaseId: databaseId,
+        clientName: "recall_vector_store_client",
       });
     }
 

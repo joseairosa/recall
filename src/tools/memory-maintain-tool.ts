@@ -9,6 +9,7 @@ import {
   getConsolidationService,
   getConsolidationStore,
 } from "./consolidation-tools.js";
+import { flattenUnionSchema } from "./schema-utils.js";
 import {
   exportMemories,
   importMemories,
@@ -32,7 +33,7 @@ export const memory_maintain = {
     "Actions: consolidate (auto-merge similar if needed), force (force consolidation), " +
     "status (check consolidation status), export (backup to JSON), import (restore from JSON), " +
     "find_duplicates (detect and optionally merge duplicates), merge (manually merge memories).",
-  inputSchema: zodToJsonSchema(MemoryMaintainActionSchema),
+  inputSchema: flattenUnionSchema(zodToJsonSchema(MemoryMaintainActionSchema)),
   handler: async (args: unknown) => {
     try {
       const parsed = MemoryMaintainActionSchema.parse(args);

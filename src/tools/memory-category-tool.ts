@@ -6,6 +6,7 @@
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { MemoryStore } from "../persistence/memory-store.js";
 import { MemoryCategoryActionSchema } from "../types.js";
+import { flattenUnionSchema } from "./schema-utils.js";
 
 let _store: MemoryStore | null = null;
 
@@ -32,7 +33,7 @@ export const memory_category = {
     "Manage memory categories. " +
     "Actions: set (assign category to a memory), list (all categories with counts), " +
     "get (memories in a specific category).",
-  inputSchema: zodToJsonSchema(MemoryCategoryActionSchema),
+  inputSchema: flattenUnionSchema(zodToJsonSchema(MemoryCategoryActionSchema)),
   handler: async (args: unknown) => {
     try {
       const store = getStore();

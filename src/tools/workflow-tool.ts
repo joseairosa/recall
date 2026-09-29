@@ -7,6 +7,7 @@
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { getWorkflowService } from "./workflow-tools.js";
 import { WorkflowActionSchema } from "../types.js";
+import { flattenUnionSchema } from "./schema-utils.js";
 
 function ok(data: unknown) {
   return {
@@ -23,7 +24,7 @@ export const workflow = {
     "Actions: start (begin a new workflow), complete (finish and summarize), " +
     "pause (suspend without completing), resume (re-activate paused), " +
     "active (get current workflow), list (all workflows), context (get resumable context).",
-  inputSchema: zodToJsonSchema(WorkflowActionSchema),
+  inputSchema: flattenUnionSchema(zodToJsonSchema(WorkflowActionSchema)),
   handler: async (args: unknown) => {
     try {
       const service = getWorkflowService();

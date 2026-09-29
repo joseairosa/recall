@@ -7,4 +7,19 @@ describe('memory_template tool definition', () => {
     expect(memory_template.inputSchema).toBeTruthy();
     expect(typeof memory_template.handler).toBe('function');
   });
+
+  it('should have type:object at root with action enum', () => {
+    const schema = memory_template.inputSchema as Record<string, unknown>;
+    expect(schema.type).toBe('object');
+    expect(schema.anyOf).toBeUndefined();
+
+    const props = schema.properties as Record<string, Record<string, unknown>>;
+    expect(props.action).toBeTruthy();
+    expect(props.action.type).toBe('string');
+    expect(props.action.enum).toEqual(
+      expect.arrayContaining(['create', 'use', 'list']),
+    );
+
+    expect(schema.required).toContain('action');
+  });
 });

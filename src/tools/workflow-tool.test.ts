@@ -8,12 +8,20 @@ describe('workflow tool definition', () => {
     expect(typeof workflow.handler).toBe('function');
   });
 
-  it('should have action in inputSchema', () => {
+  it('should have type:object at root with action enum', () => {
     const schema = workflow.inputSchema as Record<string, unknown>;
-    const variants = (schema.oneOf ?? schema.anyOf) as Array<Record<string, unknown>>;
-    expect(Array.isArray(variants)).toBe(true);
-    const first = variants[0] as Record<string, unknown>;
-    const props = first.properties as Record<string, unknown>;
+    expect(schema.type).toBe('object');
+    expect(schema.anyOf).toBeUndefined();
+
+    const props = schema.properties as Record<string, Record<string, unknown>>;
     expect(props.action).toBeTruthy();
+    expect(props.action.type).toBe('string');
+    expect(props.action.enum).toEqual(
+      expect.arrayContaining([
+        'start', 'complete', 'pause', 'resume', 'active', 'list', 'context',
+      ]),
+    );
+
+    expect(schema.required).toContain('action');
   });
 });

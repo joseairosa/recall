@@ -7,6 +7,7 @@
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { MemoryStore } from "../persistence/memory-store.js";
 import { MemoryGraphActionSchema } from "../types.js";
+import { flattenUnionSchema } from "./schema-utils.js";
 
 let _store: MemoryStore | null = null;
 
@@ -33,7 +34,7 @@ export const memory_graph = {
     "Manage memory relationships and version history. " +
     "Actions: link (create relationship), unlink (remove), related (get linked memories), " +
     "graph (visualize network), history (version log), rollback (restore version).",
-  inputSchema: zodToJsonSchema(MemoryGraphActionSchema),
+  inputSchema: flattenUnionSchema(zodToJsonSchema(MemoryGraphActionSchema)),
   handler: async (args: unknown) => {
     try {
       const store = getStore();

@@ -9,6 +9,7 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 import { getRLMService, getRLMStore } from "./rlm-tools.js";
 import { detectSuggestedStrategy } from "./rlm-utils.js";
 import { RLMProcessActionSchema } from "../types.js";
+import { flattenUnionSchema } from "./schema-utils.js";
 
 function ok(data: unknown) {
   return {
@@ -25,7 +26,7 @@ export const rlm_process = {
     "Actions: check (should you use RLM?), create (execution context), decompose (split into subtasks), " +
     "inject (get context snippet), update (save subtask result), merge (combine results), " +
     "verify (cross-check answer), status (check progress).",
-  inputSchema: zodToJsonSchema(RLMProcessActionSchema),
+  inputSchema: flattenUnionSchema(zodToJsonSchema(RLMProcessActionSchema)),
   handler: async (args: unknown) => {
     try {
       const parsed = RLMProcessActionSchema.parse(args);

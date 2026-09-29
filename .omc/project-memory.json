@@ -1,0 +1,184 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1773195018651,
+  "projectRoot": "/Users/dennis.won/projects/recall",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": ">=18",
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      },
+      {
+        "name": "TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "tsconfig.json"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "express",
+        "version": "5.2.1",
+        "category": "backend"
+      },
+      {
+        "name": "vitest",
+        "version": "4.0.17",
+        "category": "testing"
+      }
+    ],
+    "packageManager": "npm",
+    "runtime": "Node.js 18"
+  },
+  "build": {
+    "buildCommand": "npm run build",
+    "testCommand": "npm test",
+    "lintCommand": null,
+    "devCommand": "npm run dev",
+    "scripts": {
+      "build": "tsup",
+      "dev": "tsup --watch",
+      "start": "node dist/index.js",
+      "start:http": "node dist/server-http.js",
+      "prepare": "npm run build",
+      "test": "vitest run",
+      "test:watch": "vitest",
+      "test:coverage": "vitest run --coverage"
+    }
+  },
+  "conventions": {
+    "namingStyle": "camelCase",
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs",
+      "scripts",
+      "src",
+      "tests"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "ai_docs": {
+      "path": "ai_docs",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1773195018604,
+      "keyFiles": [
+        "ROADMAP.md"
+      ]
+    },
+    "claude-plugin": {
+      "path": "claude-plugin",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1773195018605,
+      "keyFiles": [
+        "README.md"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 0,
+      "lastAccessed": 1773195018618,
+      "keyFiles": []
+    },
+    "scripts": {
+      "path": "scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 3,
+      "lastAccessed": 1773195018619,
+      "keyFiles": [
+        "import-local-to-production.js",
+        "install-plugin.sh",
+        "uninstall-plugin.sh"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 24,
+      "lastAccessed": 1773195018619,
+      "keyFiles": [
+        "index.ts",
+        "server-http.ts",
+        "types-actions.test.ts",
+        "types-actions.ts",
+        "types-consolidation.test.ts"
+      ]
+    },
+    "tests": {
+      "path": "tests",
+      "purpose": "Test files",
+      "fileCount": 13,
+      "lastAccessed": 1773195018619,
+      "keyFiles": [
+        "README.md",
+        "TEST-RESULTS-v1.5.0.md",
+        "test-relationships-vr.ts",
+        "test-relationships.js",
+        "test-runtime.js"
+      ]
+    },
+    "web": {
+      "path": "web",
+      "purpose": null,
+      "fileCount": 8,
+      "lastAccessed": 1773195018620,
+      "keyFiles": [
+        "next-env.d.ts",
+        "next.config.ts",
+        "package-lock.json",
+        "package.json",
+        "postcss.config.mjs"
+      ]
+    },
+    "claude-plugin/scripts": {
+      "path": "claude-plugin/scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 8,
+      "lastAccessed": 1773195018623,
+      "keyFiles": [
+        "compact-restore.sh",
+        "observe.sh",
+        "pre-compact.sh"
+      ]
+    },
+    "src/services": {
+      "path": "src/services",
+      "purpose": "Business logic services",
+      "fileCount": 7,
+      "lastAccessed": 1773195018636,
+      "keyFiles": [
+        "consolidation.service.test.ts",
+        "consolidation.service.ts",
+        "index.ts"
+      ]
+    },
+    "web/src": {
+      "path": "web/src",
+      "purpose": "Source code",
+      "fileCount": 0,
+      "lastAccessed": 1773195018637,
+      "keyFiles": []
+    }
+  },
+  "hotPaths": [],
+  "userDirectives": []
+}

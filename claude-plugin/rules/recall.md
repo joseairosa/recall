@@ -14,7 +14,7 @@ On every session start, **before any user tasks**, call these two tools in order
    ```
    mcp__recall-remote__set_workspace({ path: "<project-path>", git_remote: "<git-remote-url or empty>" })
    ```
-   Get `<project-path>` from the working directory. Get `<git-remote-url>` via `git config --get remote.origin.url` (skip if not a git repo).
+   Get `<project-path>` from the project root, not whichever subfolder you are in: `git rev-parse --show-toplevel` in the folder Claude Code was started in (for a worktree, the main checkout: the folder that holds `git rev-parse --git-common-dir`), or that folder itself outside git. Get `<git-remote-url>` via `git config --get remote.origin.url` (skip if not a git repo), without any `user:token@` part.
 
 2. **Load context** — retrieve past decisions, directives, and patterns:
    ```

@@ -40,13 +40,16 @@ fi
 # All three must hold:
 #   - Claude Code 2.1.287 or later (the "version" Claude Code passes on stdin);
 #   - the mods rollout flag Claude Code caches in .claude.json is on;
-#   - an enabled recall plugin at 1.18.0 or later with hooks/register.js: user scope, a project or local scope
-#     for this session's folder, or the plugin tree this script runs from (--plugin-dir).
+#   - a recall plugin at 1.18.0 or later with hooks/register.js that Claude Code really loads: an enabled install
+#     in installed_plugins.json (user scope, or a project or local scope for this session's folder), or a folder
+#     listed in CLAUDE_CODE_PLUGIN_DIRS (Claude Code's own variable for loading plugin folders, as --plugin-dir
+#     does). The folder this script runs from never counts by itself: a curl install's tree is not loaded as a
+#     plugin, even if a hooks/register.js ever lands in it.
 # Otherwise (older Claude Code, mods off, no such install) the segment stays as before. No heartbeat here:
 # observe.sh keeps its heartbeat check, because recording errors must fail open; this is only display.
 MOD_DRAWS=false
 if command -v python3 &>/dev/null; then
-  _mod="$(printf '%s' "${STDIN_DATA}" | _RS_DIR="${SCRIPT_DIR}" python3 -c '
+  _mod="$(printf '%s' "${STDIN_DATA}" | python3 -c '
 import json, os, sys
 
 def ver(v):
@@ -77,10 +80,11 @@ if load(claude_json).get("cachedGrowthBookFeatures", {}).get("tengu_plugin_hooks
 def has_mod(root, version):
     return ver(version) >= (1, 18, 0) and os.path.isfile(os.path.join(root, "hooks", "register.js"))
 
-own = os.path.dirname(os.environ.get("_RS_DIR", ""))
-if has_mod(own, load(os.path.join(own, ".claude-plugin", "plugin.json")).get("version", "")):
-    print("yes")
-    sys.exit()
+for d in filter(None, os.environ.get("CLAUDE_CODE_PLUGIN_DIRS", "").replace(";", ":").split(":")):
+    manifest = load(os.path.join(d, ".claude-plugin", "plugin.json"))
+    if manifest.get("name") == "recall" and has_mod(d, manifest.get("version", "")):
+        print("yes")
+        sys.exit()
 folder = os.path.realpath((stdin.get("workspace") or {}).get("project_dir") or stdin.get("cwd") or os.getcwd())
 enabled = load(os.path.join(config_dir, "settings.json")).get("enabledPlugins", {})
 for plugin_id, entries in load(os.path.join(config_dir, "plugins", "installed_plugins.json")).get("plugins", {}).items():

@@ -73,7 +73,7 @@ A mod's MCP call asks for permission like any other. The mod makes one only for 
 
 While it runs it refreshes `~/.claude/recall/mod-heartbeat-<session id>` every 15 seconds. `observe.sh` stands down only while that file is fresh, and takes over again if the mod stops.
 
-Recall shows once: `statusline.sh` leaves its Recall segment out, from the first render, when Claude Code is 2.1.287 or later, the mods rollout flag Claude Code caches in `.claude.json` is on, and an enabled recall plugin at 1.18.0 or later carries `hooks/register.js`. Otherwise the segment shows as before. VS Code's chat panel, `claude -p`, older Claude Code, `--bare` and `--safe-mode` do not run mods, so the scripts work there as before.
+Recall shows once: `statusline.sh` leaves its Recall segment out, from the first render, when Claude Code is 2.1.287 or later, the mods rollout flag Claude Code caches in `.claude.json` is on, and Claude Code loads a recall plugin at 1.18.0 or later with `hooks/register.js` (an enabled install, or a folder in `CLAUDE_CODE_PLUGIN_DIRS`). Otherwise the segment shows as before. VS Code's chat panel, `claude -p`, older Claude Code, `--bare` and `--safe-mode` do not run mods, so the scripts work there as before.
 
 Getting it on an existing install (nothing else to install):
 

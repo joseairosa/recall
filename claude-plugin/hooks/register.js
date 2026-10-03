@@ -167,11 +167,8 @@ function ago(ms) {
 const NAME_COLUMNS = 9
 /** Recall's colour for its name in the band, from the shared design. */
 const RECALL_COLOUR = '#9db8f2'
-/**
- * Cells between the terminal's edge and the band, the status line's left inset.
- * SHORTCUT: 0 until FlockTab1's capture gives the exact number; a non-zero value adds a padding prop to the row.
- */
-const LEFT_INSET = 0
+/** Cells between the terminal's edge and the row: where Claude Code 2.1.288 starts the status line (measured). */
+const LEFT_INSET = 2
 /** Narrower than this, the detail keeps only its first part ("3 saved"). */
 const WIDE_COLUMNS = 100
 
@@ -291,6 +288,6 @@ export function bandTree({ Box, Text }, row, theirs) {
   ]
   if (row.detail.length) parts.push(Text({ dimColor: true, children: ['· ' + row.detail.join(' · ')] }))
   if (row.warning.length) parts.push(Text({ color: 'yellow', children: ['· ' + row.warning.join(' · ')] }))
-  const mine = Box({ flexDirection: 'row', gap: 1, ...(LEFT_INSET > 0 ? { paddingLeft: LEFT_INSET } : {}), children: parts })
+  const mine = Box({ flexDirection: 'row', gap: 1, paddingLeft: LEFT_INSET, children: parts })
   return Box({ flexDirection: 'column', children: theirs ? [mine, theirs] : [mine] })
 }

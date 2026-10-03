@@ -34,22 +34,65 @@ else
 fi
 
 # --- Recall's Claude Code mod draws the Recall line above the prompt ---
-# hooks/register.js (Claude Code 2.1.287+) refreshes ~/.claude/recall/mod-heartbeat-<session id> every 15 s.
-# While it is fresh the mod shows Recall's line, so this script skips its Recall segment and the /api/status
-# call. A stale heartbeat (the mod unloaded) brings the segment back.
+# Recall shows once. When this Claude Code runs mods, Recall's mod (hooks/register.js, 1.18.0+) draws Recall's
+# line above the prompt, so this script leaves its Recall segment and the /api/status call out, from the very
+# first render (the status line renders before the mod's first heartbeat and does not refresh while idle).
+# All three must hold:
+#   - Claude Code 2.1.287 or later (the "version" Claude Code passes on stdin);
+#   - the mods rollout flag Claude Code caches in .claude.json is on;
+#   - an enabled recall plugin at 1.18.0 or later with hooks/register.js: user scope, a project or local scope
+#     for this session's folder, or the plugin tree this script runs from (--plugin-dir).
+# Otherwise (older Claude Code, mods off, no such install) the segment stays as before. No heartbeat here:
+# observe.sh keeps its heartbeat check, because recording errors must fail open; this is only display.
 MOD_DRAWS=false
-if command -v jq &>/dev/null; then
-  _session_id="$(printf '%s' "${STDIN_DATA}" | jq -r '.session_id // empty' 2>/dev/null || true)"
-elif command -v python3 &>/dev/null; then
-  _session_id="$(printf '%s' "${STDIN_DATA}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('session_id',''),end='')" 2>/dev/null || true)"
-else
-  _session_id=""
-fi
-if [[ "${_session_id}" =~ ^[A-Za-z0-9_-]+$ ]]; then
-  _beat="$(cat "${HOME}/.claude/recall/mod-heartbeat-${_session_id}" 2>/dev/null || true)"
-  if [[ "${_beat}" =~ ^[0-9]+$ ]] && (( $(date +%s) - _beat < 45 )); then
-    MOD_DRAWS=true
-  fi
+if command -v python3 &>/dev/null; then
+  _mod="$(printf '%s' "${STDIN_DATA}" | _RS_DIR="${SCRIPT_DIR}" python3 -c '
+import json, os, sys
+
+def ver(v):
+    try:
+        return tuple(int(p) for p in str(v).split("-")[0].split(".")[:3])
+    except ValueError:
+        return (0,)
+
+def load(path):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+try:
+    stdin = json.load(sys.stdin)
+except Exception:
+    stdin = {}
+if ver(stdin.get("version", "")) < (2, 1, 287):
+    sys.exit()
+home = os.path.expanduser("~")
+config_dir = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
+claude_json = os.path.join(os.environ["CLAUDE_CONFIG_DIR"], ".claude.json") if os.environ.get("CLAUDE_CONFIG_DIR") else os.path.join(home, ".claude.json")
+if load(claude_json).get("cachedGrowthBookFeatures", {}).get("tengu_plugin_hooks_modules") is not True:
+    sys.exit()
+
+def has_mod(root, version):
+    return ver(version) >= (1, 18, 0) and os.path.isfile(os.path.join(root, "hooks", "register.js"))
+
+own = os.path.dirname(os.environ.get("_RS_DIR", ""))
+if has_mod(own, load(os.path.join(own, ".claude-plugin", "plugin.json")).get("version", "")):
+    print("yes")
+    sys.exit()
+folder = os.path.realpath((stdin.get("workspace") or {}).get("project_dir") or stdin.get("cwd") or os.getcwd())
+enabled = load(os.path.join(config_dir, "settings.json")).get("enabledPlugins", {})
+for plugin_id, entries in load(os.path.join(config_dir, "plugins", "installed_plugins.json")).get("plugins", {}).items():
+    if not plugin_id.startswith("recall@") or enabled.get(plugin_id) is False:
+        continue
+    for e in entries if isinstance(entries, list) else []:
+        here = e.get("scope") == "user" or (e.get("projectPath") and os.path.realpath(e["projectPath"]) == folder)
+        if here and has_mod(e.get("installPath", ""), e.get("version", "")):
+            print("yes")
+            sys.exit()
+' 2>/dev/null || true)"
+  [[ "${_mod}" == "yes" ]] && MOD_DRAWS=true
 fi
 
 # --- Read version, API key, server URL, and previous command from config.json ---

@@ -64,14 +64,16 @@ Connects to the Recall MCP server at recallmcp.com (or self-hosted). Provides 21
 
 `hooks/hooks.json` names `register.js` under `modules`, so Claude Code runs it inside its own process. In the terminal and the Desktop app it:
 
-- draws Recall's line in the band above the prompt, next to other plugins' lines:
-  `🧠 Recall 1.18.0 · 2 stored · workspace confirmed · stored a memory (5s ago)`
+- draws Recall's row in the band above the prompt: its name in bold, the workspace, then dim detail. The row stands on its own, with or without other plugins' rows:
+  `Recall    agentspend · 3 saved this session · 1.18`
 - records a failing shell command (as `observe.sh` does) without starting a script for each one;
 - confirms the workspace and runs a Recall call once more when it fails because the session lost its workspace.
 
 A mod's MCP call asks for permission like any other. The mod makes one only for the retry, so it asks for `set_workspace` the first time a session loses its workspace, unless that is allowed. To allow it, add `"mcp__recall-remote__set_workspace"` to `permissions.allow` in your settings. Until Claude calls `set_workspace` at session start, the band says "workspace not confirmed".
 
-While it runs it refreshes `~/.claude/recall/mod-heartbeat-<session id>` every 15 seconds. `observe.sh` and the Recall segment of `statusline.sh` stand down only while that file is fresh, and take over again if the mod stops. VS Code's chat panel, `claude -p`, older Claude Code, `--bare` and `--safe-mode` do not run mods, so the scripts work there as before.
+While it runs it refreshes `~/.claude/recall/mod-heartbeat-<session id>` every 15 seconds. `observe.sh` stands down only while that file is fresh, and takes over again if the mod stops.
+
+Recall shows once: `statusline.sh` leaves its Recall segment out, from the first render, when Claude Code is 2.1.287 or later, the mods rollout flag Claude Code caches in `.claude.json` is on, and an enabled recall plugin at 1.18.0 or later carries `hooks/register.js`. Otherwise the segment shows as before. VS Code's chat panel, `claude -p`, older Claude Code, `--bare` and `--safe-mode` do not run mods, so the scripts work there as before.
 
 Getting it on an existing install (nothing else to install):
 

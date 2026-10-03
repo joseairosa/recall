@@ -4,11 +4,12 @@
 // In Claude Code's own process, it:
 // - records a failing shell command (what scripts/observe.sh records), without starting a process per tool call;
 // - confirms the workspace when a Recall call fails because the session lost it, and runs that call once more;
-// - draws Recall's line in the band above the prompt, beside other mods' lines (scripts/statusline.sh's segment).
+// - draws Recall's row in the band above the prompt, beside other mods' rows (scripts/statusline.sh's segment).
 //
 // While the mod runs it refreshes a heartbeat file for its session, ~/.claude/recall/mod-heartbeat-<session id>.
-// observe.sh and statusline.sh stand down only while that heartbeat is fresh, so a mod that unloads mid-session
-// (a reload error, a crash, a policy change) leaves the scripts in charge again within HEARTBEAT_FRESH_S.
+// observe.sh stands down only while that heartbeat is fresh, so a mod that unloads mid-session (a reload error, a
+// crash, a policy change) leaves it in charge again. statusline.sh decides from what is installed instead (1.18.1):
+// where this mod draws, it leaves the Recall segment out from the first render.
 //
 // The API key is read from ~/.claude/recall/config.json (or RECALL_API_KEY) and only ever goes in the
 // Authorization header: nothing here logs it, draws it or returns it to Claude.
@@ -160,16 +161,37 @@ function ago(ms) {
   return s < 2 ? 'just now' : s < 60 ? s + 's ago' : Math.round(s / 60) + 'm ago'
 }
 
-/** The band's line, from what the mod knows now. */
-export function bandLine(state) {
-  const parts = ['Recall ' + (state.version || '')]
-  if (state.stored > 0) parts[0] += ' · ' + state.stored + ' stored'
-  parts.push(state.confirmed ? 'workspace confirmed' : 'workspace not confirmed')
-  if (state.activity && state.now - state.activity.at < 60_000) parts.push(state.activity.label + ' (' + ago(state.now - state.activity.at) + ')')
-  if (state.queued > 0) parts.push(state.queued + ' waiting')
-  if (state.latest && state.version && newer(state.latest, state.version)) parts.push('⬆ ' + state.latest + ': /plugin update recall')
-  if (state.error) parts.push(state.error)
-  return '🧠 ' + parts.join(' · ')
+// The band's ledger layout, shared with FlockTab's and Foley's rows (design "A · Ledger", picked 2026-10-03): one row
+// per product, the name in a fixed column, then the product's key value, then dim detail joined by " · ".
+/** The name column, in terminal cells, so every product's key value lines up down the band. */
+const NAME_COLUMNS = 9
+/** Recall's colour for its name in the band, from the shared design. */
+const RECALL_COLOUR = '#9db8f2'
+/**
+ * Cells between the terminal's edge and the band, the status line's left inset.
+ * SHORTCUT: 0 until FlockTab1's capture gives the exact number; a non-zero value adds a padding prop to the row.
+ */
+const LEFT_INSET = 0
+/** Narrower than this, the detail keeps only its first part ("3 saved"). */
+const WIDE_COLUMNS = 100
+
+/**
+ * Recall's row, from what the mod knows now: the workspace's name as the key value, then detail. A warning only
+ * when something failed (a store did not reach Recall, Recall unreachable). Nothing about the workspace before
+ * Claude confirms it: "not confirmed" read as an error.
+ */
+export function bandRow(state, columns = WIDE_COLUMNS) {
+  const wide = columns >= WIDE_COLUMNS
+  const detail = []
+  if (state.stored > 0) detail.push(state.stored + (wide ? ' saved this session' : ' saved'))
+  if (wide && state.activity && state.now - state.activity.at < 60_000) detail.push(state.activity.label + ' (' + ago(state.now - state.activity.at) + ')')
+  if (wide && state.version) detail.push(String(state.version).split('.').slice(0, 2).join('.'))
+  if (state.latest && state.version && newer(state.latest, state.version)) detail.push((wide ? 'update ' + state.latest + ': ' : '') + '/plugin update recall')
+  const warning = []
+  if (state.queued > 0) warning.push(state.queued + ' waiting')
+  if (state.error) warning.push(state.error)
+  const key = String((state.workspace && state.workspace.path) || '').split('/').filter(Boolean).pop() || 'no workspace'
+  return { key, detail: wide ? detail : detail.slice(0, 1), warning }
 }
 
 export function register(on) {
@@ -246,20 +268,29 @@ export function register(on) {
     return out
   })
 
-  // Recall's line in the band above the prompt; the lines other mods draw there stay.
+  // Recall's row in the band above the prompt. It stands on its own: no other mod has to be there, and the rows
+  // other mods draw stay, above or below it in whatever order the chain gives.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const theirs = await next(e)
     if (!config || !config.apiKey) return theirs
-    const line = bandLine({ version, stored, confirmed, activity, now: await $.clock.now(), queued: queue.length, latest, error: lastError })
-    return bandTree($.ui.resolve(e), line, Boolean(lastError), theirs)
+    const columns = (e.props && e.props.bodyColumns) || (e.viewport && e.viewport.columns) || WIDE_COLUMNS
+    const row = bandRow({ version, stored, workspace, activity, now: await $.clock.now(), queued: queue.length, latest, error: lastError }, columns)
+    return bandTree($.ui.resolve(e), row, theirs)
   })
 }
 
 /**
- * The band's tree. Only props from the reference's Elements table (Text: color, dimColor; Box: flex layout): the
- * engine refuses a whole tree with one prop an element does not take, such as `key` on Text.
+ * Recall's row as a tree: the name in its own column, the key value, the dim detail, and a warning only for a
+ * failure. Only props from the reference's Elements table (Text: color, bold, dimColor; Box: flex layout, width,
+ * gap, padding): the engine refuses a whole tree with one prop an element does not take, such as `key` on Text.
  */
-export function bandTree({ Box, Text }, line, warn, theirs) {
-  const mine = warn ? Text({ color: 'yellow', children: [line] }) : Text({ dimColor: true, children: [line] })
+export function bandTree({ Box, Text }, row, theirs) {
+  const parts = [
+    Box({ width: NAME_COLUMNS, children: [Text({ bold: true, color: RECALL_COLOUR, children: ['Recall'] })] }),
+    Text({ children: [row.key] }),
+  ]
+  if (row.detail.length) parts.push(Text({ dimColor: true, children: ['· ' + row.detail.join(' · ')] }))
+  if (row.warning.length) parts.push(Text({ color: 'yellow', children: ['· ' + row.warning.join(' · ')] }))
+  const mine = Box({ flexDirection: 'row', gap: 1, ...(LEFT_INSET > 0 ? { paddingLeft: LEFT_INSET } : {}), children: parts })
   return Box({ flexDirection: 'column', children: theirs ? [mine, theirs] : [mine] })
 }

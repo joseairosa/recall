@@ -295,7 +295,7 @@ INSTALLED_VERSION="${INSTALLED_VERSION:-1.0.0}"
 # Self-heal: if the running script is newer than plugin.json (e.g. background update
 # downloaded new scripts but plugin.json write failed), update plugin.json immediately
 # so version detection is always accurate. SCRIPT_VERSION must match every release.
-SCRIPT_VERSION="1.18.2"
+SCRIPT_VERSION="1.18.3"
 if "${IS_PLUGIN_INSTALL}"; then
   _PLUGIN_JSON="${SCRIPT_DIR}/../.claude-plugin/plugin.json"
   if [[ -f "${_PLUGIN_JSON}" ]]; then
@@ -321,6 +321,55 @@ except Exception: pass
       fi
       INSTALLED_VERSION="${SCRIPT_VERSION}"
     fi
+  fi
+fi
+
+# ─── Keep the standalone tree in step with this plugin ───────────────────────
+# A settings statusLine set up before the marketplace plugin runs ~/.claude/plugins/recall/scripts/statusline.sh,
+# a separate tree that nothing else updates once the plugin itself is current (the background update below runs
+# only when the server has a newer version). An older tree there would keep printing the Recall segment where the
+# mod already draws Recall's line. So whenever that tree is older than this plugin, copy this plugin's scripts into
+# it, in the background. Only plugin installs do this, and only into that one folder.
+_STANDALONE_TREE="${HOME}/.claude/plugins/recall"
+if "${IS_PLUGIN_INSTALL}" && [[ -d "${_STANDALONE_TREE}/scripts" ]] && [[ "${_STANDALONE_TREE}/scripts" != "${SCRIPT_DIR}" ]]; then
+  _tree_version=""
+  if command -v python3 &>/dev/null; then
+    # The path goes in through the environment, never into the code, so a HOME with a quote in it cannot change it.
+    _tree_version="$(_PJ="${_STANDALONE_TREE}/.claude-plugin/plugin.json" python3 -c "import json, os; print(json.load(open(os.environ['_PJ'])).get('version',''))" 2>/dev/null || true)"
+  elif command -v jq &>/dev/null; then
+    _tree_version="$(jq -r '.version // empty' "${_STANDALONE_TREE}/.claude-plugin/plugin.json" 2>/dev/null || true)"
+  fi
+  # Never downgrade: only a tree older than this plugin is touched.
+  if _recall_version_newer "${SCRIPT_VERSION}" "${_tree_version:-0.0.0}"; then
+    (
+      # Each file is written next to its target and renamed over it, so a status line that runs mid-copy reads
+      # either the old file or the new one, never half of one. plugin.json goes last.
+      _put() { cp "$1" "$2.tmp.$$" 2>/dev/null && chmod +x "$2.tmp.$$" 2>/dev/null && mv -f "$2.tmp.$$" "$2" 2>/dev/null || rm -f "$2.tmp.$$"; }
+      for _sf in session-start.sh observe.sh statusline.sh stop.sh stop-summarize.sh pre-compact.sh compact-restore.sh session-end.sh; do
+        [[ -f "${SCRIPT_DIR}/${_sf}" ]] && _put "${SCRIPT_DIR}/${_sf}" "${_STANDALONE_TREE}/scripts/${_sf}"
+      done
+      if [[ -f "${SCRIPT_DIR}/lib/config.sh" ]]; then
+        mkdir -p "${_STANDALONE_TREE}/scripts/lib" 2>/dev/null || true
+        _put "${SCRIPT_DIR}/lib/config.sh" "${_STANDALONE_TREE}/scripts/lib/config.sh"
+      fi
+      if [[ -f "${_STANDALONE_TREE}/.claude-plugin/plugin.json" ]] && command -v python3 &>/dev/null; then
+        _NV="${SCRIPT_VERSION}" _PJ="${_STANDALONE_TREE}/.claude-plugin/plugin.json" python3 -c "
+import json, os
+pj = os.environ['_PJ']; v = os.environ['_NV']; tmp = pj + '.tmp.' + str(os.getpid())
+try:
+    d = json.load(open(pj)); d['version'] = v
+    with open(tmp, 'w') as f:
+        json.dump(d, f, indent=2)
+    os.replace(tmp, pj)
+except Exception:
+    try:
+        os.remove(tmp)
+    except OSError:
+        pass
+" 2>/dev/null || true
+      fi
+    ) >/dev/null 2>&1 &
+    disown $! 2>/dev/null || true
   fi
 fi
 

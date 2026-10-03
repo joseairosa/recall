@@ -295,7 +295,7 @@ INSTALLED_VERSION="${INSTALLED_VERSION:-1.0.0}"
 # Self-heal: if the running script is newer than plugin.json (e.g. background update
 # downloaded new scripts but plugin.json write failed), update plugin.json immediately
 # so version detection is always accurate. SCRIPT_VERSION must match every release.
-SCRIPT_VERSION="1.17.3"
+SCRIPT_VERSION="1.18.0"
 if "${IS_PLUGIN_INSTALL}"; then
   _PLUGIN_JSON="${SCRIPT_DIR}/../.claude-plugin/plugin.json"
   if [[ -f "${_PLUGIN_JSON}" ]]; then
@@ -326,6 +326,10 @@ fi
 
 # ─── State file (shared with observe.sh) ─────────────────────────────────────
 STATE_FILE="${HOME}/.claude/recall/state.json"
+
+# Heartbeats of Recall's Claude Code mod (hooks/register.js), one per session: a day after the last beat the
+# session is long gone, so the file goes too.
+find "${HOME}/.claude/recall" -maxdepth 1 -name 'mod-heartbeat-*' -type f -mtime +1 -delete 2>/dev/null || true
 
 # ─── Update check (every session, synchronous, 2s timeout) ───────────────────
 # Runs on every session start so updates are picked up immediately after deploy.
@@ -524,6 +528,45 @@ except Exception: pass
     echo ">   or set auto_update: false in ~/.claude/recall/config.json"
   fi
   echo ""
+fi
+
+# ─── The mod needs a plugin update (once per version) ────────────────────────
+# From 1.18.0 the plugin carries a Claude Code mod (hooks/register.js). The background update above
+# downloads scripts only, never code that runs inside Claude Code, so a plugin tree at 1.18.0 or later
+# without register.js has the new scripts but not the mod. Say how to get it, once per version.
+if "${IS_PLUGIN_INSTALL}" && [[ ! -f "${SCRIPT_DIR}/../hooks/register.js" ]] \
+  && ! _recall_version_newer "1.18.0" "${INSTALLED_VERSION}"; then
+  _mod_notice_for=""
+  if [[ -f "${STATE_FILE}" ]]; then
+    if command -v jq &>/dev/null; then
+      _mod_notice_for="$(jq -r '.mod_notice_for // empty' "${STATE_FILE}" 2>/dev/null || true)"
+    elif command -v python3 &>/dev/null; then
+      _mod_notice_for="$(python3 -c "import json; print(json.load(open('${STATE_FILE}')).get('mod_notice_for',''))" 2>/dev/null || true)"
+    fi
+  fi
+  if [[ "${_mod_notice_for}" != "${INSTALLED_VERSION}" ]]; then
+    echo "> 🧠 Recall ${INSTALLED_VERSION} shows its own line above the prompt on Claude Code 2.1.287 or later."
+    echo ">   It comes with a plugin update, not the background one. In a terminal:"
+    echo ">     claude plugin marketplace update recall-claude-plugin"
+    echo ">     claude plugin update recall@recall-claude-plugin"
+    echo ">   then restart Claude Code. Nothing else to install."
+    echo ""
+    if command -v python3 &>/dev/null; then
+      _V="${INSTALLED_VERSION}" _SF="${STATE_FILE}" python3 -c "
+import json, os
+sf = os.environ['_SF']
+try:
+    d = json.load(open(sf))
+except Exception:
+    d = {}
+d['mod_notice_for'] = os.environ['_V']
+json.dump(d, open(sf, 'w'))
+" 2>/dev/null || true
+    elif command -v jq &>/dev/null && [[ -f "${STATE_FILE}" ]]; then
+      _tmp="$(jq --arg v "${INSTALLED_VERSION}" '.mod_notice_for = $v' "${STATE_FILE}" 2>/dev/null || true)"
+      [[ -n "${_tmp}" ]] && echo "${_tmp}" > "${STATE_FILE}" || true
+    fi
+  fi
 fi
 
 # Reset session counter and generate a unique session name in state.json

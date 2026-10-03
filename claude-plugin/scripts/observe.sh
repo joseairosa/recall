@@ -41,6 +41,23 @@ fi
 # Only Bash failures are captured. Everything else is noise at storage time.
 [[ "${TOOL_NAME}" != "Bash" ]] && exit 0
 
+# Recall's Claude Code mod (hooks/register.js, Claude Code 2.1.287+) records these failures in process and
+# refreshes ~/.claude/recall/mod-heartbeat-<session id> every 15 s. While that heartbeat is fresh this script
+# stands down; a stale one (the mod unloaded mid-session) puts this script back in charge.
+if command -v jq &>/dev/null; then
+  SESSION_ID="$(echo "${STDIN_DATA}" | jq -r '.session_id // empty' 2>/dev/null || true)"
+elif command -v python3 &>/dev/null; then
+  SESSION_ID="$(echo "${STDIN_DATA}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('session_id',''))" 2>/dev/null || true)"
+else
+  SESSION_ID=""
+fi
+if [[ "${SESSION_ID}" =~ ^[A-Za-z0-9_-]+$ ]]; then
+  _beat="$(cat "${HOME}/.claude/recall/mod-heartbeat-${SESSION_ID}" 2>/dev/null || true)"
+  if [[ "${_beat}" =~ ^[0-9]+$ ]] && (( $(date +%s) - _beat < 45 )); then
+    exit 0
+  fi
+fi
+
 # Extract the command
 if command -v jq &>/dev/null; then
   COMMAND="$(echo "${STDIN_DATA}" | jq -r '.tool_input.command // empty' 2>/dev/null || true)"

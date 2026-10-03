@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Recall config reader — shared by all hook scripts.
-# Reads ~/.claude/recall/config.json; config.json takes priority over env vars.
+# Reads ~/.claude/recall/config.json (or the file RECALL_CONFIG_FILE names, for a test or a second account);
+# config.json takes priority over env vars.
 # Exports: RECALL_API_KEY, RECALL_SERVER_URL, RECALL_WORKSPACE, RECALL_GIT_REMOTE
 
 set -euo pipefail
 
-CONFIG_FILE="${HOME}/.claude/recall/config.json"
+CONFIG_FILE="${RECALL_CONFIG_FILE:-${HOME}/.claude/recall/config.json}"
 DEFAULT_SERVER_URL="https://recallmcp.com"
 
 # Read config file — config.json takes priority over environment variables.

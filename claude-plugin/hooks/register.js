@@ -1,0 +1,265 @@
+// Recall's Claude Code mod (Recall 1.18.0, Claude Code 2.1.287 or later; older versions do not load it and keep
+// running the scripts in ../scripts unchanged).
+//
+// In Claude Code's own process, it:
+// - records a failing shell command (what scripts/observe.sh records), without starting a process per tool call;
+// - confirms the workspace when a Recall call fails because the session lost it, and runs that call once more;
+// - draws Recall's line in the band above the prompt, beside other mods' lines (scripts/statusline.sh's segment).
+//
+// While the mod runs it refreshes a heartbeat file for its session, ~/.claude/recall/mod-heartbeat-<session id>.
+// observe.sh and statusline.sh stand down only while that heartbeat is fresh, so a mod that unloads mid-session
+// (a reload error, a crash, a policy change) leaves the scripts in charge again within HEARTBEAT_FRESH_S.
+//
+// The API key is read from ~/.claude/recall/config.json (or RECALL_API_KEY) and only ever goes in the
+// Authorization header: nothing here logs it, draws it or returns it to Claude.
+
+/** Recall's MCP server, as .mcp.json names it. */
+const SERVER = 'recall-remote'
+const DEFAULT_URL = 'https://recallmcp.com'
+/** How often the heartbeat is written and the queue is sent. */
+const TICK_MS = 15_000
+/** How often Recall's recent activity and latest version are read for the band. */
+const STATUS_MS = 30_000
+/** The most failures held while Recall cannot be reached; older ones are dropped first. */
+const QUEUE_MAX = 50
+/** The error a Recall call answers with once its session has lost the workspace (see rules/recall.md). */
+const WORKSPACE_LOST = /WORKSPACE_NOT_CONFIRMED|restored workspace/i
+/** A failing command's output, as observe.sh detects it. */
+const FAILED = /(^error:|npm ERR!|FAILED|command not found|non-zero exit|exit code [1-9])/im
+/** Recall calls that store a memory, counted in the band. */
+const STORES = /__(store_memory|quick_store_decision)$/
+
+// Shared by the hooks below; a module reload starts them again.
+let config
+let workspace
+let version = ''
+let heartbeatFile = ''
+let queue = []
+let stored = 0
+let lastError = ''
+let confirmed = false
+let activity
+let latest = ''
+
+/**
+ * The API key and the server URL: config.json first, as scripts/lib/config.sh reads them. RECALL_CONFIG_FILE names
+ * another config file, as it does for the scripts (a test, or a second account).
+ */
+async function loadConfig($) {
+  const home = await $.env.get('HOME')
+  let file = {}
+  try {
+    file = JSON.parse(await $.fs.read((await $.env.get('RECALL_CONFIG_FILE')) || home + '/.claude/recall/config.json'))
+  } catch {
+    // No config file: the environment may still hold a key.
+  }
+  const apiKey = file.api_key || (await $.env.get('RECALL_API_KEY')) || ''
+  const url = file.server_url || (await $.env.get('RECALL_SERVER_URL')) || DEFAULT_URL
+  return { home, apiKey, url: String(url).replace(/\/+$/, '') }
+}
+
+/** The git remote without a user or token in it, as lib/config.sh sends it. */
+export function cleanRemote(remote) {
+  return remote ? String(remote).replace(/^(https?:\/\/)[^/@]*@/i, '$1') : ''
+}
+
+/** The project the session files under: the repository's main working tree, or the session's root outside git. */
+async function loadWorkspace($) {
+  const repo = await $.session.repo().catch(() => null)
+  if (repo) return { path: repo.root, git_remote: cleanRemote(repo.remote) }
+  return { path: await $.session.root(), git_remote: '' }
+}
+
+/** The memory a finished shell command is worth, by observe.sh's rule: only a failure, with its output. */
+export function observation(e, result) {
+  if (e.tool !== 'Bash' || !e.command || !result || result.deny) return undefined
+  const out = result.result && typeof result.result === 'object' ? result.result.stderr || result.result.stdout || '' : result.text || ''
+  const excerpt = String(out).slice(0, 500)
+  if (!excerpt || !FAILED.test(excerpt)) return undefined
+  return { content: '[Bash error] ' + e.command.slice(0, 200) + '\nOutput: ' + excerpt.slice(0, 300), importance: 6 }
+}
+
+/** Newer by semver numbers, as statusline.sh compares. */
+export function newer(a, b) {
+  const x = String(a).split('.').map((n) => parseInt(n, 10) || 0)
+  const y = String(b).split('.').map((n) => parseInt(n, 10) || 0)
+  for (let i = 0; i < 3; i += 1) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0)
+  return false
+}
+
+function headers() {
+  return {
+    'Content-Type': 'application/json',
+    Authorization: 'Bearer ' + config.apiKey,
+    'X-Recall-Workspace': workspace ? workspace.path : '',
+    'X-Recall-Git-Remote': workspace ? workspace.git_remote : '',
+  }
+}
+
+/** Send what is queued. Runs on the timer and at session end, never on a tool's path. */
+async function flush($) {
+  if (!config || !config.apiKey || queue.length === 0) return
+  const batch = queue
+  queue = []
+  for (const [i, item] of batch.entries()) {
+    let ok = false
+    try {
+      const response = await $.http.fetch(config.url + '/api/memories', {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({ content: item.content, context_type: 'information', importance: item.importance, tags: ['auto-hook', 'bash', 'error'], is_global: false }),
+      })
+      ok = response.ok
+      lastError = ok ? '' : 'Recall answered ' + response.status
+    } catch {
+      lastError = 'Recall unreachable'
+    }
+    if (ok) stored += 1
+    else {
+      // Keep this one and the rest for the next round, behind what came since.
+      queue = [...batch.slice(i), ...queue].slice(-QUEUE_MAX)
+      break
+    }
+  }
+  $.ui.invalidate('ui.render')
+}
+
+/** Tell observe.sh and statusline.sh that the mod is running for this session. */
+async function beat($) {
+  if (!heartbeatFile) return
+  await $.fs.write(heartbeatFile, String(Math.floor((await $.clock.now()) / 1000)))
+}
+
+/** Recall's recent activity and latest version, as statusline.sh reads them from /api/status. */
+async function readStatus($) {
+  if (!config || !config.apiKey) return
+  try {
+    const response = await $.http.fetch(config.url + '/api/status', { headers: { Authorization: 'Bearer ' + config.apiKey } })
+    if (!response.ok) return
+    const data = JSON.parse(response.text).data || {}
+    const now = await $.clock.now()
+    activity = data.label && Number.isFinite(Number(data.elapsed_s)) ? { label: String(data.label), at: now - Number(data.elapsed_s) * 1000 } : activity
+    latest = data.latest_version ? String(data.latest_version) : latest
+    $.ui.invalidate('ui.render')
+  } catch {
+    // The band keeps what it last knew.
+  }
+}
+
+/** Confirm this session's workspace with Recall's MCP server. */
+async function confirmWorkspace($) {
+  if (!workspace) workspace = await loadWorkspace($)
+  const r = await $.mcp.call(SERVER, 'set_workspace', workspace)
+  confirmed = !r.isError
+  $.ui.invalidate('ui.render')
+  return confirmed
+}
+
+function ago(ms) {
+  const s = Math.max(0, Math.round(ms / 1000))
+  return s < 2 ? 'just now' : s < 60 ? s + 's ago' : Math.round(s / 60) + 'm ago'
+}
+
+/** The band's line, from what the mod knows now. */
+export function bandLine(state) {
+  const parts = ['Recall ' + (state.version || '')]
+  if (state.stored > 0) parts[0] += ' · ' + state.stored + ' stored'
+  parts.push(state.confirmed ? 'workspace confirmed' : 'workspace not confirmed')
+  if (state.activity && state.now - state.activity.at < 60_000) parts.push(state.activity.label + ' (' + ago(state.now - state.activity.at) + ')')
+  if (state.queued > 0) parts.push(state.queued + ' waiting')
+  if (state.latest && state.version && newer(state.latest, state.version)) parts.push('⬆ ' + state.latest + ': /plugin update recall')
+  if (state.error) parts.push(state.error)
+  return '🧠 ' + parts.join(' · ')
+}
+
+export function register(on) {
+  on('session.start', async ($, e, next) => {
+    config = await loadConfig($)
+    workspace = await loadWorkspace($)
+    try {
+      version = JSON.parse(await $.fs.read($.plugin.root + '/.claude-plugin/plugin.json')).version || ''
+    } catch {
+      version = ''
+    }
+    const id = await $.session.id()
+    heartbeatFile = /^[A-Za-z0-9_-]+$/.test(id) ? config.home + '/.claude/recall/mod-heartbeat-' + id : ''
+    if (config.apiKey) {
+      await beat($).catch(() => undefined)
+      // Off the start path: the first prompt waits for none of these. No set_workspace here: a mod's MCP call
+      // asks for permission like any other, so it would ask every session. The model's own set_workspace, the
+      // first thing rules/recall.md has it do, confirms the workspace (the tool.call hook below sees it).
+      $.clock.after(0, () => {
+        readStatus($).catch(() => undefined)
+      })
+      $.clock.every(TICK_MS, () => {
+        beat($).catch(() => undefined)
+        flush($).catch(() => undefined)
+        $.ui.invalidate('ui.render')
+      })
+      $.clock.every(STATUS_MS, () => readStatus($).catch(() => undefined))
+    }
+    return next(e)
+  })
+
+  // A short session (claude -p) can end before the timer: send what is left, best effort (1.5 s for all
+  // session.end hooks together).
+  on('session.end', async ($, e, next) => {
+    await flush($).catch(() => undefined)
+    return next(e)
+  })
+
+  // observe.sh in process: after the command has run, queue it if it failed. The result goes back to Claude
+  // at once and unchanged; sending happens on the timer.
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    const result = await next(e)
+    const item = config && config.apiKey ? observation(e, result) : undefined
+    if (item) queue = [...queue, item].slice(-QUEUE_MAX)
+    return result
+  })
+
+  // The "restored workspace" rule (rules/recall.md) as code: a Recall call that failed because the session lost
+  // its workspace confirms the workspace and runs once more. set_workspace itself is never retried.
+  on('tool.call', { tool: /^mcp__recall-remote__/ }, async ($, e, next) => {
+    const first = await next(e)
+    const ok = (r) => Boolean(r && !r.deny && !(r.result && r.result.isError) && !WORKSPACE_LOST.test(String(r.text || '')))
+    if (e.tool === 'mcp__' + SERVER + '__set_workspace') {
+      if (ok(first)) confirmed = true
+      return first
+    }
+    let out = first
+    if (first && !first.deny && WORKSPACE_LOST.test(String(first.text || ''))) {
+      let again = false
+      try {
+        again = await confirmWorkspace($)
+      } catch {
+        again = false
+      }
+      if (again) {
+        $.ui.log('workspace confirmed again; the call was retried')
+        out = await next(e)
+      }
+    }
+    if (STORES.test(e.tool) && ok(out)) {
+      stored += 1
+      $.ui.invalidate('ui.render')
+    }
+    return out
+  })
+
+  // Recall's line in the band above the prompt; the lines other mods draw there stay.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const theirs = await next(e)
+    if (!config || !config.apiKey) return theirs
+    const line = bandLine({ version, stored, confirmed, activity, now: await $.clock.now(), queued: queue.length, latest, error: lastError })
+    return bandTree($.ui.resolve(e), line, Boolean(lastError), theirs)
+  })
+}
+
+/**
+ * The band's tree. Only props from the reference's Elements table (Text: color, dimColor; Box: flex layout): the
+ * engine refuses a whole tree with one prop an element does not take, such as `key` on Text.
+ */
+export function bandTree({ Box, Text }, line, warn, theirs) {
+  const mine = warn ? Text({ color: 'yellow', children: [line] }) : Text({ dimColor: true, children: [line] })
+  return Box({ flexDirection: 'column', children: theirs ? [mine, theirs] : [mine] })
+}

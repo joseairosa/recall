@@ -44,6 +44,8 @@ Optionally set a custom server URL (defaults to `https://recallmcp.com`):
 export RECALL_SERVER_URL="https://your-instance.example.com"
 ```
 
+To use a config file other than `~/.claude/recall/config.json`, name it in `RECALL_CONFIG_FILE`. The scripts and the mod both read it. It is a test hook first (pointing a session at a test instance or a local stand-in without touching your own config), and also serves a second account.
+
 ## What's Included
 
 ### MCP Server (`.mcp.json`)
@@ -58,10 +60,34 @@ Connects to the Recall MCP server at recallmcp.com (or self-hosted). Provides 21
 - `workflow`, `rlm_process` -- advanced workflows
 - And more
 
+### Claude Code Mod (`hooks/register.js`, Claude Code 2.1.287 or later)
+
+`hooks/hooks.json` names `register.js` under `modules`, so Claude Code runs it inside its own process. In the terminal and the Desktop app it:
+
+- draws Recall's line in the band above the prompt, next to other plugins' lines:
+  `🧠 Recall 1.18.0 · 2 stored · workspace confirmed · stored a memory (5s ago)`
+- records a failing shell command (as `observe.sh` does) without starting a script for each one;
+- confirms the workspace and runs a Recall call once more when it fails because the session lost its workspace.
+
+A mod's MCP call asks for permission like any other. The mod makes one only for the retry, so it asks for `set_workspace` the first time a session loses its workspace, unless that is allowed. To allow it, add `"mcp__recall-remote__set_workspace"` to `permissions.allow` in your settings. Until Claude calls `set_workspace` at session start, the band says "workspace not confirmed".
+
+While it runs it refreshes `~/.claude/recall/mod-heartbeat-<session id>` every 15 seconds. `observe.sh` and the Recall segment of `statusline.sh` stand down only while that file is fresh, and take over again if the mod stops. VS Code's chat panel, `claude -p`, older Claude Code, `--bare` and `--safe-mode` do not run mods, so the scripts work there as before.
+
+Getting it on an existing install (nothing else to install):
+
+```bash
+claude plugin marketplace update recall-claude-plugin
+claude plugin update recall@recall-claude-plugin
+```
+
+Then restart Claude Code, or run `/reload-plugins`. To check: `claude --version` is 2.1.287 or later, and `/plugin` lists recall among the active mods.
+
+Tests: `cd plugin/recall && claude plugin test` (Claude Code's own test kit, no session or network).
+
 ### Lifecycle Hooks (`hooks/hooks.json`)
 
 - **SessionStart** — injects relevant memory context at session start
-- **PostToolUse** — observes file edits and tool usage for automatic memory capture
+- **PostToolUse** — records a failing Bash command with an output excerpt (stands down while the mod runs)
 - **PreCompact** — saves state marker before context compaction
 - **Stop** — deregisters session and polls for pending events
 
@@ -80,7 +106,7 @@ Connects to the Recall MCP server at recallmcp.com (or self-hosted). Provides 21
 
 ### Status Line (`scripts/statusline.sh`)
 
-Shows memory count and version info. Add to `~/.claude/settings.json` manually:
+Shows memory count and version info, where the mod does not draw (see above). Add to `~/.claude/settings.json` manually:
 
 ```json
 {

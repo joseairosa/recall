@@ -19,7 +19,7 @@
 #   statusLine.command = ~/.claude/recall/hooks/statusline.sh
 
 # Do NOT use set -e — this script must always produce output even on errors
-CONFIG_FILE="${HOME}/.claude/recall/config.json"
+CONFIG_FILE="${RECALL_CONFIG_FILE:-${HOME}/.claude/recall/config.json}"
 STATE_FILE="${HOME}/.claude/recall/state.json"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IS_PLUGIN_INSTALL=false
@@ -31,6 +31,25 @@ if [ -t 0 ]; then
   STDIN_DATA="{}"
 else
   STDIN_DATA="$(cat)"
+fi
+
+# --- Recall's Claude Code mod draws the Recall line above the prompt ---
+# hooks/register.js (Claude Code 2.1.287+) refreshes ~/.claude/recall/mod-heartbeat-<session id> every 15 s.
+# While it is fresh the mod shows Recall's line, so this script skips its Recall segment and the /api/status
+# call. A stale heartbeat (the mod unloaded) brings the segment back.
+MOD_DRAWS=false
+if command -v jq &>/dev/null; then
+  _session_id="$(printf '%s' "${STDIN_DATA}" | jq -r '.session_id // empty' 2>/dev/null || true)"
+elif command -v python3 &>/dev/null; then
+  _session_id="$(printf '%s' "${STDIN_DATA}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('session_id',''),end='')" 2>/dev/null || true)"
+else
+  _session_id=""
+fi
+if [[ "${_session_id}" =~ ^[A-Za-z0-9_-]+$ ]]; then
+  _beat="$(cat "${HOME}/.claude/recall/mod-heartbeat-${_session_id}" 2>/dev/null || true)"
+  if [[ "${_beat}" =~ ^[0-9]+$ ]] && (( $(date +%s) - _beat < 45 )); then
+    MOD_DRAWS=true
+  fi
 fi
 
 # --- Read version, API key, server URL, and previous command from config.json ---
@@ -105,7 +124,7 @@ _version_newer() {
 ACTIVITY_LABEL=""
 ACTIVITY_ELAPSED=""
 LATEST_VERSION=""
-if [[ -n "${API_KEY}" && -n "${SERVER_URL}" ]]; then
+if [[ -n "${API_KEY}" && -n "${SERVER_URL}" ]] && ! "${MOD_DRAWS}"; then
   STATUS_JSON="$(curl -sf "${SERVER_URL}/api/status" \
     -H "Authorization: Bearer ${API_KEY}" \
     --max-time 3 2>/dev/null || true)"
@@ -170,7 +189,7 @@ fi
 if [[ -n "${PREV_OUTPUT}" ]]; then
   # Print previous command output (e.g. Pilot) in full, then Recall on its own line
   printf '%s\n' "${PREV_OUTPUT}"
-  printf '%s\n' "${RECALL_SEGMENT}"
+  "${MOD_DRAWS}" || printf '%s\n' "${RECALL_SEGMENT}"
 else
   # Standalone mode — Pilot not installed, unavailable, or cannot detect Claude Code
   # session context. Replicate Pilot's two-line style using the JSON Claude Code sent us.
@@ -198,6 +217,6 @@ else
     fi
   fi
 
-  # Line 2: Recall segment
-  printf '%s\n' "${RECALL_SEGMENT}"
+  # Line 2: Recall segment, unless the mod shows it above the prompt
+  "${MOD_DRAWS}" || printf '%s\n' "${RECALL_SEGMENT}"
 fi

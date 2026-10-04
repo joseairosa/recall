@@ -83,7 +83,7 @@ claude plugin marketplace update recall-claude-plugin
 claude plugin update recall@recall-claude-plugin
 ```
 
-Then restart Claude Code, or run `/reload-plugins`. To check: `claude --version` is 2.1.287 or later, and `/plugin` lists recall among the active mods.
+Then restart Claude Code, or run `/reload-plugins`. Claude Code auto-updates only official marketplaces by default; to get new Recall versions on their own, turn auto-update on in `/plugin` → **Marketplaces** → recall-claude-plugin → **Enable auto-update**. Until then, when a newer Recall is out, the row above the prompt says `/plugin marketplace update recall-claude-plugin, then /plugin update recall`. To check: `claude --version` is 2.1.287 or later, and `/plugin` lists recall among the active mods.
 
 Tests: `cd plugin/recall && claude plugin test` (Claude Code's own test kit, no session or network).
 

@@ -171,6 +171,8 @@ const RECALL_COLOUR = '#9db8f2'
 const LEFT_INSET = 2
 /** Narrower than this, the detail keeps only its first part ("3 saved"). */
 const WIDE_COLUMNS = 100
+/** The marketplace Recall installs from, as `/plugin marketplace update` takes it. */
+const MARKETPLACE = 'recall-claude-plugin'
 
 /**
  * Recall's row, from what the mod knows now: the workspace's name as the key value, then detail. A warning only
@@ -183,7 +185,12 @@ export function bandRow(state, columns = WIDE_COLUMNS) {
   if (state.stored > 0) detail.push(state.stored + (wide ? ' saved this session' : ' saved'))
   if (wide && state.activity && state.now - state.activity.at < 60_000) detail.push(state.activity.label + ' (' + ago(state.now - state.activity.at) + ')')
   if (wide && state.version) detail.push(String(state.version).split('.').slice(0, 2).join('.'))
-  if (state.latest && state.version && newer(state.latest, state.version)) detail.push((wide ? 'update ' + state.latest + ': ' : '') + '/plugin update recall')
+  // Claude Code auto-updates only official marketplaces by default, so most installs see a stale listing until the
+  // marketplace is refreshed: the hint does that first. Narrow, the refresh alone (in a session it also updates
+  // what came from that marketplace).
+  if (state.latest && state.version && newer(state.latest, state.version)) {
+    detail.push(wide ? 'update ' + state.latest + ': /plugin marketplace update ' + MARKETPLACE + ', then /plugin update recall' : '/plugin marketplace update ' + MARKETPLACE)
+  }
   const warning = []
   if (state.queued > 0) warning.push(state.queued + ' waiting')
   if (state.error) warning.push(state.error)

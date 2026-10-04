@@ -293,23 +293,67 @@ export function withoutTopGap(node) {
 }
 
 /**
- * How many rows a band tree takes, the rule every product uses to decide whether the gap fits: a Box whose
- * flexDirection is "column" stacks its children (their rows add up, plus 1 for its own marginTop); any other Box
- * or a Text is one line, as many rows as its text wraps to at `columns` cells (at least 1); a string at column
- * level is a Text; null, undefined and false take none.
+ * How many rows a band tree takes at `columns` cells, the rule every product uses to decide whether the gap fits.
+ *
+ * rowsOf v2 final: one rule for FlockTab, Recall and Foley.
+ * Children: read node.children; if undefined, read node.props.children.
+ * Not drawable: null, undefined, false, '', [], a Text with empty text, a Box that counts 0 rows.
+ * Every Box:
+ * - Its marginTop adds to its rows, whether it is a row or a column, empty or not.
+ * - Its paddingLeft narrows its inside: paddingLeft, else paddingX, else padding.
+ * - Vertical padding adds to its content rows: paddingTop + paddingBottom, else 2 x paddingY, else 2 x padding.
+ * - A numeric height sets the content rows to at least that height.
+ * - With no drawable children: 0 content rows, plus its vertical padding, height and marginTop.
+ * Column Box: its children's rows add up, each counted at the inside width.
+ * Row Box (any Box that is not a column): children with a numeric width are counted in that width; a Text whose wrap
+ * starts with "truncate" is its own 1 line and does not join the others' text; the text of the other children wraps
+ * in (inside - their fixed widths). It takes the tallest, at least 1.
+ * Text: a wrap that starts with "truncate" is 1 line. Otherwise ceil(length / width), at least 1. A string or number
+ * is a Text.
+ * Every width is at least 1 cell. Height is border-box: a Box's rows are max(content + vertical padding, height),
+ * plus its marginTop.
  */
 export function rowsOf(node, columns) {
   const width = Math.max(1, columns || 0)
-  const kids = (n) => (n.children !== undefined ? n.children : n.props && n.props.children)
-  const text = (n) =>
-    typeof n === 'string' || typeof n === 'number' ? String(n) : Array.isArray(n) ? n.map(text).join('') : n && typeof n === 'object' ? text(kids(n)) : ''
-  if (node === null || node === undefined || node === false) return 0
+  const num = (v) => typeof v === 'number'
+  const kids = (n) => {
+    const c = n.children !== undefined ? n.children : n.props && n.props.children
+    return c === undefined ? [] : [].concat(c)
+  }
+  const text = (n) => (typeof n === 'string' || num(n) ? String(n) : Array.isArray(n) ? n.map(text).join('') : n && typeof n === 'object' ? text(kids(n)) : '')
+  if (node === null || node === undefined || node === false || node === '') return 0
   if (Array.isArray(node)) return node.reduce((sum, child) => sum + rowsOf(child, width), 0)
   if (typeof node !== 'object') return Math.max(1, Math.ceil(String(node).length / width))
   const props = node.props || {}
-  const top = typeof props.marginTop === 'number' ? props.marginTop : 0
-  if (node.type === 'Box' && props.flexDirection === 'column') return top + rowsOf(kids(node) || [], width)
-  return top + Math.max(1, Math.ceil(text(kids(node)).length / width))
+  if (node.type !== 'Box') {
+    const length = text(node).length
+    if (length === 0) return 0
+    return String(props.wrap || '').startsWith('truncate') ? 1 : Math.max(1, Math.ceil(length / width))
+  }
+  const top = num(props.marginTop) ? props.marginTop : 0
+  const left = num(props.paddingLeft) ? props.paddingLeft : num(props.paddingX) ? props.paddingX : num(props.padding) ? props.padding : 0
+  const inside = Math.max(1, width - left)
+  const vertical =
+    num(props.paddingTop) || num(props.paddingBottom)
+      ? (props.paddingTop || 0) + (props.paddingBottom || 0)
+      : num(props.paddingY)
+        ? 2 * props.paddingY
+        : num(props.padding)
+          ? 2 * props.padding
+          : 0
+  const fixed = (c) => c && typeof c === 'object' && !Array.isArray(c) && c.props && num(c.props.width)
+  const children = kids(node).filter((c) => rowsOf(c, fixed(c) ? c.props.width : inside) > 0)
+  let content = 0
+  if (children.length > 0 && props.flexDirection === 'column') {
+    content = children.reduce((sum, c) => sum + rowsOf(c, inside), 0)
+  } else if (children.length > 0) {
+    const widths = children.filter(fixed)
+    const truncated = (c) => c && typeof c === 'object' && c.type !== 'Box' && c.props && String(c.props.wrap || '').startsWith('truncate')
+    const rest = text(children.filter((c) => !fixed(c) && !truncated(c))).length
+    const wrapped = Math.ceil(rest / Math.max(1, inside - widths.reduce((sum, c) => sum + c.props.width, 0)))
+    content = Math.max(1, wrapped, ...widths.map((c) => rowsOf(c, c.props.width)))
+  }
+  return top + Math.max(content + vertical, num(props.height) ? props.height : 0)
 }
 
 /**

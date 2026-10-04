@@ -90,7 +90,7 @@ Tests: `cd plugin/recall && claude plugin test` (Claude Code's own test kit, no 
 ### Lifecycle Hooks (`hooks/hooks.json`)
 
 - **SessionStart** — injects relevant memory context at session start
-- **PostToolUse** — records a failing Bash command with an output excerpt (stands down while the mod runs)
+- **PostToolUse, PostToolUseFailure** — records a failing Bash command with an output excerpt (stands down while the mod runs). A command that exits non-zero fires PostToolUseFailure. Secrets in the command and its output are replaced with `[REDACTED]` first (`hooks/redact.js`, the same list as observe.sh's).
 - **PreCompact** — saves state marker before context compaction
 - **Stop** — deregisters session and polls for pending events
 

@@ -87,7 +87,7 @@ try:
 except Exception:
     settings = {}
 
-for event in ("PostToolUse", "SessionStart", "SessionEnd", "PreCompact", "Stop"):
+for event in ("PostToolUse", "PostToolUseFailure", "SessionStart", "SessionEnd", "PreCompact", "Stop"):
     settings.setdefault("hooks", {}).setdefault(event, [])
 
 base = 'bash "${HOME}/.claude/plugins/recall/scripts/'
@@ -100,24 +100,26 @@ def present(event, cmd):
 
 changed = False
 
-# observe.sh captures only failing Bash commands since v1.17.0.
+# observe.sh captures only failing Bash commands since v1.17.0. A failing command fires PostToolUseFailure,
+# not PostToolUse (Claude Code 2.1.288), so it listens on both.
 OBSERVE_MATCHER = "Bash"
 observe_cmd = base + 'observe.sh"'
-observe_ok = any(
-    e.get("matcher", "") == OBSERVE_MATCHER and
-    any(h.get("command", "") == observe_cmd for h in e.get("hooks", []))
-    for e in settings["hooks"]["PostToolUse"]
-)
-if not observe_ok:
-    settings["hooks"]["PostToolUse"] = [
-        e for e in settings["hooks"]["PostToolUse"]
-        if not any(h.get("command", "") == observe_cmd for h in e.get("hooks", []))
-    ]
-    settings["hooks"]["PostToolUse"].append({
-        "matcher": OBSERVE_MATCHER,
-        "hooks": [{"type": "command", "command": observe_cmd, "async": True, "timeout": 10}]
-    })
-    changed = True
+for event in ("PostToolUse", "PostToolUseFailure"):
+    observe_ok = any(
+        e.get("matcher", "") == OBSERVE_MATCHER and
+        any(h.get("command", "") == observe_cmd for h in e.get("hooks", []))
+        for e in settings["hooks"][event]
+    )
+    if not observe_ok:
+        settings["hooks"][event] = [
+            e for e in settings["hooks"][event]
+            if not any(h.get("command", "") == observe_cmd for h in e.get("hooks", []))
+        ]
+        settings["hooks"][event].append({
+            "matcher": OBSERVE_MATCHER,
+            "hooks": [{"type": "command", "command": observe_cmd, "async": True, "timeout": 10}]
+        })
+        changed = True
 
 if not present("SessionStart", base + 'session-start.sh"'):
     settings["hooks"]["SessionStart"].append({
@@ -295,7 +297,7 @@ INSTALLED_VERSION="${INSTALLED_VERSION:-1.0.0}"
 # Self-heal: if the running script is newer than plugin.json (e.g. background update
 # downloaded new scripts but plugin.json write failed), update plugin.json immediately
 # so version detection is always accurate. SCRIPT_VERSION must match every release.
-SCRIPT_VERSION="1.18.6"
+SCRIPT_VERSION="1.18.7"
 if "${IS_PLUGIN_INSTALL}"; then
   _PLUGIN_JSON="${SCRIPT_DIR}/../.claude-plugin/plugin.json"
   if [[ -f "${_PLUGIN_JSON}" ]]; then

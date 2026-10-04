@@ -36,6 +36,19 @@
         ]
       }
     ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/observe.sh\"",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "PreCompact": [
       {
         "hooks": [

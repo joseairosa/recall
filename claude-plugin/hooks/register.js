@@ -12,7 +12,10 @@
 // where this mod draws, it leaves the Recall segment out from the first render.
 //
 // The API key is read from ~/.claude/recall/config.json (or RECALL_API_KEY) and only ever goes in the
-// Authorization header: nothing here logs it, draws it or returns it to Claude.
+// Authorization header: nothing here logs it, draws it or returns it to Claude. Secrets in a failing command or its
+// output are redacted before the memory leaves the machine (./redact.js, the same list as observe.sh's).
+
+import { redact } from './redact.js'
 
 /** Recall's MCP server, as .mcp.json names it. */
 const SERVER = 'recall-remote'
@@ -77,7 +80,9 @@ export function observation(e, result) {
   const out = result.result && typeof result.result === 'object' ? result.result.stderr || result.result.stdout || '' : result.text || ''
   const excerpt = String(out).slice(0, 500)
   if (!excerpt || !FAILED.test(excerpt)) return undefined
-  return { content: '[Bash error] ' + e.command.slice(0, 200) + '\nOutput: ' + excerpt.slice(0, 300), importance: 6 }
+  // Redacted whole, then cut, so a secret is never split into a piece too short to match.
+  const output = redact(String(out).slice(0, 20000)).slice(0, 300)
+  return { content: '[Bash error] ' + redact(e.command).slice(0, 200) + '\nOutput: ' + output, importance: 6 }
 }
 
 /** Newer by semver numbers, as statusline.sh compares. */

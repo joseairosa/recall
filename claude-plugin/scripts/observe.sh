@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Recall observe hook (PostToolUse)
+# Recall observe hook (PostToolUse, PostToolUseFailure)
 # Reads Claude Code tool event from stdin, POSTs Bash FAILURES to Recall.
 #
 # Policy (2026-08-30): errors + digest only. Per-call capture of
@@ -9,8 +9,8 @@
 # tool event worth remembering; the session digest lives in
 # stop-summarize.sh.
 #
-# Registered in settings.json under:
-#   hooks.PostToolUse[].hooks[].command
+# Registered (hooks.json, or settings.json for a standalone install) under:
+#   hooks.PostToolUse[].hooks[].command and hooks.PostToolUseFailure[].hooks[].command
 #   matcher: "Bash"
 #   async: true  (non-blocking - Claude does not wait for this hook)
 #   timeout: 10
@@ -68,9 +68,35 @@ else
 fi
 [[ -z "${COMMAND}" ]] && exit 0
 
+# A command that exits non-zero, times out or is refused fires PostToolUseFailure, not PostToolUse (Claude Code
+# 2.1.288). That event has no tool_response: the output is in "error", and the event itself says the call failed.
+# An interrupt (the person pressed Esc) is not a failing command.
+if command -v jq &>/dev/null; then
+  HOOK_EVENT="$(echo "${STDIN_DATA}" | jq -r '.hook_event_name // empty' 2>/dev/null || true)"
+  IS_INTERRUPT="$(echo "${STDIN_DATA}" | jq -r '.is_interrupt // false' 2>/dev/null || true)"
+elif command -v python3 &>/dev/null; then
+  HOOK_EVENT="$(echo "${STDIN_DATA}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('hook_event_name',''))" 2>/dev/null || true)"
+  IS_INTERRUPT="$(echo "${STDIN_DATA}" | python3 -c "import json,sys; d=json.load(sys.stdin); print('true' if d.get('is_interrupt') is True else 'false')" 2>/dev/null || true)"
+else
+  HOOK_EVENT=""
+  IS_INTERRUPT="false"
+fi
+FAILED_EVENT=false
+if [[ "${HOOK_EVENT}" == "PostToolUseFailure" ]]; then
+  [[ "${IS_INTERRUPT}" == "true" ]] && exit 0
+  FAILED_EVENT=true
+fi
+
 # Detect failure from tool output. No failure -> nothing to store.
 TOOL_OUTPUT=""
-if command -v python3 &>/dev/null; then
+if "${FAILED_EVENT}"; then
+  if command -v jq &>/dev/null; then
+    TOOL_OUTPUT="$(echo "${STDIN_DATA}" | jq -r '(.error // "") | tostring | .[:20000]' 2>/dev/null || true)"
+  elif command -v python3 &>/dev/null; then
+    TOOL_OUTPUT="$(echo "${STDIN_DATA}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(str(d.get('error') or '')[:20000])" 2>/dev/null || true)"
+  fi
+  [[ -z "${TOOL_OUTPUT}" ]] && TOOL_OUTPUT="(no error text)"
+elif command -v python3 &>/dev/null; then
   TOOL_OUTPUT="$(echo "${STDIN_DATA}" | python3 -c "
 import json, sys
 try:
@@ -81,19 +107,50 @@ try:
     out = r.get('stderr', '') or r.get('stdout', '') or ''
   else:
     out = str(r)
-  print(out[:500])
+  print(out[:20000])
 except Exception:
   print('')
 " 2>/dev/null || true)"
 elif command -v jq &>/dev/null; then
   TOOL_OUTPUT="$(echo "${STDIN_DATA}" | jq -r \
-    '(.tool_response // .tool_output // "") | if type == "object" then (.stderr // .stdout // "") else . end | .[:500]' \
+    '(.tool_response // .tool_output // "") | if type == "object" then (.stderr // .stdout // "") else . end | .[:20000]' \
     2>/dev/null || true)"
 fi
 
-if [[ -z "${TOOL_OUTPUT}" ]] || ! echo "${TOOL_OUTPUT}" | grep -qiE '(^error:|npm ERR!|FAILED|command not found|non-zero exit|exit code [1-9])'; then
+if ! "${FAILED_EVENT}" && { [[ -z "${TOOL_OUTPUT}" ]] || ! echo "${TOOL_OUTPUT:0:500}" | grep -qiE '(^error:|npm ERR!|FAILED|command not found|non-zero exit|exit code [1-9])'; }; then
   exit 0
 fi
+
+# Secrets in the command or its output never leave this machine: each match becomes [REDACTED] before the POST, and
+# if redaction cannot run, nothing is sent. The list is the same as PATTERNS in the plugin's hooks/redact.js
+# (hooks.test.sh compares them and runs both against plugin/recall/tests/redaction-fixtures.js). A named group "k"
+# is text kept in front of [REDACTED]; \x27 stands for a single quote. Bare hex is never redacted, so SHAs survive.
+REDACT_PATTERNS='[
+  ["-----BEGIN [A-Z ]*PRIVATE KEY-----(?:[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----|[\\s\\S]*)", ""],
+  ["(?<k>authorization\\s*[:=]\\s*)(?:(?:bearer|basic|token|digest)\\s+)?[^\\s\"\\x27,;]+", "i"],
+  ["(?<k>\\bbearer\\s+)[A-Za-z0-9._~+/=-]{8,}", "i"],
+  ["(?<k>\\b[a-z][a-z0-9+.-]*://)[^/\\s:@\"\\x27]+:[^/\\s@\"\\x27]+(?=@)", "i"],
+  ["(?<k>\\b[a-z0-9_.-]*?(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|private[_-]?key)=[\"\\x27]?)[^\\s\"\\x27&;,)]+", "i"],
+  ["(?<k>(?:^|\\s)--?(?:[a-z0-9]+-)*(?:token|secret|password|passwd|pass|api-?key|access-?key)(?:=|\\s+)[\"\\x27]?)[^\\s\"\\x27]+", "i"],
+  ["\\b(?:sk-ant-|sk-|ghp_|gho_|ghu_|ghs_|ghr_|github_pat_|xox[abpr]-|crsr_|ft_live_|ft_test_|ft_run_|rk_live_|rk_test_|sk_live_|sk_test_|whsec_)[A-Za-z0-9_.-]{8,}", ""],
+  ["\\bAKIA[0-9A-Z]{16}\\b", ""]
+]'
+redact() {
+  if command -v python3 &>/dev/null; then
+    REDACT_PATTERNS="${REDACT_PATTERNS}" python3 -c '
+import json, os, re, sys
+s = sys.stdin.read()
+for p, f in json.loads(os.environ["REDACT_PATTERNS"]):
+    s = re.sub(p.replace("(?<k>", "(?P<k>"), lambda m: (m.groupdict().get("k") or "") + "[REDACTED]", s, flags=re.I if "i" in f else 0)
+sys.stdout.write(s)'
+  elif command -v jq &>/dev/null; then
+    jq -Rrs --argjson pats "${REDACT_PATTERNS}" 'reduce $pats[] as $p (.; gsub($p[0]; "\(.k // "")[REDACTED]"; $p[1]))'
+  else
+    return 1
+  fi
+}
+COMMAND="$(printf '%s' "${COMMAND}" | redact 2>/dev/null)" || exit 0
+TOOL_OUTPUT="$(printf '%s' "${TOOL_OUTPUT}" | redact 2>/dev/null)" || exit 0
 
 # A failed command plus its output excerpt - enough context to be findable
 # and useful later, unlike a bare command line.

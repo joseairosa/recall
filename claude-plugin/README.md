@@ -66,10 +66,11 @@ Connects to the Recall MCP server at recallmcp.com (or self-hosted). Provides 21
 
 - draws Recall's row in the band above the prompt: its name in bold, the workspace, then dim detail. The row stands on its own, with or without other plugins' rows:
   `Recall    agentspend · 3 saved this session · 1.18`
+  The workspace starts at the same column as the values in other products' rows (2 cells in, then a 9-cell name column). The band keeps one blank row above it, once, whichever products draw in it, and only when it has a row to spare: in a short window the rows come first. Under a survey Recall draws nothing there;
 - records a failing shell command (as `observe.sh` does) without starting a script for each one;
 - confirms the workspace and runs a Recall call once more when it fails because the session lost its workspace.
 
-A mod's MCP call asks for permission like any other. The mod makes one only for the retry, so it asks for `set_workspace` the first time a session loses its workspace, unless that is allowed. To allow it, add `"mcp__recall-remote__set_workspace"` to `permissions.allow` in your settings. Until Claude calls `set_workspace` at session start, the band says "workspace not confirmed".
+A mod's MCP call asks for permission like any other. The mod makes one only for the retry, so it asks for `set_workspace` the first time a session loses its workspace, unless that is allowed. To allow it, add `"mcp__recall-remote__set_workspace"` to `permissions.allow` in your settings.
 
 While it runs it refreshes `~/.claude/recall/mod-heartbeat-<session id>` every 15 seconds. `observe.sh` stands down only while that file is fresh, and takes over again if the mod stops.
 

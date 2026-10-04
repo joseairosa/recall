@@ -266,28 +266,70 @@ export function register(on) {
   })
 
   // Recall's row in the band above the prompt. It stands on its own: no other mod has to be there, and the rows
-  // other mods draw stay, above or below it in whatever order the chain gives.
+  // other mods draw stay, below it. Under a survey, or with nothing of its own to draw, the band is theirs as drawn.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const theirs = await next(e)
-    if (!config || !config.apiKey) return theirs
-    const columns = (e.props && e.props.bodyColumns) || (e.viewport && e.viewport.columns) || WIDE_COLUMNS
+    const props = e.props || {}
+    if (!config || !config.apiKey || props.hasSurvey) return next(e)
+    const theirs = withoutTopGap(await next(e))
+    const columns = props.bodyColumns || (e.viewport && e.viewport.columns) || WIDE_COLUMNS
     const row = bandRow({ version, stored, workspace, activity, now: await $.clock.now(), queued: queue.length, latest, error: lastError }, columns)
-    return bandTree($.ui.resolve(e), row, theirs)
+    const elements = $.ui.resolve(e)
+    // One blank row above the band, only when the band has a row to spare for it; squeezed, the rows win.
+    const gap = typeof props.maxRows === 'number' && props.maxRows >= rowsOf(bandTree(elements, row, theirs), columns) + 1
+    return bandTree(elements, row, theirs, gap)
   })
 }
 
 /**
- * Recall's row as a tree: the name in its own column, the key value, the dim detail, and a warning only for a
- * failure. Only props from the reference's Elements table (Text: color, bold, dimColor; Box: flex layout, width,
- * gap, padding): the engine refuses a whole tree with one prop an element does not take, such as `key` on Text.
+ * The band's one blank row above it, shared by every product that follows the same rule (FlockTab, Recall, Foley,
+ * none reading another's files): each wraps its rows and the inner mods' rows in a Box with marginTop 1, and takes
+ * the inner tree's own top margin away, so only the outermost one stays. This takes it away.
  */
-export function bandTree({ Box, Text }, row, theirs) {
-  const parts = [
-    Box({ width: NAME_COLUMNS, children: [Text({ bold: true, color: RECALL_COLOUR, children: ['Recall'] })] }),
-    Text({ children: [row.key] }),
-  ]
-  if (row.detail.length) parts.push(Text({ dimColor: true, children: ['· ' + row.detail.join(' · ')] }))
-  if (row.warning.length) parts.push(Text({ color: 'yellow', children: ['· ' + row.warning.join(' · ')] }))
-  const mine = Box({ flexDirection: 'row', gap: 1, paddingLeft: LEFT_INSET, children: parts })
-  return Box({ flexDirection: 'column', children: theirs ? [mine, theirs] : [mine] })
+export function withoutTopGap(node) {
+  if (Array.isArray(node)) return node.length > 0 ? [withoutTopGap(node[0]), ...node.slice(1)] : node
+  if (!node || typeof node !== 'object' || node.type !== 'Box' || !node.props || !('marginTop' in node.props)) return node
+  const { marginTop: _gap, ...props } = node.props
+  return { ...node, props }
+}
+
+/**
+ * How many rows a band tree takes, the rule every product uses to decide whether the gap fits: a Box whose
+ * flexDirection is "column" stacks its children (their rows add up, plus 1 for its own marginTop); any other Box
+ * or a Text is one line, as many rows as its text wraps to at `columns` cells (at least 1); a string at column
+ * level is a Text; null, undefined and false take none.
+ */
+export function rowsOf(node, columns) {
+  const width = Math.max(1, columns || 0)
+  const kids = (n) => (n.children !== undefined ? n.children : n.props && n.props.children)
+  const text = (n) =>
+    typeof n === 'string' || typeof n === 'number' ? String(n) : Array.isArray(n) ? n.map(text).join('') : n && typeof n === 'object' ? text(kids(n)) : ''
+  if (node === null || node === undefined || node === false) return 0
+  if (Array.isArray(node)) return node.reduce((sum, child) => sum + rowsOf(child, width), 0)
+  if (typeof node !== 'object') return Math.max(1, Math.ceil(String(node).length / width))
+  const props = node.props || {}
+  const top = typeof props.marginTop === 'number' ? props.marginTop : 0
+  if (node.type === 'Box' && props.flexDirection === 'column') return top + rowsOf(kids(node) || [], width)
+  return top + Math.max(1, Math.ceil(text(kids(node)).length / width))
+}
+
+/**
+ * Recall's row as a tree: the name in its own column, then one line of the key value, the dim detail, and a
+ * warning only for a failure. The value starts right after the name column, no gap, as FlockTab's and Foley's do:
+ * inset 2 + name 9 = column 11. `gap` puts the band's blank row above it (marginTop 1). Only props from the
+ * reference's Elements table (Text: color, bold, dimColor; Box: flex layout, width, margin, padding): the engine
+ * refuses a whole tree with one prop an element does not take, such as `key` on Text.
+ */
+export function bandTree({ Box, Text }, row, theirs, gap = false) {
+  const value = [row.key]
+  if (row.detail.length) value.push(Text({ dimColor: true, children: [' · ' + row.detail.join(' · ')] }))
+  if (row.warning.length) value.push(Text({ color: 'yellow', children: [' · ' + row.warning.join(' · ')] }))
+  const mine = Box({
+    flexDirection: 'row',
+    paddingLeft: LEFT_INSET,
+    children: [
+      Box({ width: NAME_COLUMNS, flexShrink: 0, children: [Text({ bold: true, color: RECALL_COLOUR, children: ['Recall'] })] }),
+      Box({ flexShrink: 1, children: [Text({ children: value })] }),
+    ],
+  })
+  return Box({ flexDirection: 'column', ...(gap ? { marginTop: 1 } : {}), children: theirs ? [mine, theirs] : [mine] })
 }

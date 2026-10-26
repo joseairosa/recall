@@ -74,11 +74,13 @@ When the user asks "how did we implement X", "why did we choose Y", "what was de
 
 ### Session End — Summarize
 
-When the Stop hook fires or the session ends naturally, summarize the work done:
+When the Stop hook fires or the session ends naturally, write a short summary of the work done yourself and pass it in `summary`. The server stores your text as given and makes no model call:
 
 ```
-mcp__recall-remote__summarize_session({ session_name: "<brief description of work done>" })
+mcp__recall-remote__summarize_session({ session_name: "<brief description of work done>", summary: "<what was done, decided and left open>" })
 ```
+
+Without `summary`, the server stores a list of the session's memories instead.
 
 ---
 

@@ -90,6 +90,7 @@ Tests: `cd plugin/recall && claude plugin test` (Claude Code's own test kit, no 
 ### Lifecycle Hooks (`hooks/hooks.json`)
 
 - **SessionStart** — injects relevant memory context at session start
+- **SessionStart (compact)** — after each compact, manual or automatic, prints the state `pre-compact.sh` saved, and stores Claude Code's own compact summary as a memory in the background (`scripts/compact-restore.sh`). No extra model call: it reads the summary from the session file, and waits up to 30 s for one that lands late (`RECALL_COMPACT_WAIT_SECONDS`). Each compact is stored once, keyed on its boundary record. Tags: `compact-summary`, `compact:<id>`, `session:<id>`, `project:<name>`, `workspace:<path>`, `date:<YYYY-MM-DD>`. Secrets and `.env`-style `KEY=value` lines become `[REDACTED]` first, with the same list as observe.sh's. It needs python3, and with no API key it stores nothing.
 - **PostToolUse, PostToolUseFailure** — records a failing Bash command with an output excerpt (stands down while the mod runs). A command that exits non-zero fires PostToolUseFailure. Secrets in the command and its output are replaced with `[REDACTED]` first (`hooks/redact.js`, the same list as observe.sh's).
 - **PreCompact** — saves state marker before context compaction
 - **Stop** — deregisters session and polls for pending events
